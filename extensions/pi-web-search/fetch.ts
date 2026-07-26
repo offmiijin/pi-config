@@ -2,7 +2,10 @@
  * Web Search Extension — Page Fetcher
  *
  * Fetches pages in parallel (max 10 concurrent), extracts clean text with
- * cheerio, and saves each page to /tmp/page_<date>_<randomhex>/.
+ * cheerio, and saves each page to <cwd>/.sandbox-cache/web-fetch/page_<date>_<randomhex>/.
+ *
+ * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
+ * namespace (which mounts $CWD read-write but has isolated /tmp).
  */
 
 import * as cheerio from "cheerio";
@@ -123,20 +126,23 @@ async function cleanOldCaches(baseDir: string): Promise<void> {
  *   - respects the external `signal` for Esc-based abort
  *
  * Successful pages are saved as clean text to:
- *   /tmp/page_<YYYYMMDD>_<8-char-hex>/<sanitised-url>.txt
+ *   <cwd>/.sandbox-cache/web-fetch/page_<YYYYMMDD>_<8-char-hex>/<sanitised-url>.txt
  *
- * Uses /tmp/ so the cache is discarded when the sandbox is torn down.
+ * Uses project-local .sandbox-cache/ so files are accessible inside dev-sandbox's
+ * bwrap namespace (which mounts $CWD read-write but has isolated /tmp).
  */
 export async function fetchPages(
 	urls: string[],
+	cwd: string,
 	signal?: AbortSignal,
 	maxConcurrent: number = DEFAULT_CONCURRENCY,
 ): Promise<FetchOutput> {
 	// 1. Clean caches older than 7 days, then create fresh output directory
 	const dateStr = getDateStr();
 	const randHex = randomHex(8);
-	await cleanOldCaches("/tmp");
-	const outputDir = path.join("/tmp", `page_${dateStr}_${randHex}`);
+	const cacheRoot = path.join(cwd, ".sandbox-cache", "web-fetch");
+	await cleanOldCaches(cacheRoot);
+	const outputDir = path.join(cacheRoot, `page_${dateStr}_${randHex}`);
 	await fs.mkdir(outputDir, { recursive: true });
 
 	const results: FetchItemResult[] = [];
