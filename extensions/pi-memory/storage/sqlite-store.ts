@@ -7,6 +7,8 @@
  */
 
 import { Database } from "bun:sqlite";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { Memory, MemoryType, MemoryScope, RawObservation } from "../types";
 
 // ── SQL DDL ────────────────────────────────────────────────────────────
@@ -147,6 +149,11 @@ export class SqliteStore {
   private db: Database;
 
   constructor(dbPath: string | ":memory:") {
+    // Garante que o diretório pai existe (bun:sqlite não cria recursivamente)
+    if (dbPath !== ":memory:") {
+      const dir = path.dirname(dbPath);
+      fs.mkdirSync(dir, { recursive: true });
+    }
     this.db = new Database(dbPath, { create: true });
     this.db.run("PRAGMA journal_mode = WAL");
     this.db.run("PRAGMA foreign_keys = ON");

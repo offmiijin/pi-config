@@ -5,6 +5,8 @@
  * JSON é sincronizado sob demanda para backup/auditoria.
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { Memory, RawObservation } from "../types";
 import type { IStorage } from "./index";
 import { SqliteStore } from "./sqlite-store";
@@ -15,6 +17,12 @@ export class UnifiedStore implements IStorage {
   private json: JsonStore;
 
   constructor(dbPath: string | ":memory:", dataDir: string) {
+    // Garante que o diretório pai do DB existe antes de abrir
+    if (dbPath !== ":memory:") {
+      const dbDir = path.dirname(dbPath);
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+
     this.sqlite = new SqliteStore(dbPath);
     this.json = new JsonStore(dataDir);
   }
