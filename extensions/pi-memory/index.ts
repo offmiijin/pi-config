@@ -14,6 +14,9 @@ import { UnifiedStore } from "./storage/unified-store";
 import type { IStorage } from "./storage/index";
 import { ObservationBuffer } from "./capture/buffer";
 import { createCaptureHooks } from "./capture/hooks";
+import { RegexExtractor } from "./extract/regex-extractor";
+import { LlmExtractor } from "./extract/llm-extractor";
+import type { LlmExtractorConfig } from "./extract/llm-extractor";
 import { Bm25Retriever } from "./retrieve/bm25";
 import { createInjectHandler } from "./inject/context-builder";
 import { createMemorySearchTool } from "./tools/memory-search";
@@ -28,6 +31,8 @@ let stats: MemoryStats;
 let storage: IStorage | null = null;
 let buffer: ObservationBuffer | null = null;
 let retriever: Bm25Retriever | null = null;
+let regexExtractor: RegexExtractor | null = null;
+let llmExtractor: LlmExtractor | null = null;
 let sessionId: string | null = null;
 
 function resetStats(): MemoryStats {
@@ -97,6 +102,40 @@ export default function (pi: ExtensionAPI) {
       // Inicializa retriever
       retriever = new Bm25Retriever(storage);
 
+      // Inicializa extrator N2 (regex) se configurado
+      if (config.extraction_level !== "none") {
+        regexExtractor = new RegexExtractor();
+      }
+
+      // Inicializa extrator N3 (LLM) se configurado
+      const llmEnabled =
+        config.extraction_level === "llm" ||
+        config.extraction_level === "kg" ||
+        config.llm_extraction.enabled;
+
+      if (llmEnabled) {
+        const apiKey =
+          process.env.OPENROUTER_API_KEY ?? "";
+
+        if (apiKey) {
+          const llmConfig: Partial<LlmExtractorConfig> = {
+            apiKey,
+            model: config.llm_extraction.model,
+            timeoutMs: config.llm_extraction.timeout_ms,
+            batchSize: config.llm_extraction.sweep_observation_threshold,
+            maxWaitMs: config.llm_extraction.sweep_interval_ms,
+          };
+          llmExtractor = new LlmExtractor(
+            storage,
+            projectId,
+            llmConfig,
+            (count) => {
+              stats.operations.extractions_n3 += count;
+            },
+          );
+        }
+      }
+
       if (ctx?.hasUI) {
         const memCount = storage.countMemories();
         ctx.ui.notify(
@@ -122,11 +161,18 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_result", async (event, _ctx) => {
     if (!buffer || !sessionId) return;
 
-    const hooks = createCaptureHooks(
+    const projectId = hashProjectId(pi.projectDir ?? "default");
+
+    const hooks = createCaptureHooks({
       buffer,
-      hashProjectId(pi.projectDir ?? "default"),
-      sessionId
-    );
+      projectId,
+      sessionId,
+      regexExtractor: regexExtractor ?? undefined,
+      storage: storage ?? undefined,
+      onN2Extraction: (count) => {
+        stats.operations.extractions_n2 += count;
+      },
+    });
 
     hooks.onToolResult(
       event as Parameters<typeof hooks.onToolResult>[0],
@@ -144,7 +190,13 @@ export default function (pi: ExtensionAPI) {
 
     // 1. CAPTURE: registra user prompt como observação
     if (buffer && sessionId) {
-      const hooks = createCaptureHooks(buffer, projectId, sessionId);
+      const hooks = createCaptureHooks({
+        buffer,
+        projectId,
+        sessionId,
+        regexExtractor: regexExtractor ?? undefined,
+        storage: storage ?? undefined,
+      });
       hooks.onBeforeAgentStart(
         event as Parameters<typeof hooks.onBeforeAgentStart>[0],
         _ctx
@@ -168,6 +220,33 @@ export default function (pi: ExtensionAPI) {
     return result;
   });
 
+  // ── Lifecycle: turn_end ─────────────────────────────────────────
+  pi.on("turn_end", async (event, _ctx) => {
+    if (!llmExtractor || !storage) return;
+
+    // Verifica se turno foi "rico" (teve bash/edit/write)
+    const toolResults: Array<{ toolName?: string }> =
+      (event as Record<string, unknown>)["toolResults"] as Array<{ toolName?: string }> ?? [];
+
+    const richTools = new Set(["bash", "write", "edit"]);
+    const isRich = toolResults.some(
+      (tr) => tr.toolName && richTools.has(tr.toolName),
+    );
+
+    if (!isRich) return;
+
+    // Flush buffer para garantir que observações estão no storage
+    if (buffer) buffer.flush();
+
+    // Coleta observações pendentes de extração
+    const projectId = hashProjectId(pi.projectDir ?? "default");
+    const pending = storage.getPendingObservations(projectId);
+
+    if (pending.length > 0) {
+      llmExtractor.enqueue(pending);
+    }
+  });
+
   // ── Lifecycle: session_shutdown ───────────────────────────────────
   pi.on("session_shutdown", async (_event, _ctx) => {
     // Flush buffer
@@ -188,7 +267,14 @@ export default function (pi: ExtensionAPI) {
       storage = null;
     }
 
+    // Shutdown N3 extractor
+    if (llmExtractor) {
+      llmExtractor.shutdown();
+      llmExtractor = null;
+    }
+
     retriever = null;
+    regexExtractor = null;
     sessionId = null;
   });
 

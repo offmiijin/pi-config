@@ -130,10 +130,10 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
   extraction_level: "regex",
   llm_extraction: {
     enabled: false,
-    model: "gpt-4o-mini",
+    model: "deepseek/deepseek-v4-flash",
     timeout_ms: 5_000,
-    sweep_observation_threshold: 50,
-    sweep_interval_ms: 30 * 60 * 1000,
+    sweep_observation_threshold: 10,
+    sweep_interval_ms: 30_000,
   },
   consolidation: {
     dedup_enabled: true,
