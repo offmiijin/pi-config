@@ -13,6 +13,36 @@ import { getAgentDir, CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "./types";
 import { DEFAULT_CONFIG } from "./types";
 
+// ── Detecção de SO ────────────────────────────────────────────────────
+
+const OS_RELEASE_PATH = "/etc/os-release";
+
+interface OsRelease {
+	id: string;
+	idLike: string;
+}
+
+function readOsRelease(): OsRelease | null {
+	try {
+		const raw = readFileSync(OS_RELEASE_PATH, "utf-8");
+		const id = raw.match(/^ID="?([^^"\n]+)"?/m)?.[1] ?? "";
+		const idLike = raw.match(/^ID_LIKE="?([^^"\n]+)"?/m)?.[1] ?? "";
+		return { id: id.toLowerCase(), idLike: idLike.toLowerCase() };
+	} catch {
+		return null;
+	}
+}
+
+function hasOsRelease(): boolean {
+	return existsSync(OS_RELEASE_PATH);
+}
+
+function matchesOsRelease(ids: string[]): boolean {
+	const os = readOsRelease();
+	if (!os) return false;
+	return ids.includes(os.id) || os.idLike.split(/\s+/).some((like) => ids.includes(like));
+}
+
 function safeReadJson(filePath: string): Partial<SandboxConfig> | null {
   try {
     if (!existsSync(filePath)) return null;
@@ -105,16 +135,117 @@ export function loadConfig(cwd: string): SandboxConfig {
  * Verifica se bubblewrap está instalado e acessível.
  */
 export function isBwrapAvailable(): boolean {
-  const paths = ["/usr/bin/bwrap", "/usr/local/bin/bwrap"];
-  for (const p of paths) {
-    if (existsSync(p)) return true;
-  }
-  // Tenta via which
-  try {
-    const { execSync } = require("node:child_process");
-    execSync("which bwrap 2>/dev/null || command -v bwrap 2>/dev/null", { encoding: "utf-8" });
-    return true;
-  } catch {
-    return false;
-  }
+	const paths = ["/usr/bin/bwrap", "/usr/local/bin/bwrap"];
+	for (const p of paths) {
+		if (existsSync(p)) return true;
+	}
+	// Tenta via which
+	try {
+		const { execSync } = require("node:child_process");
+		execSync("which bwrap 2>/dev/null || command -v bwrap 2>/dev/null", { encoding: "utf-8" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Retorna comando de instalação do bubblewrap específico para o SO do usuário.
+ */
+export function getBwrapInstallGuide(): string {
+	const platform = process.platform;
+
+	if (platform === "darwin") {
+		return "`brew install bubblewrap`";
+	}
+
+	if (platform === "win32") {
+		return "bubblewrap não suporta Windows nativamente. Use WSL2 com Linux.";
+	}
+
+	if (platform === "linux") {
+		if (!hasOsRelease()) {
+			return "https://github.com/containers/bubblewrap#installing";
+		}
+
+		if (matchesOsRelease(["arch", "manjaro", "endeavouros"])) {
+			return "`pacman -S bubblewrap`";
+		}
+		if (matchesOsRelease(["ubuntu", "debian", "pop", "zorin", "mint"])) {
+			return "`apt install bubblewrap`";
+		}
+		if (matchesOsRelease(["fedora"])) {
+			return "`dnf install bubblewrap`";
+		}
+		if (matchesOsRelease(["rhel", "centos"])) {
+			return "`yum install bubblewrap`";
+		}
+		if (matchesOsRelease(["suse", "opensuse"])) {
+			return "`zypper install bubblewrap`";
+		}
+		if (matchesOsRelease(["alpine"])) {
+			return "`apk add bubblewrap`";
+		}
+
+		return "https://github.com/containers/bubblewrap#installing";
+	}
+
+	return "https://github.com/containers/bubblewrap#installing";
+}
+
+/**
+ * Retorna comando de instalação do ripgrep específico para o SO do usuário.
+ */
+export function getRgInstallGuide(): string {
+	const platform = process.platform;
+
+	if (platform === "darwin") {
+		return "`brew install ripgrep`";
+	}
+
+	if (platform === "win32") {
+		return "`winget install BurntSushi.ripgrep.MSVC`";
+	}
+
+	if (platform === "linux") {
+		if (!hasOsRelease()) {
+			return "https://github.com/BurntSushi/ripgrep#installation";
+		}
+
+		if (matchesOsRelease(["arch", "manjaro", "endeavouros"])) {
+			return "`pacman -S ripgrep`";
+		}
+		if (matchesOsRelease(["ubuntu", "debian", "pop", "zorin", "mint"])) {
+			return "`apt install ripgrep`";
+		}
+		if (matchesOsRelease(["fedora"])) {
+			return "`dnf install ripgrep`";
+		}
+		if (matchesOsRelease(["rhel", "centos"])) {
+			return "`yum install ripgrep` (EPEL) ou `dnf install ripgrep` (RHEL 8+)";
+		}
+		if (matchesOsRelease(["suse", "opensuse"])) {
+			return "`zypper install ripgrep`";
+		}
+		if (matchesOsRelease(["alpine"])) {
+			return "`apk add ripgrep`";
+		}
+
+		return "https://github.com/BurntSushi/ripgrep#installation";
+	}
+
+	return "https://github.com/BurntSushi/ripgrep#installation";
+}
+
+/**
+ * Verifica se ripgrep está instalado e acessível.
+ */
+export function isRgAvailable(): boolean {
+	try {
+		const { execSync } = require("node:child_process");
+		execSync("rg --version 2>/dev/null", { stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
 }

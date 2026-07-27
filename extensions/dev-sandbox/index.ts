@@ -38,7 +38,7 @@ import {
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, isBwrapAvailable } from "./config";
+import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
 import type { SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
 import { createReadOps } from "./tools/read-ops";
@@ -94,12 +94,22 @@ export default function (pi: ExtensionAPI) {
     if (!isBwrapAvailable()) {
       enabled = false;
       if (ctx.hasUI) {
+        const guide = getBwrapInstallGuide();
         ctx.ui.notify(
-          "bubblewrap não encontrado. Instale com: apt install bubblewrap",
+          `⚠️ bubblewrap não encontrado. Tools sandbox desativadas.\nInstalação: ${guide}`,
           "error",
         );
       }
       return;
+    }
+
+    // Verifica ripgrep (warning não-bloqueante)
+    if (!isRgAvailable() && ctx.hasUI) {
+      const guide = getRgInstallGuide();
+      ctx.ui.notify(
+        `⚠️ ripgrep não encontrado. Tool grep pode operar em modo degradado.\nInstalação: ${guide}`,
+        "warning",
+      );
     }
 
     // ── Seccomp BPF ───────────────────────────
