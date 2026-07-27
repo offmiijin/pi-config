@@ -78,7 +78,8 @@
     "thinkingLow": "blue",
     "thinkingMedium": "navy",
     "thinkingHigh": "mauve",
-    "thinkingXhigh": "pink"
+    "thinkingXhigh": "pink",
+    "bashMode": "green"
   },
   "export": {
     "pageBg": "#11111b",
