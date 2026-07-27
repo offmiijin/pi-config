@@ -45,7 +45,7 @@ function createMockStorage(memories: Memory[] = []): IStorage {
 describe("memory_write tool", () => {
   it("deve criar nova memória", async () => {
     const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", "session-1");
+    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
 
     const result = await tool.execute(
       "id",
@@ -93,7 +93,7 @@ describe("memory_write tool", () => {
       .digest("hex");
 
     const storage = createMockStorage([existing]);
-    const tool = createMemoryWriteTool(storage, "test-project", "session-1");
+    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
 
     const result = await tool.execute(
       "id",
@@ -127,7 +127,7 @@ describe("memory_write tool", () => {
     };
 
     const storage = createMockStorage([existing]);
-    const tool = createMemoryWriteTool(storage, "test-project", "session-1");
+    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
 
     const result = await tool.execute(
       "id",
@@ -164,7 +164,7 @@ describe("memory_write tool", () => {
     };
 
     const storage = createMockStorage([existing]);
-    const tool = createMemoryWriteTool(storage, "test-project", "session-1");
+    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
 
     const result = await tool.execute(
       "id",
@@ -183,7 +183,7 @@ describe("memory_write tool", () => {
 
   it("deve usar scope=project como default", async () => {
     const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", "session-1");
+    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
 
     await tool.execute(
       "id",
@@ -199,7 +199,7 @@ describe("memory_write tool", () => {
 
   it("deve gerar content_hash automaticamente", async () => {
     const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", "session-1");
+    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
 
     await tool.execute(
       "id",
@@ -216,7 +216,7 @@ describe("memory_write tool", () => {
 
   it("deve armazenar session_id nos source_ids", async () => {
     const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", "session-xyz");
+    const tool = createMemoryWriteTool(storage, "test-project", () => "session-xyz");
 
     await tool.execute(
       "id",

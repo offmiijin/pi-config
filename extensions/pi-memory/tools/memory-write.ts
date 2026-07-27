@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 export function createMemoryWriteTool(
   storage: IStorage,
   projectId: string,
-  sessionId: string
+  getSessionId: () => string
 ) {
   return {
     name: "memory_write",
@@ -113,7 +113,7 @@ export function createMemoryWriteTool(
         timestamp: now,
         last_accessed: now,
         access_count: 1,
-        source_ids: [sessionId],
+        source_ids: [getSessionId()],
         superseded_by: null as string | null,
         pinned: false,
         project_id: projectId,
