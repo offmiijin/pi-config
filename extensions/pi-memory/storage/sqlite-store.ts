@@ -2,11 +2,11 @@
  * SqliteStore — Camada warm de storage: SQLite + FTS5.
  *
  * Responsável por persistência primária das memórias e observações.
- * Usa better-sqlite3 (síncrono, sem dependência nativa complexa).
+ * Usa bun:sqlite (nativo no Bun, sem dependências externas).
  * FTS5 para busca full-text (BM25).
  */
 
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import type { Memory, MemoryType, MemoryScope, RawObservation } from "../types";
 
 // ── SQL DDL ────────────────────────────────────────────────────────────
@@ -77,177 +77,186 @@ CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
 `;
 
-// ── Prepared Statements ────────────────────────────────────────────────
-// Guardados como propriedades para reuso e performance.
+// ── SQL Statements (reusadas via db.query cache interno) ───────────────
+
+const SQL = {
+  insertMemory: `
+    INSERT INTO memories (id, text, embedding, type, scope, tags, confidence,
+      timestamp, last_accessed, access_count, source_ids, superseded_by,
+      pinned, project_id, content_hash)
+    VALUES ($id, $text, $embedding, $type, $scope, $tags, $confidence,
+      $timestamp, $last_accessed, $access_count, $source_ids, $superseded_by,
+      $pinned, $project_id, $content_hash)
+  `,
+
+  getMemory: `SELECT * FROM memories WHERE id = $id`,
+
+  getMemoriesByProject: `SELECT * FROM memories WHERE project_id = $project_id ORDER BY timestamp DESC`,
+
+  getMemoryByHash: `SELECT * FROM memories WHERE project_id = $project_id AND content_hash = $content_hash`,
+
+  updateMemory: `
+    UPDATE memories SET
+      text = $text, embedding = $embedding, type = $type, scope = $scope,
+      tags = $tags, confidence = $confidence, timestamp = $timestamp,
+      last_accessed = $last_accessed, access_count = $access_count,
+      source_ids = $source_ids, superseded_by = $superseded_by,
+      pinned = $pinned, project_id = $project_id, content_hash = $content_hash
+    WHERE id = $id
+  `,
+
+  deleteMemory: `DELETE FROM memories WHERE id = $id`,
+
+  insertObservation: `
+    INSERT INTO observations (id, session_id, project_id, timestamp, type,
+      tool_name, input_json, outcome, content_preview, error_preview,
+      file_paths, ttl, extracted)
+    VALUES ($id, $session_id, $project_id, $timestamp, $type,
+      $tool_name, $input_json, $outcome, $content_preview, $error_preview,
+      $file_paths, $ttl, $extracted)
+  `,
+
+  getObservations: `SELECT * FROM observations WHERE project_id = $project_id ORDER BY timestamp DESC LIMIT $limit`,
+
+  getPendingObservations: `SELECT * FROM observations WHERE extracted = 0 AND project_id = $project_id ORDER BY timestamp ASC`,
+
+  markExtracted: `UPDATE observations SET extracted = 1 WHERE id = $id`,
+
+  deleteExpiredObservations: `DELETE FROM observations WHERE ttl < $now`,
+
+  countMemories: `SELECT COUNT(*) as count FROM memories`,
+
+  countObservations: `SELECT COUNT(*) as count FROM observations`,
+
+  countPendingExtraction: `SELECT COUNT(*) as count FROM observations WHERE extracted = 0`,
+
+  ftsSearch: `
+    SELECT m.*, bm25(memories_fts) as bm25_score
+    FROM memories m
+    JOIN memories_fts ON m.rowid = memories_fts.rowid
+    WHERE memories_fts MATCH $query
+      AND m.project_id = $project_id
+    ORDER BY bm25_score
+    LIMIT $limit
+  `,
+};
+
+// ── Store ──────────────────────────────────────────────────────────────
 
 export class SqliteStore {
-  private db: Database.Database;
-  private stmts: {
-    insertMemory: Database.Statement;
-    getMemory: Database.Statement;
-    getMemoriesByProject: Database.Statement;
-    getMemoryByHash: Database.Statement;
-    updateMemory: Database.Statement;
-    deleteMemory: Database.Statement;
-    insertObservation: Database.Statement;
-    getObservations: Database.Statement;
-    getPendingObservations: Database.Statement;
-    markExtracted: Database.Statement;
-    deleteExpiredObservations: Database.Statement;
-    countMemories: Database.Statement;
-    countObservations: Database.Statement;
-    countPendingExtraction: Database.Statement;
-    ftsSearch: Database.Statement;
-  };
+  private db: Database;
 
   constructor(dbPath: string | ":memory:") {
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
+    this.db = new Database(dbPath, { create: true });
+    this.db.run("PRAGMA journal_mode = WAL");
+    this.db.run("PRAGMA foreign_keys = ON");
     this.db.exec(SCHEMA_SQL);
-
-    this.stmts = {
-      insertMemory: this.db.prepare(`
-        INSERT INTO memories (id, text, embedding, type, scope, tags, confidence,
-          timestamp, last_accessed, access_count, source_ids, superseded_by,
-          pinned, project_id, content_hash)
-        VALUES (@id, @text, @embedding, @type, @scope, @tags, @confidence,
-          @timestamp, @last_accessed, @access_count, @source_ids, @superseded_by,
-          @pinned, @project_id, @content_hash)
-      `),
-
-      getMemory: this.db.prepare(`SELECT * FROM memories WHERE id = ?`),
-
-      getMemoriesByProject: this.db.prepare(
-        `SELECT * FROM memories WHERE project_id = ? ORDER BY timestamp DESC`
-      ),
-
-      getMemoryByHash: this.db.prepare(
-        `SELECT * FROM memories WHERE project_id = ? AND content_hash = ?`
-      ),
-
-      updateMemory: this.db.prepare(`
-        UPDATE memories SET
-          text = @text, embedding = @embedding, type = @type, scope = @scope,
-          tags = @tags, confidence = @confidence, timestamp = @timestamp,
-          last_accessed = @last_accessed, access_count = @access_count,
-          source_ids = @source_ids, superseded_by = @superseded_by,
-          pinned = @pinned, project_id = @project_id, content_hash = @content_hash
-        WHERE id = @id
-      `),
-
-      deleteMemory: this.db.prepare(`DELETE FROM memories WHERE id = ?`),
-
-      insertObservation: this.db.prepare(`
-        INSERT INTO observations (id, session_id, project_id, timestamp, type,
-          tool_name, input_json, outcome, content_preview, error_preview,
-          file_paths, ttl, extracted)
-        VALUES (@id, @session_id, @project_id, @timestamp, @type,
-          @tool_name, @input_json, @outcome, @content_preview, @error_preview,
-          @file_paths, @ttl, @extracted)
-      `),
-
-      getObservations: this.db.prepare(
-        `SELECT * FROM observations WHERE project_id = ? ORDER BY timestamp DESC LIMIT ?`
-      ),
-
-      getPendingObservations: this.db.prepare(
-        `SELECT * FROM observations WHERE extracted = 0 AND project_id = ? ORDER BY timestamp ASC`
-      ),
-
-      markExtracted: this.db.prepare(
-        `UPDATE observations SET extracted = 1 WHERE id = ?`
-      ),
-
-      deleteExpiredObservations: this.db.prepare(
-        `DELETE FROM observations WHERE ttl < ?`
-      ),
-
-      countMemories: this.db.prepare(`SELECT COUNT(*) as count FROM memories`),
-
-      countObservations: this.db.prepare(`SELECT COUNT(*) as count FROM observations`),
-
-      countPendingExtraction: this.db.prepare(
-        `SELECT COUNT(*) as count FROM observations WHERE extracted = 0`
-      ),
-
-      ftsSearch: this.db.prepare(`
-        SELECT m.*, bm25(memories_fts) as bm25_score
-        FROM memories m
-        JOIN memories_fts ON m.rowid = memories_fts.rowid
-        WHERE memories_fts MATCH @query
-          AND m.project_id = @project_id
-        ORDER BY bm25_score
-        LIMIT @limit
-      `),
-    };
   }
 
   // ── Memória ────────────────────────────────────────────────────────
 
   insertMemory(mem: Memory): void {
-    this.stmts.insertMemory.run({
-      ...mem,
-      embedding: mem.embedding ? Buffer.from(mem.embedding.buffer) : null,
-      tags: JSON.stringify(mem.tags),
-      source_ids: JSON.stringify(mem.source_ids),
-      pinned: mem.pinned ? 1 : 0,
+    this.db.query(SQL.insertMemory).run({
+      $id: mem.id,
+      $text: mem.text,
+      $embedding: mem.embedding ? new Uint8Array(mem.embedding.buffer) : null,
+      $type: mem.type,
+      $scope: mem.scope,
+      $tags: JSON.stringify(mem.tags),
+      $confidence: mem.confidence,
+      $timestamp: mem.timestamp,
+      $last_accessed: mem.last_accessed,
+      $access_count: mem.access_count,
+      $source_ids: JSON.stringify(mem.source_ids),
+      $superseded_by: mem.superseded_by,
+      $pinned: mem.pinned ? 1 : 0,
+      $project_id: mem.project_id,
+      $content_hash: mem.content_hash,
     });
   }
 
   getMemory(id: string): Memory | null {
-    const row = this.stmts.getMemory.get(id) as Record<string, unknown> | undefined;
+    const row = this.db.query(SQL.getMemory).get({ $id: id }) as Record<string, unknown> | undefined;
     return row ? this.rowToMemory(row) : null;
   }
 
   getMemoriesByProject(projectId: string): Memory[] {
-    const rows = this.stmts.getMemoriesByProject.all(projectId) as Record<string, unknown>[];
+    const rows = this.db.query(SQL.getMemoriesByProject).all({
+      $project_id: projectId,
+    }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
   }
 
   getMemoryByHash(projectId: string, contentHash: string): Memory | null {
-    const row = this.stmts.getMemoryByHash.get(projectId, contentHash) as Record<string, unknown> | undefined;
+    const row = this.db.query(SQL.getMemoryByHash).get({
+      $project_id: projectId,
+      $content_hash: contentHash,
+    }) as Record<string, unknown> | undefined;
     return row ? this.rowToMemory(row) : null;
   }
 
   updateMemory(mem: Memory): void {
-    this.stmts.updateMemory.run({
-      ...mem,
-      embedding: mem.embedding ? Buffer.from(mem.embedding.buffer) : null,
-      tags: JSON.stringify(mem.tags),
-      source_ids: JSON.stringify(mem.source_ids),
-      pinned: mem.pinned ? 1 : 0,
+    this.db.query(SQL.updateMemory).run({
+      $id: mem.id,
+      $text: mem.text,
+      $embedding: mem.embedding ? new Uint8Array(mem.embedding.buffer) : null,
+      $type: mem.type,
+      $scope: mem.scope,
+      $tags: JSON.stringify(mem.tags),
+      $confidence: mem.confidence,
+      $timestamp: mem.timestamp,
+      $last_accessed: mem.last_accessed,
+      $access_count: mem.access_count,
+      $source_ids: JSON.stringify(mem.source_ids),
+      $superseded_by: mem.superseded_by,
+      $pinned: mem.pinned ? 1 : 0,
+      $project_id: mem.project_id,
+      $content_hash: mem.content_hash,
     });
   }
 
   deleteMemory(id: string): void {
-    this.stmts.deleteMemory.run(id);
+    this.db.query(SQL.deleteMemory).run({ $id: id });
   }
 
   // ── Observações ────────────────────────────────────────────────────
 
   insertObservation(obs: RawObservation): void {
-    this.stmts.insertObservation.run({
-      ...obs,
-      input_json: obs.input_json ?? null,
-      tool_name: obs.tool_name ?? null,
-      error_preview: obs.error_preview ?? null,
-      file_paths: JSON.stringify(obs.file_paths),
-      extracted: obs.extracted ? 1 : 0,
+    this.db.query(SQL.insertObservation).run({
+      $id: obs.id,
+      $session_id: obs.session_id,
+      $project_id: obs.project_id,
+      $timestamp: obs.timestamp,
+      $type: obs.type,
+      $tool_name: obs.tool_name ?? null,
+      $input_json: obs.input_json ?? null,
+      $outcome: obs.outcome,
+      $content_preview: obs.content_preview,
+      $error_preview: obs.error_preview ?? null,
+      $file_paths: JSON.stringify(obs.file_paths),
+      $ttl: obs.ttl,
+      $extracted: obs.extracted ? 1 : 0,
     });
   }
 
   insertObservationsBatch(observations: RawObservation[]): void {
-    const insert = this.stmts.insertObservation;
+    const insert = this.db.query(SQL.insertObservation);
     const tx = this.db.transaction((obs: RawObservation[]) => {
       for (const o of obs) {
         insert.run({
-          ...o,
-          input_json: o.input_json ?? null,
-          tool_name: o.tool_name ?? null,
-          error_preview: o.error_preview ?? null,
-          file_paths: JSON.stringify(o.file_paths),
-          extracted: o.extracted ? 1 : 0,
+          $id: o.id,
+          $session_id: o.session_id,
+          $project_id: o.project_id,
+          $timestamp: o.timestamp,
+          $type: o.type,
+          $tool_name: o.tool_name ?? null,
+          $input_json: o.input_json ?? null,
+          $outcome: o.outcome,
+          $content_preview: o.content_preview,
+          $error_preview: o.error_preview ?? null,
+          $file_paths: JSON.stringify(o.file_paths),
+          $ttl: o.ttl,
+          $extracted: o.extracted ? 1 : 0,
         });
       }
     });
@@ -255,38 +264,45 @@ export class SqliteStore {
   }
 
   getObservations(projectId: string, limit = 100): RawObservation[] {
-    const rows = this.stmts.getObservations.all(projectId, limit) as Record<string, unknown>[];
+    const rows = this.db.query(SQL.getObservations).all({
+      $project_id: projectId,
+      $limit: limit,
+    }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToObservation(r));
   }
 
   getPendingObservations(projectId: string): RawObservation[] {
-    const rows = this.stmts.getPendingObservations.all(projectId) as Record<string, unknown>[];
+    const rows = this.db.query(SQL.getPendingObservations).all({
+      $project_id: projectId,
+    }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToObservation(r));
   }
 
   markExtracted(observationIds: string[]): void {
+    const update = this.db.query(SQL.markExtracted);
     const tx = this.db.transaction((ids: string[]) => {
       for (const id of ids) {
-        this.stmts.markExtracted.run(id);
+        update.run({ $id: id });
       }
     });
     tx(observationIds);
   }
 
   cleanupExpired(now: number): number {
-    const result = this.stmts.deleteExpiredObservations.run(now);
+    const result = this.db.run(SQL.deleteExpiredObservations, {
+      $now: now,
+    });
     return result.changes;
   }
 
   // ── Search (FTS5 BM25) ─────────────────────────────────────────────
 
   searchFts(query: string, projectId: string, limit = 20): Array<{ memory: Memory; bm25Score: number }> {
-    // FTS5 MATCH syntax requires proper escaping
     const ftsQuery = this.buildFtsQuery(query);
-    const rows = this.stmts.ftsSearch.all({
-      query: ftsQuery,
-      project_id: projectId,
-      limit,
+    const rows = this.db.query(SQL.ftsSearch).all({
+      $query: ftsQuery,
+      $project_id: projectId,
+      $limit: limit,
     }) as Array<Record<string, unknown>>;
 
     return rows.map((r) => ({
@@ -298,17 +314,17 @@ export class SqliteStore {
   // ── Stats ──────────────────────────────────────────────────────────
 
   countMemories(): number {
-    const row = this.stmts.countMemories.get() as { count: number };
+    const row = this.db.query(SQL.countMemories).get() as { count: number };
     return row.count;
   }
 
   countObservations(): number {
-    const row = this.stmts.countObservations.get() as { count: number };
+    const row = this.db.query(SQL.countObservations).get() as { count: number };
     return row.count;
   }
 
   countPendingExtraction(): number {
-    const row = this.stmts.countPendingExtraction.get() as { count: number };
+    const row = this.db.query(SQL.countPendingExtraction).get() as { count: number };
     return row.count;
   }
 
@@ -321,12 +337,16 @@ export class SqliteStore {
   // ── Serialization ──────────────────────────────────────────────────
 
   private rowToMemory(row: Record<string, unknown>): Memory {
-    const embeddingBytes = row["embedding"] as Buffer | null;
+    const emb = row["embedding"] as Uint8Array | Buffer | ArrayBuffer | null;
     return {
       id: row["id"] as string,
       text: row["text"] as string,
-      embedding: embeddingBytes
-        ? new Float32Array(embeddingBytes.buffer, embeddingBytes.byteOffset, embeddingBytes.length / 4)
+      embedding: emb
+        ? new Float32Array(
+            emb instanceof ArrayBuffer ? emb : emb.buffer,
+            emb instanceof ArrayBuffer ? 0 : emb.byteOffset,
+            (emb instanceof ArrayBuffer ? emb.byteLength : emb.length) / 4
+          )
         : null,
       type: row["type"] as MemoryType,
       scope: row["scope"] as MemoryScope,
@@ -364,11 +384,8 @@ export class SqliteStore {
   // ── FTS5 query builder ─────────────────────────────────────────────
 
   private buildFtsQuery(query: string): string {
-    // Escape FTS5 special characters and build a simple AND query
-    // FTS5 special chars: * " ( ) + - : ^
     const sanitized = query.replace(/["*()+\-:^]/g, " ").trim();
     if (!sanitized) return '""';
-    // Quote each word for exact matching
     const words = sanitized.split(/\s+/).filter(Boolean);
     return words.map((w) => `"${w}"`).join(" ");
   }

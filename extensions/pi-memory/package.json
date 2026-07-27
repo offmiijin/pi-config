@@ -1,14 +1,9 @@
 {
   "private": true,
   "type": "module",
-  "dependencies": {
-    "better-sqlite3": "^13.0.1"
-  },
-  "devDependencies": {
-    "vitest": "^3.2.4"
-  },
+  "dependencies": {},
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "bun test",
+    "test:watch": "bun test --watch"
   }
 }
