@@ -41,17 +41,25 @@ export default function (pi: ExtensionAPI) {
 	// Aviso — adiado para session_start (runtime precisa estar pronto)
 	// Flag evita repetição em resume/fork
 	let notified = false;
-	pi.on("session_start", () => {
+	pi.on("session_start", (_event, ctx) => {
 		if (notified) return;
 		notified = true;
 
 		if (!auth.available) {
+			ctx.ui.notify(
+				"⚠️ gh CLI não encontrado. Tools GitHub desativadas.",
+				"error",
+			);
 			pi.sendMessage({
 				customType: "github_status",
 				content: "⚠️ gh CLI não encontrado. Tools GitHub desativadas. Instale: `apt install gh`",
 				display: true,
 			});
 		} else if (!auth.authenticated) {
+			ctx.ui.notify(
+				"⚠️ gh CLI não autenticado. Tools podem falhar.",
+				"warning",
+			);
 			pi.sendMessage({
 				customType: "github_status",
 				content:
