@@ -22,7 +22,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createGh } from "./gh";
-import { getAuthInfo } from "./auth";
+import { getAuthInfo, getInstallGuide } from "./auth";
 import { createPrTool } from "./tools/create-pr";
 import { createIssueTool } from "./tools/create-issue";
 import { searchTool } from "./tools/search";
@@ -46,13 +46,15 @@ export default function (pi: ExtensionAPI) {
 		notified = true;
 
 		if (!auth.available) {
+			const install = getInstallGuide();
+			const msg = `⚠️ gh CLI não encontrado. Tools GitHub desativadas. Instalação: ${install}`;
 			ctx.ui.notify(
-				"⚠️ gh CLI não encontrado. Tools GitHub desativadas.",
+				`⚠️ gh CLI não encontrado. Instale: ${install}`,
 				"error",
 			);
 			pi.sendMessage({
 				customType: "github_status",
-				content: "⚠️ gh CLI não encontrado. Tools GitHub desativadas. Instale: `apt install gh`",
+				content: msg,
 				display: true,
 			});
 		} else if (!auth.authenticated) {
