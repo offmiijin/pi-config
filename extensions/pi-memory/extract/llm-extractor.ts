@@ -211,13 +211,7 @@ export class LlmExtractor {
   enqueue(observations: RawObservation[]): void {
     if (!this.config.apiKey) return;
 
-    const candidates = observations.filter(
-      (o) =>
-        !o.extracted &&
-        o.content_preview &&
-        o.content_preview.length > 50,
-    );
-
+    const candidates = this.filterCandidates(observations);
     if (candidates.length === 0) return;
     this.pendingObs.push(...candidates);
 
@@ -227,6 +221,18 @@ export class LlmExtractor {
       this.timer = setTimeout(() => this.extract(), this.config.maxWaitMs);
       if (this.timer.unref) this.timer.unref();
     }
+  }
+
+  /**
+   * Extração direta de um batch (usado pelo SweepConsolidator).
+   * Fire-and-forget: não espera resultado.
+   *
+   * @param observations - Observações a extrair (já devem estar filtradas)
+   */
+  extractBatch(observations: RawObservation[]): void {
+    if (!this.config.apiKey) return;
+    if (observations.length === 0) return;
+    this.extract(observations);
   }
 
   /** Para timer e dispara extração do que estiver pendente. */
@@ -239,6 +245,15 @@ export class LlmExtractor {
 
   // ── Private ─────────────────────────────────────────────────────
 
+  private filterCandidates(observations: RawObservation[]): RawObservation[] {
+    return observations.filter(
+      (o) =>
+        !o.extracted &&
+        o.content_preview &&
+        o.content_preview.length > 50,
+    );
+  }
+
   private clearTimer(): void {
     if (this.timer) {
       clearTimeout(this.timer);
@@ -246,13 +261,25 @@ export class LlmExtractor {
     }
   }
 
-  private async extract(): Promise<void> {
-    if (this.busy || this.pendingObs.length === 0) return;
-    this.clearTimer();
-    this.busy = true;
+  /**
+   * Executa extração LLM para um batch de observações.
+   * Se `forcedBatch` for fornecido, extrai diretamente dele (bypass enqueue).
+   * Caso contrário, consome do `pendingObs` interno.
+   */
+  private async extract(forcedBatch?: RawObservation[]): Promise<void> {
+    const isForced = forcedBatch !== undefined;
+    const batch =
+      forcedBatch ??
+      this.pendingObs.splice(0, Math.min(this.pendingObs.length, this.config.batchSize));
 
-    const batchSize = Math.min(this.pendingObs.length, this.config.batchSize);
-    const batch = this.pendingObs.splice(0, batchSize);
+    if (batch.length === 0) return;
+
+    // Para modo enqueue, verifica busy e limpa timer
+    if (!isForced) {
+      if (this.busy) return;
+      this.clearTimer();
+      this.busy = true;
+    }
 
     try {
       const prompt = buildExtractionPrompt(batch);
@@ -347,12 +374,14 @@ export class LlmExtractor {
         }
       }
     } finally {
-      this.busy = false;
-
-      // Se ainda há pendentes, agenda próximo batch
-      if (this.pendingObs.length > 0 && !this.timer) {
-        this.timer = setTimeout(() => this.extract(), this.config.maxWaitMs);
-        if (this.timer.unref) this.timer.unref();
+      // Só gerencia busy/timer no modo enqueue
+      if (!isForced) {
+        this.busy = false;
+        // Se ainda há pendentes, agenda próximo batch
+        if (this.pendingObs.length > 0 && !this.timer) {
+          this.timer = setTimeout(() => this.extract(), this.config.maxWaitMs);
+          if (this.timer.unref) this.timer.unref();
+        }
       }
     }
   }

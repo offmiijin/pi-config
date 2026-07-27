@@ -17,6 +17,7 @@ import { createCaptureHooks } from "./capture/hooks";
 import { RegexExtractor } from "./extract/regex-extractor";
 import { LlmExtractor } from "./extract/llm-extractor";
 import type { LlmExtractorConfig } from "./extract/llm-extractor";
+import { SweepConsolidator } from "./consolidate/sweep";
 import { Bm25Retriever } from "./retrieve/bm25";
 import { createInjectHandler } from "./inject/context-builder";
 import { createMemorySearchTool } from "./tools/memory-search";
@@ -33,6 +34,7 @@ let buffer: ObservationBuffer | null = null;
 let retriever: Bm25Retriever | null = null;
 let regexExtractor: RegexExtractor | null = null;
 let llmExtractor: LlmExtractor | null = null;
+let sweepConsolidator: SweepConsolidator | null = null;
 let sessionId: string | null = null;
 
 function resetStats(): MemoryStats {
@@ -133,6 +135,27 @@ export default function (pi: ExtensionAPI) {
               stats.operations.extractions_n3 += count;
             },
           );
+
+          // Inicializa sweep consolidator (N2)
+          sweepConsolidator = new SweepConsolidator(
+            storage,
+            llmExtractor,
+            projectId,
+            {
+              intervalMs: config.llm_extraction.sweep_interval_ms,
+              observationThreshold: config.llm_extraction.sweep_observation_threshold,
+              decayEnabled: config.consolidation.decay_enabled,
+              decayDays: config.consolidation.decay_days,
+              decayFactor: config.consolidation.decay_factor,
+              pruningEnabled: true,
+              pruningConfidenceThreshold: config.consolidation.pruning_confidence_threshold,
+              pruningAgeDays: config.consolidation.pruning_age_days,
+            },
+            () => {
+              stats.operations.consolidations_n2++;
+            },
+          );
+          sweepConsolidator.schedule();
         }
       }
 
@@ -271,6 +294,12 @@ export default function (pi: ExtensionAPI) {
     if (llmExtractor) {
       llmExtractor.shutdown();
       llmExtractor = null;
+    }
+
+    // Stop sweep
+    if (sweepConsolidator) {
+      sweepConsolidator.stop();
+      sweepConsolidator = null;
     }
 
     retriever = null;
