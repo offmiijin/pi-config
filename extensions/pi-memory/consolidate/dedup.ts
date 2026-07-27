@@ -242,8 +242,8 @@ export interface ConsolidateN1Input {
 }
 
 export interface ConsolidateN1Output {
-  /** Ação: "create" (nova), "update" (atualizou existente), "supersede" (substituiu) */
-  action: "create" | "update" | "supersede";
+  /** Ação: "create" (nova), "reinforce" (hash match), "update" (chave composta), "supersede" (substituiu) */
+  action: "create" | "reinforce" | "update" | "supersede";
   /** Memória a ser persistida */
   memory: Memory;
   /** Se action="supersede", ID da memória que foi superada */
@@ -266,7 +266,7 @@ export function consolidateN1(input: ConsolidateN1Input): ConsolidateN1Output {
   const hashResult = dedupByHash(input.memory, existingByHash);
 
   if (!hashResult.created) {
-    return { action: "update", memory: hashResult.memory };
+    return { action: "reinforce", memory: hashResult.memory };
   }
 
   // Step 2: Last fact wins por chave composta

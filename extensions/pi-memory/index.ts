@@ -142,6 +142,17 @@ export default function (pi: ExtensionAPI) {
 
     const projectId = hashProjectId(pi.projectDir ?? "default");
 
+    // 1. CAPTURE: registra user prompt como observação
+    if (buffer && sessionId) {
+      const hooks = createCaptureHooks(buffer, projectId, sessionId);
+      hooks.onBeforeAgentStart(
+        event as Parameters<typeof hooks.onBeforeAgentStart>[0],
+        _ctx
+      );
+      stats.operations.captures++;
+    }
+
+    // 2. INJECT: busca memórias e injeta no system prompt
     const injectHandler = createInjectHandler({
       retriever,
       projectId,

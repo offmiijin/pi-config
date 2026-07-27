@@ -8,7 +8,7 @@
 import { Type } from "typebox";
 import type { IStorage } from "../storage/index";
 import type { MemoryType, MemoryScope } from "../types";
-import { contentHash, compositeKey } from "../consolidate/dedup";
+import { contentHash, compositeKey, consolidateN1 } from "../consolidate/dedup";
 import { randomUUID } from "node:crypto";
 
 export function createMemoryWriteTool(
@@ -70,40 +70,9 @@ export function createMemoryWriteTool(
       const scope = params.scope ?? "project";
       const tags = params.tags ?? [];
       const hash = contentHash(params.text);
-      const key = compositeKey(params.type, scope, tags);
 
-      // Verifica dedup por hash
-      const existingByHash = storage.getMemoryByHash(projectId, hash);
-
-      if (existingByHash && !existingByHash.superseded_by) {
-        // Reforça existente
-        const updated = {
-          ...existingByHash,
-          access_count: existingByHash.access_count + 1,
-          last_accessed: now,
-          confidence: Math.min(existingByHash.confidence + 0.05, 1.0),
-        };
-        storage.updateMemory(updated);
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Memory reinforced (already exists). Confidence: ${updated.confidence.toFixed(2)}`,
-            },
-          ],
-          details: { action: "reinforce", id: updated.id },
-        };
-      }
-
-      // Verifica last-fact-wins por chave composta
-      const existingByKey = storage.getMemoriesByProject(projectId).find(
-        (m) => !m.superseded_by && compositeKey(m.type, m.scope, m.tags) === key
-      );
-
-      const id = randomUUID();
       const memory = {
-        id,
+        id: randomUUID(),
         text: params.text,
         embedding: null as Float32Array | null,
         type: params.type,
@@ -120,73 +89,91 @@ export function createMemoryWriteTool(
         content_hash: hash,
       };
 
-      if (existingByKey) {
-        // Contradição ou atualização
-        const contradictionPatterns = [
-          /\bnão\s+(?:usa|utiliza|usar|utilizar)\s+mais\b/i,
-          /\b(?:mudou|alterou|trocou|migrou)\s+(?:de\s+)?\w+\s+para\b/i,
-          /\bagora\s+(?:prefere|usa|utiliza|recomenda)\b/i,
-          /\b(?:substitu[ií]do|substitui)\s+por\b/i,
-          /\b(?:descontinuado|deprecated|obsoleto)\b/i,
-        ];
+      // Pipeline N1: dedup por hash → last-fact-wins por chave composta
+      const result = consolidateN1({
+        memory,
+        getByHash: (pid, h) => storage.getMemoryByHash(pid, h),
+        getByKey: (key) => {
+          return (
+            storage
+              .getMemoriesByProject(projectId)
+              .find(
+                (m) =>
+                  !m.superseded_by &&
+                  compositeKey(m.type, m.scope, m.tags) === key
+              ) ?? null
+          );
+        },
+      });
 
-        const hasContradiction = contradictionPatterns.some((p) =>
-          p.test(params.text)
-        );
-
-        if (hasContradiction) {
-          // Supersede: marca antiga como superada, cria nova
-          storage.updateMemory({
-            ...existingByKey,
-            superseded_by: id,
-          });
-          storage.insertMemory(memory);
-
+      switch (result.action) {
+        case "create": {
+          storage.insertMemory(result.memory);
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Memory saved (superseded previous: "${existingByKey.text.slice(0, 80)}"). ID: ${id}`,
+                text: `Memory saved. ID: ${result.memory.id}`,
               },
             ],
-            details: { action: "supersede", id, superseded_id: existingByKey.id },
+            details: { action: "create", id: result.memory.id },
           };
         }
 
-        // Atualiza existente
-        const updated = {
-          ...existingByKey,
-          text: params.text,
-          confidence: Math.min(existingByKey.confidence + 0.05, 1.0),
-          last_accessed: now,
-          access_count: existingByKey.access_count + 1,
-          content_hash: hash,
-        };
-        storage.updateMemory(updated);
+        case "reinforce": {
+          storage.updateMemory(result.memory);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Memory reinforced (already exists). Confidence: ${result.memory.confidence.toFixed(2)}`,
+              },
+            ],
+            details: { action: "reinforce", id: result.memory.id },
+          };
+        }
 
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Memory updated. Confidence: ${updated.confidence.toFixed(2)}`,
+        case "update": {
+          storage.updateMemory(result.memory);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Memory updated. Confidence: ${result.memory.confidence.toFixed(2)}`,
+              },
+            ],
+            details: { action: "update", id: result.memory.id },
+          };
+        }
+
+        case "supersede": {
+          if (result.supersededId) {
+            const oldMem = storage
+              .getMemoriesByProject(projectId)
+              .find((m) => m.id === result.supersededId);
+            if (oldMem) {
+              storage.updateMemory({
+                ...oldMem,
+                superseded_by: result.memory.id,
+              });
+            }
+          }
+          storage.insertMemory(result.memory);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Memory saved (superseded previous). ID: ${result.memory.id}`,
+              },
+            ],
+            details: {
+              action: "supersede",
+              id: result.memory.id,
+              superseded_id: result.supersededId,
             },
-          ],
-          details: { action: "update", id: existingByKey.id },
-        };
+          };
+        }
       }
-
-      // Nova memória
-      storage.insertMemory(memory);
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Memory saved. ID: ${id}`,
-          },
-        ],
-        details: { action: "create", id },
-      };
     },
   };
 }

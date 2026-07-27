@@ -9,72 +9,72 @@ Cada fase lista tarefas na ordem em que DEVEM ser implementadas. Tarefas dentro 
 ## Fase 1: Fundação (MVP)
 
 ### 1.1 — Estrutura do Projeto
-- [ ] Criar `package.json` com dependências: `better-sqlite3`
-- [ ] Criar `types.ts` com todas as interfaces (Memory, RawObservation, Config, etc.)
-- [ ] Criar `config.ts` com `loadConfig()` (global + project-local)
-- [ ] Criar `index.ts` (factory principal) com esqueleto: `export default function(pi: ExtensionAPI) {}`
+- [x] Criar `package.json` com dependências: `better-sqlite3`
+- [x] Criar `types.ts` com todas as interfaces (Memory, RawObservation, Config, etc.)
+- [x] Criar `config.ts` com `loadConfig()` (global + project-local)
+- [x] Criar `index.ts` (factory principal) com esqueleto: `export default function(pi: ExtensionAPI) {}`
 
 ### 1.2 — STORAGE (Warm + Cold)
-- [ ] `storage/sqlite-store.ts`: classe `SqliteStore`
+- [x] `storage/sqlite-store.ts`: classe `SqliteStore`
   - `open()`: abre/ cria database, executa schema DDL
   - `insertMemory(memory)`: INSERT + trigger FTS5 sync
   - `insertObservation(obs)`: INSERT com TTL
   - `getMemory(id)`: SELECT by id
   - `getMemoriesByProject(projectId)`: SELECT com filtro
   - `close()`: fecha database
-- [ ] `storage/json-store.ts`: classe `JsonStore`
+- [x] `storage/json-store.ts`: classe `JsonStore`
   - `writeMemories(memories)`: escreve `data/memories.json`
   - `writeObservations(observations)`: escreve `data/observations.json`
   - `readMemories()`: lê `data/memories.json`
   - `readObservations()`: lê `data/observations.json`
-- [ ] `storage/index.ts`: interface `IStorage` unificando SqliteStore + JsonStore
+- [x] `storage/index.ts`: interface `IStorage` unificando SqliteStore + JsonStore
 
 ### 1.3 — CAPTURE
-- [ ] `capture/buffer.ts`: classe `ObservationBuffer`
+- [x] `capture/buffer.ts`: classe `ObservationBuffer`
   - `enqueue(obs)`: adiciona ao buffer
   - `flush()`: escreve buffer para storage
   - `size()`: número de observações pendentes
-- [ ] `capture/hooks.ts`: handlers de eventos
+- [x] `capture/hooks.ts`: handlers de eventos
   - `onToolResult(event, ctx)`: cria RawObservation, enfileira no buffer
   - `onBeforeAgentStart(event, ctx)`: registra user prompt
   - `onSessionShutdown(event, ctx)`: flush buffer
 
 ### 1.4 — CONSOLIDATE (N1 apenas)
-- [ ] `consolidate/dedup.ts`: funções puras
+- [x] `consolidate/dedup.ts`: funções puras
   - `normalizeObservation(obs)`: remove timestamps, UUIDs, paths absolutos
   - `dedupByHash(obs, existing)`: SHA256 check
   - `lastFactWins(newMemory, existing)`: chave composta, detecção de contradição
 
 ### 1.5 — RETRIEVE (BM25 apenas)
-- [ ] `retrieve/bm25.ts`: classe `Bm25Retriever`
+- [x] `retrieve/bm25.ts`: classe `Bm25Retriever`
   - `search(query, projectId, topK)`: FTS5 MATCH query
   - `formatResults(results)`: formata para injeção
 
 ### 1.6 — INJECT (Simples)
-- [ ] `inject/context-builder.ts`: função `buildMemoryBlock(memories)`
+- [x] `inject/context-builder.ts`: função `buildMemoryBlock(memories)`
   - Formata top-5 memórias como bullet points
   - Cap: 4KB
-- [ ] `inject/context-builder.ts`: handler `onBeforeAgentStart`
+- [x] `inject/context-builder.ts`: handler `onBeforeAgentStart`
   - Busca memórias com `retrieve.search(event.prompt)`
   - Injeta bloco no `systemPrompt`
 
 ### 1.7 — Tools
-- [ ] `tools/memory-search.ts`: tool `memory_search`
+- [x] `tools/memory-search.ts`: tool `memory_search`
   - Parâmetros: query, type?, scope?
   - Usa `retrieve.search()`
-- [ ] `tools/memory-write.ts`: tool `memory_write`
+- [x] `tools/memory-write.ts`: tool `memory_write`
   - Parâmetros: text, type, tags?, scope?
   - Cria Memory, persiste no storage
-- [ ] `tools/memory-status.ts`: tool `memory_status`
+- [x] `tools/memory-status.ts`: tool `memory_status`
   - Retorna estatísticas: total memories, observations, index status
 
 ### 1.8 — Integração no `index.ts`
-- [ ] Registrar flag `--no-memory`
-- [ ] `session_start`: init storage, carregar config, status na footer
-- [ ] `tool_result`: handler de captura
-- [ ] `before_agent_start`: handler de injeção
-- [ ] `session_shutdown`: flush + fechar storage
-- [ ] Registrar tools: `memory_search`, `memory_write`, `memory_status`
+- [x] Registrar flag `--no-memory`
+- [x] `session_start`: init storage, carregar config, status na footer
+- [x] `tool_result`: handler de captura
+- [x] `before_agent_start`: handler de injeção
+- [x] `session_shutdown`: flush + fechar storage
+- [x] Registrar tools: `memory_search`, `memory_write`, `memory_status`
 
 ---
 

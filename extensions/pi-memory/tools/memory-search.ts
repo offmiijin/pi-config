@@ -43,6 +43,7 @@ export function createMemorySearchTool(
           [
             Type.Literal("project"),
             Type.Literal("user"),
+            Type.Literal("session"),
             Type.Literal("global"),
           ],
           { description: "Filter by scope (default: project)", default: "project" }
@@ -59,14 +60,14 @@ export function createMemorySearchTool(
     ) {
       const results = retriever.search(params.query, projectId, 10);
 
-      // Filtra por type e scope se especificado
+      const scope = params.scope ?? "project";
+
+      // Filtra por type e scope
       let filtered = results;
       if (params.type) {
         filtered = filtered.filter((r) => r.memory.type === params.type);
       }
-      if (params.scope) {
-        filtered = filtered.filter((r) => r.memory.scope === params.scope);
-      }
+      filtered = filtered.filter((r) => r.memory.scope === scope);
 
       if (filtered.length === 0) {
         return {

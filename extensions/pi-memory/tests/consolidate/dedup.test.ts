@@ -398,7 +398,7 @@ describe("consolidateN1 (pipeline completo)", () => {
     expect(result.memory.id).toBe(mem.id);
   });
 
-  it("deve atualizar por hash (step 1)", () => {
+  it("deve reforçar por hash (step 1)", () => {
     const hash = contentHash("teste");
     const existing = makeMem({ id: "exist", content_hash: hash, text: "teste" });
     const mem = makeMem({ content_hash: hash, text: "teste" });
@@ -409,7 +409,7 @@ describe("consolidateN1 (pipeline completo)", () => {
       getByKey: () => null,
     });
 
-    expect(result.action).toBe("update");
+    expect(result.action).toBe("reinforce");
     expect(result.memory.id).toBe("exist");
   });
 
