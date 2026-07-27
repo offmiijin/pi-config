@@ -411,7 +411,7 @@ async function logEvent(
   if (ctx?.hasUI) {
     ctx.ui.notify(
       `[SEGURANÇA] ${detail}`,
-      blocked ? "error" : "info"
+      blocked ? "error" : "warning"
     );
   }
 }
@@ -432,10 +432,12 @@ async function handleBashCommand(
       }
 
       if (config.mode === "audit-only") {
+        await logEvent("bash", `${entry.reason}: ${masked} (audit-only)`, false, ctx);
         return undefined;
       }
 
       if (config.mode === "permissive") {
+        await logEvent("bash", `${entry.reason}: ${masked} (permissivo)`, false, ctx);
         return undefined;
       }
 
@@ -472,6 +474,7 @@ async function handleBashCommand(
         return { block: true, reason: `[BLOQUEADO] ${entry.reason}: ${command}` };
       }
       if (config.mode === "audit-only" || config.mode === "permissive") {
+        await logEvent("bash", `${entry.reason}: ${command} (${config.mode})`, false, ctx);
         return undefined;
       }
       if (!ctx.hasUI) {
@@ -508,6 +511,7 @@ async function handlePathAccess(
       }
 
       if (config.mode === "audit-only" || config.mode === "permissive") {
+        await logEvent(toolName, `${entry.reason}: ${path} (${config.mode})`, false, ctx);
         return undefined;
       }
 
@@ -588,6 +592,7 @@ export default function (pi: ExtensionAPI) {
             return { block: true, reason: `[BLOQUEADO] ${entry.reason}: ${str}` };
           }
           if (config.mode === "audit-only" || config.mode === "permissive") {
+            await logEvent(toolName, `${entry.reason}: ${str} (${config.mode})`, false, ctx);
             return undefined;
           }
           if (!ctx.hasUI) {
