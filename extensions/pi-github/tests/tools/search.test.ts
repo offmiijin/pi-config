@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { searchTool } from "../tools/search";
+import { searchTool } from "../../tools/search";
 
 // ---------------------------------------------------------------------------
 // Helpers

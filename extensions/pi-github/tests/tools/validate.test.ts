@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildTitle, validateTitle, VALID_TYPES } from "../tools/validate";
+import { buildTitle, validateTitle, VALID_TYPES } from "../../tools/validate";
 
 // ---------------------------------------------------------------------------
 // buildTitle
