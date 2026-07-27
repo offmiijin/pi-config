@@ -391,9 +391,14 @@ export class SqliteStore {
   // ── FTS5 query builder ─────────────────────────────────────────────
 
   private buildFtsQuery(query: string): string {
-    const sanitized = query.replace(/["*()+\-:^]/g, " ").trim();
+    // Remove FTS5 special chars exceto * (prefix)
+    const sanitized = query.replace(/["()+\-:^]/g, " ").trim();
     if (!sanitized) return '""';
     const words = sanitized.split(/\s+/).filter(Boolean);
-    return words.map((w) => `"${w}"`).join(" ");
+    // Prefix match: cada termo casa tokens que começam com ele
+    return words.map((w) => {
+      // Se já tem * no final, mantém; senão adiciona para prefix match
+      return w.endsWith("*") ? `"${w.slice(0, -1)}"*` : `"${w}"*`;
+    }).join(" ");
   }
 }
