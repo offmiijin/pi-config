@@ -2,7 +2,7 @@
   "extraction_level": "regex",
   "llm_extraction": {
     "enabled": false,
-    "model": "deepseek/deepseek-v4-flash"
+    "model": "mistralai/mistral-nemo"
   },
   "retrieval": {
     "vector": {

@@ -209,7 +209,7 @@ const PATTERNS: RegexPattern[] = [
   {
     name: "stack_trace",
     regex:
-      /(?:Error|Exception|TypeError|ReferenceError|SyntaxError|RangeError)(?::\s*|\s+)(.+?)(?:\n|$)/i,
+      /(?:Error|Exception|TypeError|ReferenceError|SyntaxError|RangeError)(?::\s*|\s+)(.+?)(?:\n|\||$)/i,
     extract: (match) => {
       const msg = cleanMatch(match[1] ?? "unknown error");
       return {

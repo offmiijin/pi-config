@@ -1027,7 +1027,6 @@ function envFilePath(): string {
 /**
  * Carrega variáveis do arquivo .env para process.env.
  * Apenas chaves ainda não definidas (não sobrescreve env vars existentes).
- * Inclui migração automática: OPENROUTER_API_KEY → LLM_API_KEY / VECTOR_API_KEY / RERANKER_API_KEY.
  */
 function loadEnvFile(): void {
   try {
@@ -1047,14 +1046,6 @@ function loadEnvFile(): void {
       if (!process.env[key] && cleanVal) {
         process.env[key] = cleanVal;
       }
-    }
-
-    // ── Migração: OPENROUTER_API_KEY → LLM_API_KEY / VECTOR_API_KEY / RERANKER_API_KEY ──
-    const oldKey = process.env["OPENROUTER_API_KEY"];
-    if (oldKey) {
-      if (!process.env["LLM_API_KEY"]) process.env["LLM_API_KEY"] = oldKey;
-      if (!process.env["VECTOR_API_KEY"]) process.env["VECTOR_API_KEY"] = oldKey;
-      if (!process.env["RERANKER_API_KEY"]) process.env["RERANKER_API_KEY"] = oldKey;
     }
   } catch {
     // .env é best-effort
