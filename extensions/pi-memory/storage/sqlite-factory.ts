@@ -67,6 +67,35 @@ function createBunDb(req: NodeRequire, path: string): SqliteDatabase {
 
 // ── Node adapter (inline) ────────────────────────────────────────────
 
+/**
+ * Traduz $param → @param no SQL.
+ * better-sqlite3 suporta @param e :param, mas não $param (que o Bun usa).
+ */
+function translateSql(sql: string): string {
+  return sql.replace(/\$(\w+)/g, "@$1");
+}
+
+/**
+ * Traduz chaves $param → param (sem prefixo) nos objetos de bind.
+ * better-sqlite3 usa chaves sem prefixo no JS, independente do
+ * prefixo usado no SQL ($param, @param, :param).
+ * Ex: { $id: 1 } → { id: 1 } para SQL "VALUES (@id)".
+ */
+function translateParams(params: any[]): any[] {
+  return params.map((p) => {
+    if (typeof p === "object" && p !== null && !Array.isArray(p)) {
+      const translated: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(p as Record<string, unknown>)) {
+        // Remove prefix $, @, : dos nomes (better-sqlite3 usa chave sem prefixo)
+        const cleanKey = key.replace(/^[$@:]/, "");
+        translated[cleanKey] = value;
+      }
+      return translated;
+    }
+    return p;
+  });
+}
+
 function createNodeDb(req: NodeRequire, path: string): SqliteDatabase {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let BetterSqlite3: any;
@@ -83,14 +112,14 @@ function createNodeDb(req: NodeRequire, path: string): SqliteDatabase {
 
   return {
     prepare(sql: string): SqliteStatement {
-      const stmt = db.prepare(sql);
+      const stmt = db.prepare(translateSql(sql));
       return {
         run: (...params: any[]) => {
-          const result = stmt.run(...params);
+          const result = stmt.run(...translateParams(params));
           return { changes: result.changes };
         },
-        get: (...params: any[]) => stmt.get(...params),
-        all: (...params: any[]) => stmt.all(...params),
+        get: (...params: any[]) => stmt.get(...translateParams(params)),
+        all: (...params: any[]) => stmt.all(...translateParams(params)),
       };
     },
     exec(sql: string): void {
