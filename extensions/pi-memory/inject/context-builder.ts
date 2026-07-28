@@ -6,7 +6,6 @@
  */
 
 import type { Memory, RetrievalResult } from "../types";
-import type { Bm25Retriever } from "../retrieve/bm25";
 
 // ── Constantes ─────────────────────────────────────────────────────────
 
@@ -69,9 +68,15 @@ export function buildMemoryBlockFromResults(
 
 // ── Handler: before_agent_start ───────────────────────────────────────
 
+/** Função de busca genérica (assíncrona) */
+export type SearchFn = (
+  query: string,
+  topK?: number
+) => Promise<RetrievalResult[]>;
+
 export interface InjectHandlerOptions {
-  /** Instância do Bm25Retriever para busca */
-  retriever: Bm25Retriever;
+  /** Função de busca (wrapped Bm25Retriever ou HybridRetriever) */
+  search: SearchFn;
   /** ID do projeto atual */
   projectId: string;
   /** Tamanho máximo do bloco injetado (default: 4KB) */
@@ -90,13 +95,13 @@ export interface InjectHandlerOptions {
  *   4. Se não houver, retorna systemPrompt original
  */
 export function createInjectHandler(options: InjectHandlerOptions) {
-  const { retriever, projectId, maxBytes = MAX_BLOCK_BYTES, topK = 10 } = options;
+  const { search, projectId, maxBytes = MAX_BLOCK_BYTES, topK = 10 } = options;
 
   return async (event: { prompt: string; systemPrompt: string }) => {
     const query = event.prompt;
 
-    // Busca memórias
-    const results = retriever.search(query, projectId, topK);
+    // Busca memórias (assíncrona)
+    const results = await search(query, topK);
 
     if (results.length === 0) {
       return { systemPrompt: event.systemPrompt };

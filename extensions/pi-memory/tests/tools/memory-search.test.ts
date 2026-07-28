@@ -31,10 +31,10 @@ function makeMem(overrides: Partial<Memory> = {}): Memory {
   };
 }
 
-function mockRetriever(results: RetrievalResult[]) {
+function mockSearchProvider(results: RetrievalResult[]) {
   return {
-    search: vi.fn(() => results),
-  } as unknown as Parameters<typeof createMemorySearchTool>[0];
+    search: vi.fn(async (_query: string, _pid: string, _topK?: number) => results),
+  };
 }
 
 // ── Suite ───────────────────────────────────────────────────────────────
@@ -42,11 +42,11 @@ function mockRetriever(results: RetrievalResult[]) {
 describe("memory_search tool", () => {
   it("deve retornar resultados formatados", async () => {
     const mem = makeMem({ text: "Usa pnpm", type: "preference", scope: "project" });
-    const retriever = mockRetriever([
+    const provider = mockSearchProvider([
       { memory: mem, score: 0.95, strategy: "bm25" },
     ]);
 
-    const tool = createMemorySearchTool(retriever, "test-project");
+    const tool = createMemorySearchTool(provider, "test-project");
     const result = await tool.execute(
       "id",
       { query: "package manager" },
@@ -61,8 +61,8 @@ describe("memory_search tool", () => {
   });
 
   it("deve retornar 'No memories found' quando vazio", async () => {
-    const retriever = mockRetriever([]);
-    const tool = createMemorySearchTool(retriever, "test-project");
+    const provider = mockSearchProvider([]);
+    const tool = createMemorySearchTool(provider, "test-project");
 
     const result = await tool.execute(
       "id",
@@ -79,12 +79,12 @@ describe("memory_search tool", () => {
   it("deve filtrar por type", async () => {
     const pref = makeMem({ text: "Pref", type: "preference" });
     const fact = makeMem({ text: "Fact", type: "fact" });
-    const retriever = mockRetriever([
+    const provider = mockSearchProvider([
       { memory: pref, score: 1.0, strategy: "bm25" },
       { memory: fact, score: 0.5, strategy: "bm25" },
     ]);
 
-    const tool = createMemorySearchTool(retriever, "test-project");
+    const tool = createMemorySearchTool(provider, "test-project");
     const result = await tool.execute(
       "id",
       { query: "q", type: "preference" },
@@ -100,12 +100,12 @@ describe("memory_search tool", () => {
   it("deve filtrar por scope", async () => {
     const proj = makeMem({ text: "Proj", scope: "project" });
     const user = makeMem({ text: "User", scope: "user" });
-    const retriever = mockRetriever([
+    const provider = mockSearchProvider([
       { memory: proj, score: 1.0, strategy: "bm25" },
       { memory: user, score: 0.5, strategy: "bm25" },
     ]);
 
-    const tool = createMemorySearchTool(retriever, "test-project");
+    const tool = createMemorySearchTool(provider, "test-project");
     const result = await tool.execute(
       "id",
       { query: "q", scope: "user" },
@@ -122,13 +122,13 @@ describe("memory_search tool", () => {
     const match = makeMem({ text: "Match", type: "preference", scope: "project" });
     const wrongType = makeMem({ text: "Wrong", type: "fact", scope: "project" });
     const wrongScope = makeMem({ text: "Wrong", type: "preference", scope: "user" });
-    const retriever = mockRetriever([
+    const provider = mockSearchProvider([
       { memory: match, score: 1.0, strategy: "bm25" },
       { memory: wrongType, score: 0.5, strategy: "bm25" },
       { memory: wrongScope, score: 0.3, strategy: "bm25" },
     ]);
 
-    const tool = createMemorySearchTool(retriever, "test-project");
+    const tool = createMemorySearchTool(provider, "test-project");
     const result = await tool.execute(
       "id",
       { query: "q", type: "preference", scope: "project" },
@@ -143,11 +143,11 @@ describe("memory_search tool", () => {
 
   it("deve incluir score e metadata nos results", async () => {
     const mem = makeMem({ text: "Test", confidence: 0.75 });
-    const retriever = mockRetriever([
+    const provider = mockSearchProvider([
       { memory: mem, score: 0.88, strategy: "bm25" },
     ]);
 
-    const tool = createMemorySearchTool(retriever, "test-project");
+    const tool = createMemorySearchTool(provider, "test-project");
     const result = await tool.execute(
       "id",
       { query: "q" },
@@ -163,10 +163,10 @@ describe("memory_search tool", () => {
   });
 
   it("deve passar projectId ao retriever", async () => {
-    const retriever = mockRetriever([]);
-    const tool = createMemorySearchTool(retriever, "my-project");
+    const provider = mockSearchProvider([]);
+    const tool = createMemorySearchTool(provider, "my-project");
 
     await tool.execute("id", { query: "q" }, undefined, undefined, undefined);
-    expect(retriever.search).toHaveBeenCalledWith("q", "my-project", 10);
+    expect(provider.search).toHaveBeenCalledWith("q", "my-project", 10);
   });
 });

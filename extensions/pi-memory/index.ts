@@ -21,6 +21,8 @@ import { SweepConsolidator } from "./consolidate/sweep";
 import { Bm25Retriever } from "./retrieve/bm25";
 import { EmbeddingService } from "./utils/embedding";
 import { VectorRetriever } from "./retrieve/vector";
+import { RerankerService } from "./retrieve/reranker";
+import { HybridRetriever } from "./retrieve/index";
 import { createInjectHandler } from "./inject/context-builder";
 import { createMemorySearchTool } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
@@ -39,6 +41,8 @@ let llmExtractor: LlmExtractor | null = null;
 let sweepConsolidator: SweepConsolidator | null = null;
 let embeddingService: EmbeddingService | null = null;
 let vectorRetriever: VectorRetriever | null = null;
+let rerankerService: RerankerService | null = null;
+let hybridRetriever: HybridRetriever | null = null;
 let sessionId: string | null = null;
 
 function resetStats(): MemoryStats {
@@ -156,6 +160,29 @@ export default function (pi: ExtensionAPI) {
         });
       }
 
+      // Inicializa reranker (Fase 2.5) — background, não bloqueia
+      if (config.retrieval.reranker_enabled) {
+        rerankerService = new RerankerService({
+          model: "Xenova/ms-marco-MiniLM-L-6-v2",
+        });
+        rerankerService.initialize().catch(() => {
+          rerankerService = null;
+        });
+      }
+
+      // Inicializa HybridRetriever (Fase 2.5)
+      hybridRetriever = new HybridRetriever(
+        retriever,
+        storage,
+        projectId,
+        vectorRetriever,
+        rerankerService,
+        {
+          vectorEnabled: config.retrieval.vector_enabled,
+          rerankerEnabled: config.retrieval.reranker_enabled,
+        }
+      );
+
       // Inicializa extrator N2 (regex) se configurado
       if (config.extraction_level !== "none") {
         regexExtractor = new RegexExtractor();
@@ -259,7 +286,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Lifecycle: before_agent_start ─────────────────────────────────
   pi.on("before_agent_start", async (event, _ctx) => {
-    if (!retriever || !storage) return;
+    if (!hybridRetriever || !storage) return;
 
     const projectId = hashProjectId(pi.projectDir ?? "default");
 
@@ -279,9 +306,10 @@ export default function (pi: ExtensionAPI) {
       stats.operations.captures++;
     }
 
-    // 2. INJECT: busca memórias e injeta no system prompt
+    // 2. INJECT: busca memórias (híbrida) e injeta no system prompt
     const injectHandler = createInjectHandler({
-      retriever,
+      search: (query: string, topK?: number) =>
+        hybridRetriever!.search(query, topK ?? config.retrieval.default_top_k),
       projectId,
       maxBytes: config.max_injection_bytes,
     });
@@ -358,6 +386,8 @@ export default function (pi: ExtensionAPI) {
     regexExtractor = null;
     vectorRetriever = null;
     embeddingService = null;
+    rerankerService = null;
+    hybridRetriever = null;
     sessionId = null;
   });
 
@@ -369,35 +399,16 @@ export default function (pi: ExtensionAPI) {
   // a tool falhará graciosamente (retorna erro).
   pi.registerTool({
     ...createMemorySearchTool(
-      // Wrapper lazy: se retriever null, retorna erro
-      {
-        search(
-          query: string,
-          pid: string,
-          topK?: number
-        ) {
-          if (!retriever) {
-            throw new Error(
-              "Memory system not initialized. Wait for session_start."
-            );
-          }
-          return retriever.search(query, pid, topK);
-        },
-      } as Bm25Retriever,
-      projectId,
-      // Vector search (Fase 2.4): busca adicional se disponível
-      vectorRetriever
+      hybridRetriever
         ? {
-            search: async (query: string, topK?: number) => {
-              if (!vectorRetriever || !storage) return [];
-              return vectorRetriever.searchAsResults(
-                query,
-                (id) => storage!.getMemory(id),
-                topK ?? 10
-              );
-            },
+            search: (query: string, _pid: string, topK?: number) =>
+              hybridRetriever!.search(query, topK ?? 10),
           }
-        : undefined
+        : {
+            search: (query: string, pid: string, topK?: number) =>
+              retriever!.search(query, pid, topK),
+          },
+      projectId
     ),
   });
 
