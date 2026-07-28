@@ -15,7 +15,8 @@ export function createMemoryWriteTool(
   storage: IStorage,
   projectId: string,
   getSessionId: () => string,
-  onAfterWrite?: (memory: Memory) => Promise<void>
+  onAfterWrite?: (memory: Memory) => Promise<void>,
+  dedupEnabled?: boolean
 ) {
   return {
     name: "memory_write",
@@ -93,6 +94,7 @@ export function createMemoryWriteTool(
       // Pipeline N1: dedup por hash → last-fact-wins por chave composta
       const result = consolidateN1({
         memory,
+        dedupEnabled: dedupEnabled ?? true,
         getByHash: (pid, h) => storage.getMemoryByHash(pid, h),
         getByKey: (key) => {
           return (

@@ -31,6 +31,8 @@ export interface LlmExtractorConfig {
   maxWaitMs: number;
   /** Máximo de retentativas por observação. Default: 3 */
   maxRetries: number;
+  /** Pipeline N1 dedup habilitado? Default: true */
+  dedupEnabled: boolean;
 }
 
 const DEFAULTS: Partial<LlmExtractorConfig> = {
@@ -40,6 +42,7 @@ const DEFAULTS: Partial<LlmExtractorConfig> = {
   batchSize: 10,
   maxWaitMs: 30_000,
   maxRetries: 3,
+  dedupEnabled: true,
 };
 
 // ── Prompt template ────────────────────────────────────────────────────
@@ -314,6 +317,7 @@ export class LlmExtractor {
 
           const result = consolidateN1({
             memory,
+            dedupEnabled: this.config.dedupEnabled,
             getByHash: (pid, hash) => this.storage.getMemoryByHash(pid, hash),
             getByKey: (key) =>
               this.storage

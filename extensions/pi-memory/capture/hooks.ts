@@ -21,9 +21,6 @@ const CONTENT_PREVIEW_MAX_BYTES = 2048;
 /** Primeiros N bytes do stderr armazenados no error_preview */
 const ERROR_PREVIEW_MAX_BYTES = 500;
 
-/** TTL padrão de observações: 7 dias em ms */
-const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
 // ── Tipos dos eventos do pi ────────────────────────────────────────────
 
 interface ToolResultEvent {
@@ -225,6 +222,10 @@ export interface CaptureHooksOptions {
   storage?: IStorage;
   /** Callback para reportar contagem de extrações N2 (stats). */
   onN2Extraction?: (count: number) => void;
+  /** TTL de observações em ms. Default: 7 dias. */
+  observationTtlMs?: number;
+  /** Dedup habilitado? Default true. */
+  dedupEnabled?: boolean;
 }
 
 /**
@@ -232,6 +233,8 @@ export interface CaptureHooksOptions {
  */
 export function createCaptureHooks(opts: CaptureHooksOptions): CaptureHooks {
   const { buffer, projectId, sessionId, regexExtractor, storage, onN2Extraction } = opts;
+  const observationTtlMs = opts.observationTtlMs ?? 7 * 24 * 60 * 60 * 1000;
+  const dedupEnabled = opts.dedupEnabled ?? true;
   return {
     /**
      * Captura tool_result: toda tool call completada vira uma RawObservation.
@@ -261,7 +264,7 @@ export function createCaptureHooks(opts: CaptureHooksOptions): CaptureHooks {
           sanitizedInput,
           event.details as Record<string, unknown> | undefined
         ),
-        ttl: now + DEFAULT_TTL_MS,
+        ttl: now + observationTtlMs,
         extracted: false,
       };
 
@@ -358,7 +361,7 @@ export function createCaptureHooks(opts: CaptureHooksOptions): CaptureHooks {
         content_preview: event.prompt.slice(0, CONTENT_PREVIEW_MAX_BYTES),
         error_preview: null,
         file_paths: [],
-        ttl: now + DEFAULT_TTL_MS,
+        ttl: now + observationTtlMs,
         extracted: false,
       };
 

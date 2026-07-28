@@ -106,6 +106,7 @@ export interface PiMemoryConfig {
     decay_enabled: boolean;
     decay_days: number; // dias sem acesso para iniciar decay
     decay_factor: number; // multiplicador (ex: 0.9)
+    pruning_enabled: boolean;
     pruning_confidence_threshold: number;
     pruning_age_days: number;
   };
@@ -154,6 +155,7 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
     decay_enabled: false,
     decay_days: 7,
     decay_factor: 0.9,
+    pruning_enabled: true,
     pruning_confidence_threshold: 0.1,
     pruning_age_days: 30,
   },

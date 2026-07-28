@@ -32,6 +32,10 @@ export interface CacheStableConfig {
   totalCapBytes: number;
   /** Cap da seção Persistent Memory em bytes. Default: 4KB */
   persistentMemCapBytes: number;
+  /** Máximo de bullets na seção Persistent Memory. Default: 8 */
+  maxBullets: number;
+  /** Threshold de confidence para incluir memória. Default: 0.5 */
+  confidenceThreshold: number;
   /** Ativar log de cache hits/misses (debug) */
   debug: boolean;
 }
@@ -39,6 +43,8 @@ export interface CacheStableConfig {
 const DEFAULTS: CacheStableConfig = {
   totalCapBytes: 16 * 1024, // 16KB
   persistentMemCapBytes: 4 * 1024, // 4KB
+  maxBullets: 8,
+  confidenceThreshold: 0.5,
   debug: false,
 };
 
@@ -263,11 +269,12 @@ export class CacheStableInjector {
   ): string {
     if (results.length === 0) return "";
 
-    const relevant = results.filter((r) => r.memory.confidence >= 0.5);
+    const confThreshold = this.config.confidenceThreshold;
+    const relevant = results.filter((r) => r.memory.confidence >= confThreshold);
     if (relevant.length === 0) return "";
 
     const header = ""; // header is added by buildMemoryBlock
-    const maxBullets = 8;
+    const maxBullets = this.config.maxBullets;
     const maxBulletLen = 200;
 
     // Formata bullets

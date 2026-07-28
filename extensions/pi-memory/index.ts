@@ -9,7 +9,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config";
-import type { PiMemoryConfig, MemoryStats } from "./types";
+import type { PiMemoryConfig, MemoryStats, RetrievalResult } from "./types";
 import { UnifiedStore } from "./storage/unified-store";
 import type { IStorage } from "./storage/index";
 import { ObservationBuffer } from "./capture/buffer";
@@ -123,8 +123,10 @@ export default function (pi: ExtensionAPI) {
       );
       buffer.attach(storage);
 
-      // Inicializa retriever
-      retriever = new Bm25Retriever(storage);
+      // Inicializa retriever (BM25), se habilitado
+      if (config.retrieval.bm25_enabled) {
+        retriever = new Bm25Retriever(storage);
+      }
 
       // Inicializa embedding service + vector retriever (Fase 2.4)
       if (config.retrieval.vector_enabled) {
@@ -132,7 +134,7 @@ export default function (pi: ExtensionAPI) {
           process.env.OPENROUTER_API_KEY ?? "";
 
         embeddingService = new EmbeddingService({
-          model: "all-MiniLM-L6-v2",
+          model: config.retrieval.vector_model ?? "all-MiniLM-L6-v2",
           dimension: 384,
           normalize: true,
           apiKey: apiKey || undefined,
@@ -180,7 +182,7 @@ export default function (pi: ExtensionAPI) {
           process.env.OPENROUTER_API_KEY ?? "";
 
         rerankerService = new RerankerService({
-          model: "Xenova/ms-marco-MiniLM-L-6-v2",
+          model: config.retrieval.reranker_model ?? "Xenova/ms-marco-MiniLM-L-6-v2",
           apiKey: rerankerApiKey || undefined,
           apiModel: "cohere/rerank-4-pro",
         });
@@ -189,24 +191,44 @@ export default function (pi: ExtensionAPI) {
         });
       }
 
-      // Inicializa HybridRetriever (Fase 2.5)
-      hybridRetriever = new HybridRetriever(
-        retriever,
-        storage,
-        projectId,
-        vectorRetriever,
-        rerankerService,
-        {
-          vectorEnabled: config.retrieval.vector_enabled,
-          rerankerEnabled: config.retrieval.reranker_enabled,
-        }
-      );
+      // Inicializa HybridRetriever (Fase 2.5) — quando hybrid, vector ou reranker habilitado
+      const needsHybrid =
+        config.retrieval.hybrid_enabled ||
+        config.retrieval.vector_enabled ||
+        config.retrieval.reranker_enabled;
+
+      if (needsHybrid && retriever) {
+        hybridRetriever = new HybridRetriever(
+          retriever,
+          storage,
+          projectId,
+          vectorRetriever,
+          rerankerService,
+          {
+            vectorEnabled: config.retrieval.vector_enabled,
+            rerankerEnabled: config.retrieval.reranker_enabled,
+          }
+        );
+      }
+
+      // Função de busca: HybridRetriever → Bm25Retriever → fallback vazio
+      const searchFn = hybridRetriever
+        ? (query: string) =>
+            hybridRetriever!.search(query, config.retrieval.default_top_k)
+        : retriever
+          ? (query: string) =>
+            Promise.resolve(retriever!.search(query, projectId, config.retrieval.default_top_k))
+          : async () => [];
 
       // Inicializa CacheStableInjector (Fase 2.6)
       cacheStableInjector = new CacheStableInjector(
-        (query: string) =>
-          hybridRetriever!.search(query, config.retrieval.default_top_k),
-        { debug: false }
+        searchFn,
+        {
+          debug: false,
+          maxBullets: config.max_injected_memories,
+          persistentMemCapBytes: config.max_injection_bytes,
+          confidenceThreshold: config.injection_confidence_threshold,
+        }
       );
 
       // Inicializa extrator N2 (regex) se configurado
@@ -231,6 +253,7 @@ export default function (pi: ExtensionAPI) {
             timeoutMs: config.llm_extraction.timeout_ms,
             batchSize: config.llm_extraction.sweep_observation_threshold,
             maxWaitMs: config.llm_extraction.sweep_interval_ms,
+            dedupEnabled: config.consolidation.dedup_enabled,
           };
           llmExtractor = new LlmExtractor(
             storage,
@@ -252,7 +275,7 @@ export default function (pi: ExtensionAPI) {
               decayEnabled: config.consolidation.decay_enabled,
               decayDays: config.consolidation.decay_days,
               decayFactor: config.consolidation.decay_factor,
-              pruningEnabled: true,
+              pruningEnabled: config.consolidation.pruning_enabled,
               pruningConfidenceThreshold: config.consolidation.pruning_confidence_threshold,
               pruningAgeDays: config.consolidation.pruning_age_days,
             },
@@ -300,6 +323,8 @@ export default function (pi: ExtensionAPI) {
       onN2Extraction: (count) => {
         stats.operations.extractions_n2 += count;
       },
+      observationTtlMs: config.observation_ttl_ms,
+      dedupEnabled: config.consolidation.dedup_enabled,
     });
 
     hooks.onToolResult(
@@ -324,12 +349,24 @@ export default function (pi: ExtensionAPI) {
         sessionId,
         regexExtractor: regexExtractor ?? undefined,
         storage: storage ?? undefined,
+        observationTtlMs: config.observation_ttl_ms,
+        dedupEnabled: config.consolidation.dedup_enabled,
       });
       hooks.onBeforeAgentStart(
         event as Parameters<typeof hooks.onBeforeAgentStart>[0],
         _ctx
       );
       stats.operations.captures++;
+    }
+
+    // TTL cleanup: se não há sweep (N3 desligado), limpa observações expiradas
+    // a cada turno para evitar acúmulo infinito
+    if (!sweepConsolidator && storage) {
+      try {
+        storage.cleanupExpired(Date.now());
+      } catch {
+        // Best-effort
+      }
     }
 
     // 2. INJECT: bloco de memória via cache snapshot (Fase 2.6)
@@ -433,19 +470,23 @@ export default function (pi: ExtensionAPI) {
   // Tools recebem storage/retriever via closure.
   // Se storage ainda não foi inicializado (antes de session_start),
   // a tool falhará graciosamente (retorna erro).
+  // Memory search: HybridRetriever → Bm25Retriever → fallback vazio
+  const searchProvider = hybridRetriever
+    ? {
+        search: (query: string, _pid: string, topK?: number) =>
+          hybridRetriever!.search(query, topK ?? 10),
+      }
+    : retriever
+      ? {
+          search: (query: string, pid: string, topK?: number) =>
+            Promise.resolve(retriever!.search(query, pid, topK)),
+        }
+      : {
+          search: async () => [] as RetrievalResult[],
+        };
+
   pi.registerTool({
-    ...createMemorySearchTool(
-      hybridRetriever
-        ? {
-            search: (query: string, _pid: string, topK?: number) =>
-              hybridRetriever!.search(query, topK ?? 10),
-          }
-        : {
-            search: (query: string, pid: string, topK?: number) =>
-              retriever!.search(query, pid, topK),
-          },
-      projectId
-    ),
+    ...createMemorySearchTool(searchProvider, projectId),
   });
 
   pi.registerTool({
@@ -484,7 +525,8 @@ export default function (pi: ExtensionAPI) {
         } catch {
           // Embedding falhou — sistema continua sem vector para esta memória
         }
-      }
+      },
+      config.consolidation.dedup_enabled
     ),
   });
 

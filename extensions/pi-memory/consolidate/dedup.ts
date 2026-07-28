@@ -235,6 +235,8 @@ export function lastFactWins(
 export interface ConsolidateN1Input {
   /** Nova memória candidata a inserção */
   memory: Memory;
+  /** Se true, aplica dedup por hash + last-fact-wins. Se false, sempre cria nova. */
+  dedupEnabled?: boolean;
   /** Busca memória existente por hash de conteúdo */
   getByHash: (projectId: string, hash: string) => Memory | null;
   /** Busca memória existente por chave composta */
@@ -258,6 +260,11 @@ export interface ConsolidateN1Output {
  *  2. Se não é dup por hash, verifica chave composta.
  */
 export function consolidateN1(input: ConsolidateN1Input): ConsolidateN1Output {
+  // Se dedup desabilitado, sempre cria nova memória
+  if (input.dedupEnabled === false) {
+    return { action: "create", memory: input.memory };
+  }
+
   // Step 1: Dedup por hash
   const existingByHash = input.getByHash(
     input.memory.project_id,
