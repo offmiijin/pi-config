@@ -4,15 +4,23 @@
  * Busca na memória persistente entre sessões.
  * LLM usa quando precisa de contexto sobre padrões, decisões ou preferências
  * que não foram injetados automaticamente.
+ *
+ * Fase 2.4: Suporte a busca vetorial (semântica) adicional.
+ * Fase 2.5: RRF fusion entre BM25 + Vector (substituirá merge simples atual).
  */
 
 import { Type } from "typebox";
 import type { Bm25Retriever } from "../retrieve/bm25";
-import type { MemoryType, MemoryScope } from "../types";
+import type { RetrievalResult, MemoryType, MemoryScope } from "../types";
+
+export interface VectorSearchFn {
+  search: (query: string, topK?: number) => Promise<RetrievalResult[]>;
+}
 
 export function createMemorySearchTool(
   retriever: Bm25Retriever,
-  projectId: string
+  projectId: string,
+  vectorSearch?: VectorSearchFn
 ) {
   return {
     name: "memory_search",
@@ -58,16 +66,48 @@ export function createMemorySearchTool(
       _onUpdate: unknown,
       _ctx: unknown
     ) {
-      const results = retriever.search(params.query, projectId, 10);
-
       const scope = params.scope ?? "project";
+      const topK = 10;
 
-      // Filtra por type e scope
-      let filtered = results;
+      // 1. BM25 (lexical)
+      const bm25Results = retriever.search(params.query, projectId, topK);
+
+      // 2. Vector (semântico) — se disponível
+      let vectorResults: RetrievalResult[] = [];
+      if (vectorSearch) {
+        try {
+          vectorResults = await vectorSearch.search(params.query, topK);
+        } catch {
+          // Vector search falhou, continua com BM25 apenas
+        }
+      }
+
+      // 3. Merge simples: BM25 primeiro, depois vector (dedup por ID)
+      const seen = new Set<string>();
+      const merged: RetrievalResult[] = [];
+
+      for (const r of bm25Results) {
+        if (!seen.has(r.memory.id)) {
+          seen.add(r.memory.id);
+          merged.push(r);
+        }
+      }
+      for (const r of vectorResults) {
+        if (!seen.has(r.memory.id)) {
+          seen.add(r.memory.id);
+          merged.push(r);
+        }
+      }
+
+      // 4. Filtra por type e scope
+      let filtered = merged;
       if (params.type) {
         filtered = filtered.filter((r) => r.memory.type === params.type);
       }
       filtered = filtered.filter((r) => r.memory.scope === scope);
+
+      // Limita a topK final
+      filtered = filtered.slice(0, topK);
 
       if (filtered.length === 0) {
         return {
@@ -79,7 +119,7 @@ export function createMemorySearchTool(
       const formatted = filtered
         .map(
           (r) =>
-            `- [${r.memory.type}][${r.memory.scope}][score:${r.score.toFixed(2)}] ${r.memory.text}`
+            `- [${r.memory.type}][${r.memory.scope}][${r.strategy}][score:${r.score.toFixed(2)}] ${r.memory.text}`
         )
         .join("\n");
 
@@ -93,6 +133,7 @@ export function createMemorySearchTool(
             text: r.memory.text,
             confidence: r.memory.confidence,
             score: r.score,
+            strategy: r.strategy,
           })),
         },
       };

@@ -35,6 +35,11 @@ export interface IStorage {
     limit?: number
   ): Array<{ memory: Memory; bm25Score: number }>;
 
+  // ── Embeddings ───────────────────────────────────────────────────
+  getMemoriesWithEmbeddings(projectId: string): Memory[];
+  getMemoriesWithoutEmbedding(projectId: string): Memory[];
+  updateEmbedding(id: string, embedding: Float32Array): void;
+
   // ── Stats ────────────────────────────────────────────────────────
   countMemories(): number;
   countObservations(): number;

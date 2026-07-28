@@ -141,6 +141,12 @@ const SQL = {
     ORDER BY bm25_score
     LIMIT $limit
   `,
+
+  getMemoriesWithEmbeddings: `SELECT * FROM memories WHERE project_id = $project_id AND embedding IS NOT NULL`,
+
+  getMemoriesWithoutEmbedding: `SELECT * FROM memories WHERE project_id = $project_id AND embedding IS NULL ORDER BY timestamp ASC`,
+
+  updateEmbedding: `UPDATE memories SET embedding = $embedding WHERE id = $id`,
 };
 
 // ── Store ──────────────────────────────────────────────────────────────
@@ -316,6 +322,29 @@ export class SqliteStore {
       memory: this.rowToMemory(r),
       bm25Score: r["bm25_score"] as number,
     }));
+  }
+
+  // ── Embeddings ─────────────────────────────────────────────────────
+
+  getMemoriesWithEmbeddings(projectId: string): Memory[] {
+    const rows = this.db.query(SQL.getMemoriesWithEmbeddings).all({
+      $project_id: projectId,
+    }) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToMemory(r));
+  }
+
+  getMemoriesWithoutEmbedding(projectId: string): Memory[] {
+    const rows = this.db.query(SQL.getMemoriesWithoutEmbedding).all({
+      $project_id: projectId,
+    }) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToMemory(r));
+  }
+
+  updateEmbedding(id: string, embedding: Float32Array): void {
+    this.db.query(SQL.updateEmbedding).run({
+      $id: id,
+      $embedding: new Uint8Array(embedding.buffer, embedding.byteOffset, embedding.byteLength),
+    });
   }
 
   // ── Stats ──────────────────────────────────────────────────────────

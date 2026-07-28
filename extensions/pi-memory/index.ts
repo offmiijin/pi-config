@@ -19,6 +19,8 @@ import { LlmExtractor } from "./extract/llm-extractor";
 import type { LlmExtractorConfig } from "./extract/llm-extractor";
 import { SweepConsolidator } from "./consolidate/sweep";
 import { Bm25Retriever } from "./retrieve/bm25";
+import { EmbeddingService } from "./utils/embedding";
+import { VectorRetriever } from "./retrieve/vector";
 import { createInjectHandler } from "./inject/context-builder";
 import { createMemorySearchTool } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
@@ -35,6 +37,8 @@ let retriever: Bm25Retriever | null = null;
 let regexExtractor: RegexExtractor | null = null;
 let llmExtractor: LlmExtractor | null = null;
 let sweepConsolidator: SweepConsolidator | null = null;
+let embeddingService: EmbeddingService | null = null;
+let vectorRetriever: VectorRetriever | null = null;
 let sessionId: string | null = null;
 
 function resetStats(): MemoryStats {
@@ -103,6 +107,54 @@ export default function (pi: ExtensionAPI) {
 
       // Inicializa retriever
       retriever = new Bm25Retriever(storage);
+
+      // Inicializa embedding service + vector retriever (Fase 2.4)
+      if (config.retrieval.vector_enabled) {
+        const apiKey =
+          process.env.OPENROUTER_API_KEY ?? "";
+
+        embeddingService = new EmbeddingService({
+          model: "all-MiniLM-L6-v2",
+          dimension: 384,
+          normalize: true,
+          apiKey: apiKey || undefined,
+        });
+
+        // Inicializa em background (não bloqueia session_start)
+        embeddingService.initialize().then(() => {
+          if (embeddingService?.isReady && storage) {
+            vectorRetriever = new VectorRetriever(embeddingService);
+
+            // Backfill: gera embeddings para memórias sem embedding
+            runEmbeddingBackfill(
+              storage,
+              embeddingService,
+              vectorRetriever,
+              projectId
+            ).then((count) => {
+              if (count > 0 && ctx?.hasUI) {
+                ctx.ui.notify(
+                  `🧠 pi-memory: ${count} embeddings gerados`,
+                  "info"
+                );
+              }
+            }).catch(() => {
+              // Backfill falhou, mas o sistema continua funcional
+            });
+
+            // Reconstrói índice com embeddings existentes
+            try {
+              const withEmb = storage.getMemoriesWithEmbeddings(projectId);
+              vectorRetriever.buildIndex(withEmb);
+            } catch {
+              // Índice vazio, continua sem vector search
+            }
+          }
+        }).catch(() => {
+          // Embedding service falhou, sistema continua com BM25 apenas
+          embeddingService = null;
+        });
+      }
 
       // Inicializa extrator N2 (regex) se configurado
       if (config.extraction_level !== "none") {
@@ -304,6 +356,8 @@ export default function (pi: ExtensionAPI) {
 
     retriever = null;
     regexExtractor = null;
+    vectorRetriever = null;
+    embeddingService = null;
     sessionId = null;
   });
 
@@ -330,7 +384,20 @@ export default function (pi: ExtensionAPI) {
           return retriever.search(query, pid, topK);
         },
       } as Bm25Retriever,
-      projectId
+      projectId,
+      // Vector search (Fase 2.4): busca adicional se disponível
+      vectorRetriever
+        ? {
+            search: async (query: string, topK?: number) => {
+              if (!vectorRetriever || !storage) return [];
+              return vectorRetriever.searchAsResults(
+                query,
+                (id) => storage!.getMemory(id),
+                topK ?? 10
+              );
+            },
+          }
+        : undefined
     ),
   });
 
@@ -356,7 +423,18 @@ export default function (pi: ExtensionAPI) {
         },
       } as IStorage,
       projectId,
-      () => sessionId ?? "unknown"
+      () => sessionId ?? "unknown",
+      // Callback pós-write: gera embedding e atualiza índice
+      async (memory) => {
+        if (!embeddingService?.isReady || !vectorRetriever || !storage) return;
+        try {
+          const emb = await embeddingService.embed(memory.text);
+          storage.updateEmbedding(memory.id, emb);
+          vectorRetriever.upsert({ ...memory, embedding: emb });
+        } catch {
+          // Embedding falhou — sistema continua sem vector para esta memória
+        }
+      }
     ),
   });
 
@@ -400,4 +478,47 @@ function hashProjectId(projectDir: string): string {
     hash = (hash * 31 + projectDir.charCodeAt(i)) >>> 0;
   }
   return hash.toString(16).padStart(8, "0").slice(0, 8);
+}
+
+/**
+ * Backfill de embeddings: gera e persiste embeddings para memórias
+ * que ainda não têm. Atualiza o VectorRetriever incrementalmente.
+ *
+ * @returns Número de embeddings gerados
+ */
+async function runEmbeddingBackfill(
+  storage: IStorage,
+  embedService: EmbeddingService,
+  vecRetriever: VectorRetriever,
+  projectId: string
+): Promise<number> {
+  const withoutEmb = storage.getMemoriesWithoutEmbedding(projectId);
+  if (withoutEmb.length === 0) return 0;
+
+  const texts = withoutEmb.map((m) => m.text);
+  let count = 0;
+
+  try {
+    // Processa em lotes de 32 para não sobrecarregar memória
+    const batchSize = 32;
+    for (let i = 0; i < texts.length; i += batchSize) {
+      const batch = texts.slice(i, i + batchSize);
+      const memoryBatch = withoutEmb.slice(i, i + batchSize);
+
+      const embeddings = await embedService.embedBatch(batch);
+
+      for (let j = 0; j < embeddings.length; j++) {
+        const mem = memoryBatch[j];
+        const emb = embeddings[j];
+
+        storage.updateEmbedding(mem.id, emb);
+        vecRetriever.upsert({ ...mem, embedding: emb });
+        count++;
+      }
+    }
+  } catch {
+    // Backfill parcial — próximos sweeps tentam de novo
+  }
+
+  return count;
 }

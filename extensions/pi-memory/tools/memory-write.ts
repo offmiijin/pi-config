@@ -7,14 +7,15 @@
 
 import { Type } from "typebox";
 import type { IStorage } from "../storage/index";
-import type { MemoryType, MemoryScope } from "../types";
+import type { Memory, MemoryType, MemoryScope } from "../types";
 import { contentHash, compositeKey, consolidateN1 } from "../consolidate/dedup";
 import { randomUUID } from "node:crypto";
 
 export function createMemoryWriteTool(
   storage: IStorage,
   projectId: string,
-  getSessionId: () => string
+  getSessionId: () => string,
+  onAfterWrite?: (memory: Memory) => Promise<void>
 ) {
   return {
     name: "memory_write",
@@ -109,6 +110,8 @@ export function createMemoryWriteTool(
       switch (result.action) {
         case "create": {
           storage.insertMemory(result.memory);
+          // Fire-and-forget: gera embedding em background
+          if (onAfterWrite) onAfterWrite(result.memory).catch(() => {});
           return {
             content: [
               {
@@ -122,6 +125,7 @@ export function createMemoryWriteTool(
 
         case "reinforce": {
           storage.updateMemory(result.memory);
+          if (onAfterWrite) onAfterWrite(result.memory).catch(() => {});
           return {
             content: [
               {
@@ -135,6 +139,7 @@ export function createMemoryWriteTool(
 
         case "update": {
           storage.updateMemory(result.memory);
+          if (onAfterWrite) onAfterWrite(result.memory).catch(() => {});
           return {
             content: [
               {
@@ -159,6 +164,7 @@ export function createMemoryWriteTool(
             }
           }
           storage.insertMemory(result.memory);
+          if (onAfterWrite) onAfterWrite(result.memory).catch(() => {});
           return {
             content: [
               {

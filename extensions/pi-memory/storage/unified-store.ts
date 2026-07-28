@@ -99,6 +99,20 @@ export class UnifiedStore implements IStorage {
     return this.sqlite.searchFts(query, projectId, limit);
   }
 
+  // ── Embeddings ───────────────────────────────────────────────────
+
+  getMemoriesWithEmbeddings(projectId: string): Memory[] {
+    return this.sqlite.getMemoriesWithEmbeddings(projectId);
+  }
+
+  getMemoriesWithoutEmbedding(projectId: string): Memory[] {
+    return this.sqlite.getMemoriesWithoutEmbedding(projectId);
+  }
+
+  updateEmbedding(id: string, embedding: Float32Array): void {
+    this.sqlite.updateEmbedding(id, embedding);
+  }
+
   // ── Stats ────────────────────────────────────────────────────────
 
   countMemories(): number {
