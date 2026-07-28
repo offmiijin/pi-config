@@ -114,8 +114,16 @@ export interface PiMemoryConfig {
   retrieval: {
     bm25_enabled: boolean;
     vector_enabled: boolean;
+    /** Local ONNX model ativo? (all-MiniLM-L6-v2, sem API key) */
+    vector_local: boolean;
+    /** API model ativo? (text-embedding-3-small, requer API key) */
+    vector_api: boolean;
     hybrid_enabled: boolean;
     reranker_enabled: boolean;
+    /** Local ONNX model ativo? (ms-marco-MiniLM-L-6-v2, sem API key) */
+    reranker_local: boolean;
+    /** API model ativo? (rerank-4-pro, requer API key) */
+    reranker_api: boolean;
     default_top_k: number;
     /** Modelo para vector search. Default: all-MiniLM-L6-v2 */
     vector_model?: string;
@@ -152,8 +160,12 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
   retrieval: {
     bm25_enabled: true,
     vector_enabled: false,
+    vector_local: false,
+    vector_api: false,
     hybrid_enabled: false,
     reranker_enabled: false,
+    reranker_local: false,
+    reranker_api: false,
     default_top_k: 10,
   },
 };

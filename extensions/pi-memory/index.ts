@@ -81,6 +81,18 @@ export default function (pi: ExtensionAPI) {
   // ── Carregar configuração ──
   config = loadConfig(pi.projectDir);
 
+  // Migracao: vector_enabled/reranker_enabled (legado) para vector_local/vector_api
+  const ret = config.retrieval;
+  if (ret.vector_enabled && !ret.vector_local && !ret.vector_api) {
+    ret.vector_local = true;
+  }
+  if (ret.reranker_enabled && !ret.reranker_local && !ret.reranker_api) {
+    ret.reranker_local = true;
+  }
+  // Deriva enabled dos novos campos
+  ret.vector_enabled = ret.vector_local || ret.vector_api;
+  ret.reranker_enabled = ret.reranker_local || ret.reranker_api;
+
   if (config.disabled) {
     return;
   }
@@ -674,15 +686,21 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── helpers de display ──
-      const hasApiKey = (): boolean => {
-        return !!(config.llm_extraction.apiKey || process.env.OPENROUTER_API_KEY);
-      };
       const featStatus = (feat: string): string => {
-        if (!hasApiKey()) return "⬜ false";
-        if (feat === "llm") return `✅ ${config.llm_extraction.model}`;
-        if (feat === "vector") return `✅ ${config.retrieval.vector_model || "all-MiniLM-L6-v2"}`;
-        if (feat === "reranker") return `✅ ${config.retrieval.reranker_model || "ms-marco-MiniLM-L-6-v2"}`;
-        return "✅ configured";
+        if (feat === "vector" || feat === "reranker") {
+          const r = feat === "vector" ? config.retrieval : config.retrieval;
+          const local = feat === "vector" ? config.retrieval.vector_local : config.retrieval.reranker_local;
+          const api = feat === "vector" ? config.retrieval.vector_api : config.retrieval.reranker_api;
+          const parts: string[] = [];
+          if (local) parts.push("local");
+          if (api) parts.push("api");
+          return parts.length > 0 ? `✅ ${parts.join(" + ")}` : "⬜ false";
+        }
+        if (feat === "llm") {
+          if (!config.llm_extraction.enabled) return "⬜ false";
+          return `✅ ${config.llm_extraction.model}`;
+        }
+        return "⬜ false";
       };
 
       // ── Interativo (TUI) ou status (não-TUI) ──
@@ -816,70 +834,87 @@ export default function (pi: ExtensionAPI) {
 
         // ── Config sequencial: API key + modelo ──
         if (configTarget) {
-          const currentKey = config.llm_extraction.apiKey || "";
-          const keyResult = await ctx.ui.input(
-            `API key for ${configTarget}`,
-            "Enter key or leave empty to use OPENROUTER_API_KEY env var.",
-            currentKey
-          );
-          if (keyResult !== undefined && keyResult !== null) {
-            const trimmedKey = keyResult.trim();
-            if (trimmedKey !== currentKey) {
-              if (trimmedKey.length > 0) {
-                saveConfigToDisk({ llm_extraction: { apiKey: trimmedKey } } as Partial<PiMemoryConfig>);
-              } else {
-                // Se limpou o campo, remove a key salva (usa env var)
-                saveConfigToDisk({ llm_extraction: { apiKey: "" } } as Partial<PiMemoryConfig>);
-              }
-            }
+          // ── vector / reranker: modo (off / local / api / local + api) ──
+          if (configTarget === "vector" || configTarget === "reranker") {
+            const isVec = configTarget === "vector";
+            const curLocal = isVec ? config.retrieval.vector_local : config.retrieval.reranker_local;
+            const curApi   = isVec ? config.retrieval.vector_api   : config.retrieval.reranker_api;
+            const curMode  = curLocal && curApi ? "local + api"
+                            : curLocal          ? "local"
+                            : curApi            ? "api"
+                            :                     "off";
 
-            // Escolha de modelo específico por feature
-            const modelKey = configTarget === "vector"
-              ? "retrieval.vector_model"
-              : configTarget === "reranker"
-                ? "retrieval.reranker_model"
-                : "llm_extraction.model";
-
-            const modelOptions = configTarget === "vector"
-              ? [
-                  { value: "all-MiniLM-L6-v2", label: "all-MiniLM-L6-v2 (local, 384d)" },
-                  { value: "openai/text-embedding-3-small", label: "text-embedding-3-small (API)" },
-                ]
-              : configTarget === "reranker"
-                ? [
-                    { value: "Xenova/ms-marco-MiniLM-L-6-v2", label: "ms-marco-MiniLM-L-6-v2 (local)" },
-                    { value: "cohere/rerank-4-pro", label: "rerank-4-pro (API)" },
-                  ]
-                : [
-                    { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
-                    { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-                    { value: "claude-3-haiku", label: "Claude 3 Haiku" },
-                    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-                  ];
-
-            const currentModel = configTarget === "vector"
-              ? config.retrieval.vector_model || "all-MiniLM-L6-v2"
-              : configTarget === "reranker"
-                ? config.retrieval.reranker_model || "Xenova/ms-marco-MiniLM-L-6-v2"
-                : config.llm_extraction.model;
-
-            const modelResult = await ctx.ui.select(
-              `Model for ${configTarget}`,
-              modelOptions,
-              currentModel
+            const modeResult = await ctx.ui.select(
+              `${configTarget} mode`,
+              [
+                { value: "off", label: "off  — Desativado" },
+                { value: "local", label: "local  — Modelo ONNX local (sem API key)" },
+                { value: "api", label: "API  — Requer API key" },
+                { value: "local + api", label: "local + api  — Ambos ativos" },
+              ],
+              curMode
             );
 
-            if (modelResult && modelResult !== currentModel) {
-              if (configTarget === "vector") {
-                saveConfigToDisk({ retrieval: { vector_model: modelResult } } as Partial<PiMemoryConfig>);
-              } else if (configTarget === "reranker") {
-                saveConfigToDisk({ retrieval: { reranker_model: modelResult } } as Partial<PiMemoryConfig>);
-              } else {
-                saveConfigToDisk({ llm_extraction: { model: modelResult } } as Partial<PiMemoryConfig>);
-              }
-            }
+            if (modeResult && modeResult !== curMode) {
+              const enableLocal = modeResult === "local" || modeResult === "local + api";
+              const enableApi   = modeResult === "api" || modeResult === "local + api";
 
-            ctx.ui.notify(`${configTarget} configured. Run /reload to apply.`, "success");
+              if (enableApi) {
+                const currentKey = config.llm_extraction.apiKey || "";
+                const keyResult = await ctx.ui.input(
+                  `API key for ${configTarget}`,
+                  "Enter key or leave empty to use OPENROUTER_API_KEY env var.",
+                  currentKey
+                );
+                if (keyResult !== undefined && keyResult !== null) {
+                  const trimmedKey = keyResult.trim();
+                  if (trimmedKey.length > 0 && trimmedKey !== currentKey) {
+                    saveConfigToDisk({ llm_extraction: { apiKey: trimmedKey } } as Partial<PiMemoryConfig>);
+                  }
+                }
+              }
+
+              const patch = isVec
+                ? { retrieval: { vector_local: enableLocal, vector_api: enableApi, vector_enabled: enableLocal || enableApi } }
+                : { retrieval: { reranker_local: enableLocal, reranker_api: enableApi, reranker_enabled: enableLocal || enableApi } };
+              saveConfigToDisk(patch as Partial<PiMemoryConfig>);
+              ctx.ui.notify(`${configTarget}: ${modeResult}. Run /reload to apply.`, "success");
+            }
+          }
+
+          // ── llm: API key + modelo (fluxo existente) ──
+          if (configTarget === "llm") {
+            const currentKey = config.llm_extraction.apiKey || "";
+            const keyResult = await ctx.ui.input(
+              `API key for LLM`,
+              "Enter key or leave empty to use OPENROUTER_API_KEY env var.",
+              currentKey
+            );
+            if (keyResult !== undefined && keyResult !== null) {
+              const trimmedKey = keyResult.trim();
+              if (trimmedKey.length > 0 && trimmedKey !== currentKey) {
+                saveConfigToDisk({ llm_extraction: { apiKey: trimmedKey, enabled: true } } as Partial<PiMemoryConfig>);
+              } else if (trimmedKey.length === 0 && currentKey.length > 0) {
+                saveConfigToDisk({ llm_extraction: { apiKey: "", enabled: false } } as Partial<PiMemoryConfig>);
+              }
+
+              const modelResult = await ctx.ui.select(
+                "LLM model",
+                [
+                  { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+                  { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+                  { value: "claude-3-haiku", label: "Claude 3 Haiku" },
+                  { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+                ],
+                config.llm_extraction.model
+              );
+
+              if (modelResult && modelResult !== config.llm_extraction.model) {
+                saveConfigToDisk({ llm_extraction: { model: modelResult, enabled: true } } as Partial<PiMemoryConfig>);
+              }
+
+              ctx.ui.notify(`LLM configured. Run /reload to apply.`, "success");
+            }
           }
         }
       } catch {
