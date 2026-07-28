@@ -23,7 +23,7 @@ import { EmbeddingService } from "./utils/embedding";
 import { VectorRetriever } from "./retrieve/vector";
 import { RerankerService } from "./retrieve/reranker";
 import { HybridRetriever } from "./retrieve/index";
-import { createInjectHandler } from "./inject/context-builder";
+import { CacheStableInjector } from "./inject/snapshot";
 import { createMemorySearchTool } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
 import { createMemoryStatusTool } from "./tools/memory-status";
@@ -43,6 +43,7 @@ let embeddingService: EmbeddingService | null = null;
 let vectorRetriever: VectorRetriever | null = null;
 let rerankerService: RerankerService | null = null;
 let hybridRetriever: HybridRetriever | null = null;
+let cacheStableInjector: CacheStableInjector | null = null;
 let sessionId: string | null = null;
 
 function resetStats(): MemoryStats {
@@ -183,6 +184,13 @@ export default function (pi: ExtensionAPI) {
         }
       );
 
+      // Inicializa CacheStableInjector (Fase 2.6)
+      cacheStableInjector = new CacheStableInjector(
+        (query: string) =>
+          hybridRetriever!.search(query, config.retrieval.default_top_k),
+        { debug: false }
+      );
+
       // Inicializa extrator N2 (regex) se configurado
       if (config.extraction_level !== "none") {
         regexExtractor = new RegexExtractor();
@@ -286,7 +294,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Lifecycle: before_agent_start ─────────────────────────────────
   pi.on("before_agent_start", async (event, _ctx) => {
-    if (!hybridRetriever || !storage) return;
+    if (!cacheStableInjector || !storage) return;
 
     const projectId = hashProjectId(pi.projectDir ?? "default");
 
@@ -306,21 +314,22 @@ export default function (pi: ExtensionAPI) {
       stats.operations.captures++;
     }
 
-    // 2. INJECT: busca memórias (híbrida) e injeta no system prompt
-    const injectHandler = createInjectHandler({
-      search: (query: string, topK?: number) =>
-        hybridRetriever!.search(query, topK ?? config.retrieval.default_top_k),
-      projectId,
-      maxBytes: config.max_injection_bytes,
-    });
-
-    const result = await injectHandler(
-      event as Parameters<typeof injectHandler>[0]
-    );
+    // 2. INJECT: bloco de memória via cache snapshot (Fase 2.6)
+    const prompt = (event as { prompt: string }).prompt ?? "";
+    const memoryBlock = await cacheStableInjector.getMemoryBlock(prompt);
 
     stats.operations.injections++;
+    stats.kv_cache_stable = cacheStableInjector.isCacheActive;
+    stats.kv_cache_age_ms = cacheStableInjector.cacheAge;
+    stats.kv_cache_turns_since_rebuild = cacheStableInjector.turnsSinceLastRebuild;
 
-    return result;
+    if (!memoryBlock) {
+      return { systemPrompt: (event as { systemPrompt: string }).systemPrompt };
+    }
+
+    return {
+      systemPrompt: `${(event as { systemPrompt: string }).systemPrompt}\n\n${memoryBlock}`,
+    };
   });
 
   // ── Lifecycle: turn_end ─────────────────────────────────────────
@@ -347,6 +356,14 @@ export default function (pi: ExtensionAPI) {
 
     if (pending.length > 0) {
       llmExtractor.enqueue(pending);
+    }
+  });
+
+  // ── Lifecycle: session_before_compact ─────────────────────────────
+  pi.on("session_before_compact", async (_event, _ctx) => {
+    // Invalida snapshot: handoff capturado, rebuild obrigatório
+    if (cacheStableInjector) {
+      cacheStableInjector.invalidate();
     }
   });
 
@@ -388,6 +405,7 @@ export default function (pi: ExtensionAPI) {
     embeddingService = null;
     rerankerService = null;
     hybridRetriever = null;
+    cacheStableInjector = null;
     sessionId = null;
   });
 
@@ -435,8 +453,11 @@ export default function (pi: ExtensionAPI) {
       } as IStorage,
       projectId,
       () => sessionId ?? "unknown",
-      // Callback pós-write: gera embedding e atualiza índice
+      // Callback pós-write: gera embedding, atualiza índice, invalida cache
       async (memory) => {
+        // Invalida cache snapshot (Fase 2.6)
+        if (cacheStableInjector) cacheStableInjector.invalidate();
+
         if (!embeddingService?.isReady || !vectorRetriever || !storage) return;
         try {
           const emb = await embeddingService.embed(memory.text);
