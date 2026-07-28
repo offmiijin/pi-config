@@ -253,6 +253,12 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
     args.push("--ro-bind", "/etc/ca-certificates", "/etc/ca-certificates");
   }
 
+  // ── Isolamento do HOME ──────────────────────────────────
+  // Cria HOME vazio ANTES de qualquer montagem de subdiretório.
+  // Montagens dentro do HOME (PATH entries, skills, .ssh, .gitconfig)
+  // devem vir DEPOIS para não serem sombreadas pelo tmpfs do HOME.
+  args.push("--dir", home);
+
   // Skills do agente — acessíveis independente do diretório do projeto
   const skillsDir = join(home, ".pi", "agent", "skills");
   if (existsSync(skillsDir)) {
@@ -273,6 +279,7 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   // PATH é repassado via SAFE_ENV_VARS, mas HOME é vazio no sandbox.
   // Monta read-only os diretórios no PATH que estão sob HOME para que
   // binários gerenciados por mise, cargo, pipx, nix, etc. sejam acessíveis.
+  // Deve vir DEPOIS de --dir home para não ser sombreado.
   const pathDirs = (process.env.PATH || "").split(":").filter(Boolean);
   const mountedParents = new Set<string>();
   for (const dir of pathDirs) {
@@ -413,13 +420,25 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   // --clearenv já foi adicionado no início dos args.
   // Agora repassa apenas vars seguras (desenvolvimento/runtime).
   for (const [key, value] of Object.entries(process.env)) {
-    if (SAFE_ENV_VARS.has(key) && value !== undefined) {
+    if (SAFE_ENV_VARS.has(key) && value !== undefined && key !== "PATH") {
       args.push("--setenv", key, value);
     }
   }
 
-  // HOME isolado — cria diretório vazio no namespace
-  args.push("--dir", home);
+  // PATH: garante que /usr/bin e /bin SEMPRE estejam inclusos,
+  // independente de process.env.PATH. Necessário porque em instalações
+  // npm global, process.env.PATH pode não incluir diretórios padrão.
+  const hostPath = process.env.PATH || "";
+  const requiredPaths = ["/usr/local/bin", "/usr/bin", "/bin"];
+  const pathParts = hostPath.split(":").filter(Boolean);
+  for (const rp of requiredPaths) {
+    if (!pathParts.includes(rp)) {
+      pathParts.push(rp);
+    }
+  }
+  args.push("--setenv", "PATH", pathParts.join(":"));
+
+  // HOME e USER — configurados via --setenv (diretório já criado acima)
   args.push("--setenv", "HOME", home);
   args.push("--setenv", "USER", process.env.USER || "root");
 
