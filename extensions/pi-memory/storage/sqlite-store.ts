@@ -2,11 +2,12 @@
  * SqliteStore — Camada warm de storage: SQLite + FTS5.
  *
  * Responsável por persistência primária das memórias e observações.
- * Usa bun:sqlite (nativo no Bun, sem dependências externas).
+ * Usa adaptador cross-runtime: bun:sqlite (Bun) ou better-sqlite3 (Node).
  * FTS5 para busca full-text (BM25).
  */
 
-import { Database } from "bun:sqlite";
+import { createSqliteDb } from "./sqlite-factory";
+import type { SqliteDatabase } from "./sqlite-adapter";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Memory, MemoryType, MemoryScope, RawObservation } from "../types";
@@ -173,7 +174,7 @@ const SQL = {
 // ── Store ──────────────────────────────────────────────────────────────
 
 export class SqliteStore {
-  private db: Database;
+  private db: SqliteDatabase;
 
   constructor(dbPath: string | ":memory:") {
     // Garante que o diretório pai existe (bun:sqlite não cria recursivamente)
@@ -181,16 +182,16 @@ export class SqliteStore {
       const dir = path.dirname(dbPath);
       fs.mkdirSync(dir, { recursive: true });
     }
-    this.db = new Database(dbPath, { create: true });
-    this.db.run("PRAGMA journal_mode = WAL");
-    this.db.run("PRAGMA foreign_keys = ON");
+    this.db = createSqliteDb(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec(SCHEMA_SQL);
   }
 
   // ── Memória ────────────────────────────────────────────────────────
 
   insertMemory(mem: Memory): void {
-    this.db.query(SQL.insertMemory).run({
+    this.db.prepare(SQL.insertMemory).run({
       $id: mem.id,
       $text: mem.text,
       $embedding: mem.embedding ? new Uint8Array(mem.embedding.buffer) : null,
@@ -210,12 +211,12 @@ export class SqliteStore {
   }
 
   getMemory(id: string): Memory | null {
-    const row = this.db.query(SQL.getMemory).get({ $id: id }) as Record<string, unknown> | undefined;
+    const row = this.db.prepare(SQL.getMemory).get({ $id: id }) as Record<string, unknown> | undefined;
     return row ? this.rowToMemory(row) : null;
   }
 
   getMemoriesByProject(projectId: string): Memory[] {
-    const rows = this.db.query(SQL.getMemoriesByProject).all({
+    const rows = this.db.prepare(SQL.getMemoriesByProject).all({
       $project_id: projectId,
     }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
@@ -223,12 +224,12 @@ export class SqliteStore {
 
   /** Returns ALL memories (no project filter). Used by global DB queries. */
   getAllMemories(): Memory[] {
-    const rows = this.db.query(SQL.getAllMemories).all() as Record<string, unknown>[];
+    const rows = this.db.prepare(SQL.getAllMemories).all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
   }
 
   getMemoryByHash(projectId: string, contentHash: string): Memory | null {
-    const row = this.db.query(SQL.getMemoryByHash).get({
+    const row = this.db.prepare(SQL.getMemoryByHash).get({
       $project_id: projectId,
       $content_hash: contentHash,
     }) as Record<string, unknown> | undefined;
@@ -237,14 +238,14 @@ export class SqliteStore {
 
   /** Hash lookup across all project_ids (used by global DB). */
   getMemoryByHashGlobal(contentHash: string): Memory | null {
-    const row = this.db.query(SQL.getMemoryByHashGlobal).get({
+    const row = this.db.prepare(SQL.getMemoryByHashGlobal).get({
       $content_hash: contentHash,
     }) as Record<string, unknown> | undefined;
     return row ? this.rowToMemory(row) : null;
   }
 
   updateMemory(mem: Memory): void {
-    this.db.query(SQL.updateMemory).run({
+    this.db.prepare(SQL.updateMemory).run({
       $id: mem.id,
       $text: mem.text,
       $embedding: mem.embedding ? new Uint8Array(mem.embedding.buffer) : null,
@@ -264,23 +265,23 @@ export class SqliteStore {
   }
 
   deleteMemory(id: string): void {
-    this.db.query(SQL.deleteMemory).run({ $id: id });
+    this.db.prepare(SQL.deleteMemory).run({ $id: id });
   }
 
   deleteAllMemories(projectId: string): number {
-    const result = this.db.run(SQL.deleteAllMemories, { $project_id: projectId });
+    const result = this.db.prepare(SQL.deleteAllMemories).run({ $project_id: projectId });
     return result.changes;
   }
 
   deleteAllObservations(projectId: string): number {
-    const result = this.db.run(SQL.deleteAllObservations, { $project_id: projectId });
+    const result = this.db.prepare(SQL.deleteAllObservations).run({ $project_id: projectId });
     return result.changes;
   }
 
   // ── Observações ────────────────────────────────────────────────────
 
   insertObservation(obs: RawObservation): void {
-    this.db.query(SQL.insertObservation).run({
+    this.db.prepare(SQL.insertObservation).run({
       $id: obs.id,
       $session_id: obs.session_id,
       $project_id: obs.project_id,
@@ -298,7 +299,7 @@ export class SqliteStore {
   }
 
   insertObservationsBatch(observations: RawObservation[]): void {
-    const insert = this.db.query(SQL.insertObservation);
+    const insert = this.db.prepare(SQL.insertObservation);
     const tx = this.db.transaction((obs: RawObservation[]) => {
       for (const o of obs) {
         insert.run({
@@ -322,7 +323,7 @@ export class SqliteStore {
   }
 
   getObservations(projectId: string, limit = 100): RawObservation[] {
-    const rows = this.db.query(SQL.getObservations).all({
+    const rows = this.db.prepare(SQL.getObservations).all({
       $project_id: projectId,
       $limit: limit,
     }) as Record<string, unknown>[];
@@ -330,14 +331,14 @@ export class SqliteStore {
   }
 
   getPendingObservations(projectId: string): RawObservation[] {
-    const rows = this.db.query(SQL.getPendingObservations).all({
+    const rows = this.db.prepare(SQL.getPendingObservations).all({
       $project_id: projectId,
     }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToObservation(r));
   }
 
   markExtracted(observationIds: string[]): void {
-    const update = this.db.query(SQL.markExtracted);
+    const update = this.db.prepare(SQL.markExtracted);
     const tx = this.db.transaction((ids: string[]) => {
       for (const id of ids) {
         update.run({ $id: id });
@@ -347,7 +348,7 @@ export class SqliteStore {
   }
 
   cleanupExpired(now: number): number {
-    const result = this.db.run(SQL.deleteExpiredObservations, {
+    const result = this.db.prepare(SQL.deleteExpiredObservations).run({
       $now: now,
     });
     return result.changes;
@@ -357,7 +358,7 @@ export class SqliteStore {
 
   searchFts(query: string, projectId: string, limit = 20): Array<{ memory: Memory; bm25Score: number }> {
     const ftsQuery = this.buildFtsQuery(query);
-    const rows = this.db.query(SQL.ftsSearch).all({
+    const rows = this.db.prepare(SQL.ftsSearch).all({
       $query: ftsQuery,
       $project_id: projectId,
       $limit: limit,
@@ -372,7 +373,7 @@ export class SqliteStore {
   /** Search FTS across ALL projects (for global DB queries). */
   searchFtsAll(query: string, limit = 20): Array<{ memory: Memory; bm25Score: number }> {
     const ftsQuery = this.buildFtsQuery(query);
-    const rows = this.db.query(SQL.ftsSearchAll).all({
+    const rows = this.db.prepare(SQL.ftsSearchAll).all({
       $query: ftsQuery,
       $limit: limit,
     }) as Array<Record<string, unknown>>;
@@ -386,14 +387,14 @@ export class SqliteStore {
   // ── Embeddings ─────────────────────────────────────────────────────
 
   getMemoriesWithEmbeddings(projectId: string): Memory[] {
-    const rows = this.db.query(SQL.getMemoriesWithEmbeddings).all({
+    const rows = this.db.prepare(SQL.getMemoriesWithEmbeddings).all({
       $project_id: projectId,
     }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
   }
 
   getMemoriesWithoutEmbedding(projectId: string): Memory[] {
-    const rows = this.db.query(SQL.getMemoriesWithoutEmbedding).all({
+    const rows = this.db.prepare(SQL.getMemoriesWithoutEmbedding).all({
       $project_id: projectId,
     }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
@@ -401,18 +402,18 @@ export class SqliteStore {
 
   /** Get all memories with embeddings (no project filter — for global DB). */
   getAllMemoriesWithEmbeddings(): Memory[] {
-    const rows = this.db.query(SQL.getAllMemoriesWithEmbeddings).all() as Record<string, unknown>[];
+    const rows = this.db.prepare(SQL.getAllMemoriesWithEmbeddings).all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
   }
 
   /** Get all memories without embedding (no project filter — for global DB). */
   getAllMemoriesWithoutEmbedding(): Memory[] {
-    const rows = this.db.query(SQL.getAllMemoriesWithoutEmbedding).all() as Record<string, unknown>[];
+    const rows = this.db.prepare(SQL.getAllMemoriesWithoutEmbedding).all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
   }
 
   updateEmbedding(id: string, embedding: Float32Array): void {
-    this.db.query(SQL.updateEmbedding).run({
+    this.db.prepare(SQL.updateEmbedding).run({
       $id: id,
       $embedding: new Uint8Array(embedding.buffer, embedding.byteOffset, embedding.byteLength),
     });
@@ -421,17 +422,17 @@ export class SqliteStore {
   // ── Stats ──────────────────────────────────────────────────────────
 
   countMemories(): number {
-    const row = this.db.query(SQL.countMemories).get() as { count: number };
+    const row = this.db.prepare(SQL.countMemories).get() as { count: number };
     return row.count;
   }
 
   countObservations(): number {
-    const row = this.db.query(SQL.countObservations).get() as { count: number };
+    const row = this.db.prepare(SQL.countObservations).get() as { count: number };
     return row.count;
   }
 
   countPendingExtraction(): number {
-    const row = this.db.query(SQL.countPendingExtraction).get() as { count: number };
+    const row = this.db.prepare(SQL.countPendingExtraction).get() as { count: number };
     return row.count;
   }
 
