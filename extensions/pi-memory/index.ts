@@ -140,16 +140,19 @@ export default function (pi: ExtensionAPI) {
           apiKey: apiKey || undefined,
         });
 
+        // Cria VectorRetriever imediatamente (síncrono) — referência válida
+        // para HybridRetriever. O índice começa vazio; busca degrada
+        // graciosamente via catch até o embedding service ficar pronto.
+        vectorRetriever = new VectorRetriever(embeddingService);
+
         // Inicializa em background (não bloqueia session_start)
         embeddingService.initialize().then(() => {
           if (embeddingService?.isReady && storage) {
-            vectorRetriever = new VectorRetriever(embeddingService);
-
             // Backfill: gera embeddings para memórias sem embedding
             runEmbeddingBackfill(
               storage,
               embeddingService,
-              vectorRetriever,
+              vectorRetriever!,
               projectId
             ).then((count) => {
               if (count > 0 && ctx?.hasUI) {
@@ -165,7 +168,7 @@ export default function (pi: ExtensionAPI) {
             // Reconstrói índice com embeddings existentes
             try {
               const withEmb = storage.getMemoriesWithEmbeddings(projectId);
-              vectorRetriever.buildIndex(withEmb);
+              vectorRetriever!.buildIndex(withEmb);
             } catch {
               // Índice vazio, continua sem vector search
             }
@@ -650,6 +653,7 @@ export default function (pi: ExtensionAPI) {
           { id: "vector",  label: "Vector search",     currentValue: vMode, values: [vMode] },
           { id: "llm",     label: "LLM extraction N3", currentValue: modeLabel("llm"), values: [modeLabel("llm")] },
           { id: "reranker", label: "Reranker",          currentValue: rMode, values: [rMode] },
+          { id: "pruning", label: "Pruning", currentValue: config.consolidation.pruning_enabled ? "on" : "off", values: ["on", "off"] },
           { id: "decay",   label: "Decay (days)",      currentValue: String(config.consolidation.decay_days), values: ["3", "7", "14", "30"] },
           { id: "prune_threshold", label: "Pruning threshold", currentValue: String(config.consolidation.pruning_confidence_threshold), values: ["0.05", "0.1", "0.2", "0.5"] },
           { id: "prune_age", label: "Pruning age (days)", currentValue: String(config.consolidation.pruning_age_days), values: ["7", "30", "60", "90"] },
@@ -679,7 +683,11 @@ export default function (pi: ExtensionAPI) {
                 done(undefined);
                 return;
               }
-              if (id === "decay") {
+              if (id === "pruning") {
+                const on = newValue === "on";
+                saveConfigToDisk({ consolidation: { pruning_enabled: on } } as Partial<PiMemoryConfig>);
+                ctx.ui.notify("Pruning: " + (on ? "on" : "off") + ". Run /reload to apply.", "info");
+              } else if (id === "decay") {
                 saveConfigToDisk({ consolidation: { decay_days: Number(newValue) } } as Partial<PiMemoryConfig>);
                 ctx.ui.notify("Decay: " + newValue + "d. Run /reload to apply.", "info");
               } else if (id === "prune_threshold") {
