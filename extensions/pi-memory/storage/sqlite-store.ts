@@ -6,10 +6,82 @@
  * FTS5 para busca full-text (BM25).
  */
 
-import { Database } from "bun:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import type { Memory, MemoryType, MemoryScope, RawObservation } from "../types";
+
+// ── Database adapter: bun:sqlite (Bun) or better-sqlite3 (Node.js) ──
+
+// Resolve require — Bun/jiti have it globally, Node ESM needs createRequire
+const _require: (id: string) => any =
+  typeof require !== "undefined"
+    ? require
+    : (() => { try { return createRequire(import.meta.url); } catch { return (globalThis as any).require; } })();
+
+interface IDbStatement {
+  run(...params: any[]): { changes: number; lastInsertRowid: number | bigint };
+  get(...params: any[]): any;
+  all(...params: any[]): any[];
+}
+
+interface IDbRunResult {
+  changes: number;
+  lastInsertRowid: number | bigint;
+}
+
+class DatabaseAdapter {
+  private db: any;
+  private _useBun: boolean;
+
+  constructor(dbPath: string) {
+    if (dbPath !== ":memory:") {
+      const dir = path.dirname(dbPath);
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    try {
+      const bunSqlite = _require("bun:sqlite");
+      this.db = new bunSqlite.Database(dbPath, { create: true });
+      this._useBun = true;
+    } catch {
+      try {
+        const bsql3 = _require("better-sqlite3");
+        const DB = bsql3.default || bsql3;
+        this.db = new DB(dbPath);
+        this._useBun = false;
+      } catch (e2) {
+        throw new Error(
+          "pi-memory requires bun:sqlite (Bun) or better-sqlite3 (Node.js). " +
+          "Install better-sqlite3: npm install better-sqlite3"
+        );
+      }
+    }
+  }
+
+  query(sql: string): IDbStatement {
+    return this._useBun ? this.db.query(sql) : this.db.prepare(sql);
+  }
+
+  run(sql: string, params?: Record<string, any>): IDbRunResult {
+    if (this._useBun) {
+      return params ? this.db.run(sql, params) : this.db.run(sql);
+    }
+    return this.db.prepare(sql).run(params ?? {});
+  }
+
+  exec(sql: string): void {
+    this.db.exec(sql);
+  }
+
+  transaction<T extends (...args: any[]) => any>(fn: T): T {
+    return this.db.transaction(fn);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
 
 // ── SQL DDL ────────────────────────────────────────────────────────────
 
@@ -173,17 +245,12 @@ const SQL = {
 // ── Store ──────────────────────────────────────────────────────────────
 
 export class SqliteStore {
-  private db: Database;
+  private db: DatabaseAdapter;
 
   constructor(dbPath: string | ":memory:") {
-    // Garante que o diretório pai existe (bun:sqlite não cria recursivamente)
-    if (dbPath !== ":memory:") {
-      const dir = path.dirname(dbPath);
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    this.db = new Database(dbPath, { create: true });
-    this.db.run("PRAGMA journal_mode = WAL");
-    this.db.run("PRAGMA foreign_keys = ON");
+    this.db = new DatabaseAdapter(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec(SCHEMA_SQL);
   }
 
