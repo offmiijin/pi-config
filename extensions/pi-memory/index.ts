@@ -767,7 +767,7 @@ export default function (pi: ExtensionAPI) {
                   );
                   if (result !== null && result !== undefined) {
                     const trimmed = result.trim();
-                    if (trimmed && trimmed !== curVal) {
+                    if (trimmed) {
                       saveEnvKey(envVarName, trimmed);
                     }
                     hasKey = true;
@@ -799,7 +799,7 @@ export default function (pi: ExtensionAPI) {
                   );
                   if (result !== null && result !== undefined) {
                     const trimmed = result.trim();
-                    if (trimmed && trimmed !== curVal) {
+                    if (trimmed) {
                       saveEnvKey(envVarName, trimmed);
                     }
                     hasKey = true;
@@ -892,7 +892,7 @@ export default function (pi: ExtensionAPI) {
                 );
                 if (result !== null && result !== undefined) {
                   const trimmed = result.trim();
-                  if (trimmed && trimmed !== curKey) {
+                  if (trimmed) {
                     saveEnvKey("LLM_API_KEY", trimmed);
                   }
                   hasKey = true;
@@ -923,7 +923,7 @@ export default function (pi: ExtensionAPI) {
                 );
                 if (result !== null && result !== undefined) {
                   const trimmed = result.trim();
-                  if (trimmed && trimmed !== curKey) {
+                  if (trimmed) {
                     saveEnvKey("LLM_API_KEY", trimmed);
                   }
                   hasKey = true;
