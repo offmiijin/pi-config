@@ -515,61 +515,10 @@ export default function (pi: ExtensionAPI) {
 
   // ── Command: /memory ──────────────────────────────────────────────
   pi.registerCommand("memory", {
-    description:
-      "Configure pi-memory features: vector, llm, reranker, decay, pruning. " +
-      "Usage: /memory (TUI: interactive) | /memory decay <days> | /memory pruning <threshold> [age] | /memory clear [--force]",
-    getArgumentCompletions: (prefix: string) => {
-      const firstCmds = [
-        { value: "vector", label: "Vector search (configuravia TUI)" },
-        { value: "llm", label: "LLM extraction N3 (configuravia TUI)" },
-        { value: "reranker", label: "Reranker (configuravia TUI)" },
-        { value: "decay", label: "Decay (days): 3, 7, 14, 30" },
-        { value: "pruning", label: "Pruning: threshold + age" },
-        { value: "clear", label: "Delete ALL memories and observations" },
-      ];
-
-      const parts = prefix.split(/\s+/);
-
-      // Primeiro argumento
-      if (parts.length <= 1) {
-        const filtered = firstCmds.filter((c) => c.value.startsWith(prefix));
-        return filtered.length > 0 ? filtered : null;
-      }
-
-      // Segundo argumento
-      const firstWord = parts[0];
-      const partialSecond = parts.slice(1).join(" ");
-
-      if (firstWord === "clear") {
-        const s = [{ value: "clear --force", label: "--force  Pula confirmacao" }];
-        return s.filter((x) => x.value.startsWith(prefix));
-      }
-      if (firstWord === "decay") {
-        const s = [3, 7, 14, 30].map((d) => ({
-          value: `decay ${d}`,
-          label: `${d} days`,
-        }));
-        return s.filter((x) => x.value.startsWith(prefix));
-      }
-      if (firstWord === "pruning") {
-        const thresholds = [0.05, 0.1, 0.2, 0.5];
-        const s = thresholds.flatMap((t) =>
-          [7, 30, 60, 90].map((a) => ({
-            value: `pruning ${t} ${a}`,
-            label: `threshold ${t}, age ${a}d`,
-          }))
-        );
-        return s.filter((x) => x.value.startsWith(prefix));
-      }
-
-      // vector/llm/reranker nao tem segundo argumento via CLI
-      return null;
-    },
-    handler: async (args, ctx) => {
-      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
-      const subcmd = parts[0]?.toLowerCase();
-
-      // ── helper: recarrega config do disco para o módulo ──
+    description: "Configure pi-memory: vector/llm/reranker mode, decay, pruning, clear. TUI only.",
+    getArgumentCompletions: () => null,
+    handler: async (_args, ctx) => {
+      // helper: recarrega config do disco para o modulo
       const reloadConfigFromDisk = () => {
         const projDir = ctx.cwd;
         if (!projDir) return;
@@ -583,11 +532,11 @@ export default function (pi: ExtensionAPI) {
         } catch { /* ignora */ }
       };
 
-      // ── helper: salva config no .pi/memory.json ──
+      // helper: salva config no .pi/memory.json
       const saveConfigToDisk = (patch: Partial<PiMemoryConfig>) => {
         const projDir = ctx.cwd;
         if (!projDir) {
-          ctx.ui.notify("No project directory — config not saved", "error");
+          ctx.ui.notify("No project directory - config not saved", "error");
           return;
         }
         const configDir = path.join(projDir, ".pi");
@@ -612,80 +561,9 @@ export default function (pi: ExtensionAPI) {
         fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
       };
 
-      // Recarrega config do disco ANTES de qualquer operação
       reloadConfigFromDisk();
 
-      // Se tem subcomando: modo CLI direto
-      if (subcmd && subcmd !== "interactive") {
-        switch (subcmd) {
-          case "vector":
-          case "llm":
-          case "reranker":
-            ctx.ui.notify(
-              `Use TUI para configurar ${subcmd}: /memory -> Enter em "${subcmd}" -> API key + modelo.`,
-              "info"
-            );
-            break;
-          case "decay": {
-            const val = parts[1];
-            const days = [3, 7, 14, 30];
-            if (val && days.includes(Number(val))) {
-              saveConfigToDisk({ consolidation: { decay_days: Number(val) } } as Partial<PiMemoryConfig>);
-              ctx.ui.notify(`Decay: ${val}d. Run /reload to apply.`, "success");
-            } else {
-              ctx.ui.notify(`Decay: ${config.consolidation.decay_days}d. Options: ${days.join(", ")}`, "info");
-            }
-            break;
-          }
-          case "pruning": {
-            const thresh = parts[1] ? Number(parts[1]) : NaN;
-            const age = parts[2] ? Number(parts[2]) : NaN;
-            const validThresh = [0.05, 0.1, 0.2, 0.5];
-            const validAge = [7, 30, 60, 90];
-            if (!isNaN(thresh) && validThresh.includes(thresh)) {
-              const patch: Record<string, unknown> = { consolidation: { pruning_confidence_threshold: thresh } as Record<string, unknown> };
-              if (!isNaN(age) && validAge.includes(age)) {
-                (patch.consolidation as Record<string, unknown>).pruning_age_days = age;
-              }
-              saveConfigToDisk(patch as Partial<PiMemoryConfig>);
-              ctx.ui.notify(`Pruning: threshold ${thresh}, age ${age || config.consolidation.pruning_age_days}d. Run /reload to apply.`, "success");
-            } else {
-              ctx.ui.notify(`Pruning: threshold ${config.consolidation.pruning_confidence_threshold}, age ${config.consolidation.pruning_age_days}d. Usage: /memory pruning <threshold> [age]`, "info");
-            }
-            break;
-          }
-          case "clear": {
-            const force = parts.includes("--force");
-            const confirmed = force || (ctx.hasUI && await ctx.ui.confirm("Clear all memories?", "This deletes ALL memories and observations for this project. Irreversible."));
-            if (!confirmed) {
-              ctx.ui.notify("Clear cancelled.", "info");
-              break;
-            }
-            const pid = hashProjectId(ctx.cwd ?? "default");
-            let memDel = 0;
-            let obsDel = 0;
-            try {
-              if (storage) {
-                memDel = storage.deleteAllMemories(pid);
-                obsDel = storage.deleteAllObservations(pid);
-                if (cacheStableInjector) cacheStableInjector.invalidate();
-                if (vectorRetriever) vectorRetriever.clear();
-                stats = resetStats();
-              }
-            } catch (e) {
-              ctx.ui.notify(`Clear failed: ${(e as Error).message}`, "error");
-              break;
-            }
-            ctx.ui.notify(`Cleared: ${memDel} memories, ${obsDel} observations deleted.`, "success");
-            break;
-          }
-          default:
-            ctx.ui.notify("Unknown command. Try /memory (TUI) or: decay, pruning, clear", "error");
-        }
-        return;
-      }
-
-      // ── helpers de display ──
+      // helpers de display
       const modeLabel = (feat: string): string => {
         if (feat === "vector") {
           const r = config.retrieval;
@@ -712,21 +590,7 @@ export default function (pi: ExtensionAPI) {
       const pendingExt = storage?.countPendingExtraction() ?? 0;
 
       if (ctx.mode !== "tui") {
-        const lines = [
-          "pi-memory configuration",
-          "",
-          "-- Features --",
-          "  Vector:  " + modeLabel("vector"),
-          "  LLM:     " + modeLabel("llm"),
-          "  Reranker: " + modeLabel("reranker"),
-          "  Decay:   " + config.consolidation.decay_days + "d",
-          "  Pruning: thresh " + config.consolidation.pruning_confidence_threshold + ", age " + config.consolidation.pruning_age_days + "d",
-          "",
-          "  Memories: " + memCount + "  |  Observations: " + obsCount + "  |  Pending: " + pendingExt,
-          "",
-          "Use /memory (TUI) to configure: vector/llm/reranker -> mode + key, decay/pruning cycle values.",
-        ];
-        ctx.ui.notify(lines.join("\n"), "info");
+        ctx.ui.notify("/memory requires TUI mode. Run pi without -p/--json flags.", "error");
         return;
       }
 
@@ -747,6 +611,7 @@ export default function (pi: ExtensionAPI) {
           { id: "decay",   label: "Decay (days)",      currentValue: String(config.consolidation.decay_days), values: ["3", "7", "14", "30"] },
           { id: "prune_threshold", label: "Pruning threshold", currentValue: String(config.consolidation.pruning_confidence_threshold), values: ["0.05", "0.1", "0.2", "0.5"] },
           { id: "prune_age", label: "Pruning age (days)", currentValue: String(config.consolidation.pruning_age_days), values: ["7", "30", "60", "90"] },
+          { id: "clear",    label: "Clear all memories",     currentValue: "clear", values: ["clear"] },
         ];
 
         await ctx.ui.custom((tui, theme, _kb, done) => {
@@ -764,6 +629,11 @@ export default function (pi: ExtensionAPI) {
             (id, newValue) => {
               if (id === "vector" || id === "reranker" || id === "llm") {
                 configTarget = id;
+                done(undefined);
+                return;
+              }
+              if (id === "clear") {
+                configTarget = "clear";
                 done(undefined);
                 return;
               }
@@ -857,6 +727,35 @@ export default function (pi: ExtensionAPI) {
               saveConfigToDisk({ llm_extraction: { model: model, enabled: true } } as Partial<PiMemoryConfig>);
             }
             ctx.ui.notify("LLM configured. Run /reload to apply.", "success");
+          }
+        }
+
+        // Clear: confirmacao + delecao
+        if (configTarget === "clear") {
+          const confirmed = await ctx.ui.confirm(
+            "Clear all memories?",
+            "This deletes ALL memories and observations for this project. Irreversible."
+          );
+          if (!confirmed) {
+            ctx.ui.notify("Clear cancelled.", "info");
+          } else {
+            const pid = hashProjectId(ctx.cwd ?? "default");
+            let memDel = 0;
+            let obsDel = 0;
+            try {
+              if (storage) {
+                memDel = storage.deleteAllMemories(pid);
+                obsDel = storage.deleteAllObservations(pid);
+                if (cacheStableInjector) cacheStableInjector.invalidate();
+                if (vectorRetriever) vectorRetriever.clear();
+                stats = resetStats();
+              }
+            } catch (e) {
+              ctx.ui.notify("Clear failed: " + (e as Error).message, "error");
+            }
+            if (memDel > 0 || obsDel > 0) {
+              ctx.ui.notify("Cleared: " + memDel + " memories, " + obsDel + " observations deleted.", "success");
+            }
           }
         }
       } catch (e) {
