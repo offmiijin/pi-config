@@ -21,7 +21,7 @@ export function extraConfigPath(): string {
 }
 
 /**
- * Carrega configuração mesclando defaults, config.json do data_dir e .pi/memory.json global.
+ * Carrega configuração mesclando defaults, config.json do data_dir e extensions/pi-memory.json.
  */
 export function loadConfig(_project_dir?: string): PiMemoryConfig {
   const config: PiMemoryConfig = deepClone(DEFAULT_CONFIG);
@@ -41,7 +41,7 @@ export function loadConfig(_project_dir?: string): PiMemoryConfig {
     }
   }
 
-  // ── Extra config global (~/.pi/agent/.pi/memory.json) ──
+  // ── Extra config global (~/.pi/agent/extensions/pi-memory.json) ──
   const extra_path = extraConfigPath();
   if (fs.existsSync(extra_path)) {
     try {

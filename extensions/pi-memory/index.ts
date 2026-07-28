@@ -92,6 +92,13 @@ export default function (pi: ExtensionAPI) {
 
   // ── Lifecycle: session_start ──────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
+    // Recarrega config do disco (aplica mudanças feitas via /memory)
+    config = loadConfig(pi.projectDir);
+
+    if (config.disabled) {
+      return;
+    }
+
     // Já inicializado? (ex: reload)
     if (storage) return;
 
