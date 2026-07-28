@@ -520,20 +520,40 @@ export default function (pi: ExtensionAPI) {
         ...features,
       ];
 
-      // Se tem espaço, é segundo argumento (true/false)
-      const spaceIdx = prefix.indexOf(" ");
-      if (spaceIdx !== -1) {
-        const afterSpace = prefix.slice(spaceIdx + 1);
-        const bools = [
-          { value: "true", label: "true  — Ativa" },
-          { value: "false", label: "false — Desativa" },
-        ];
-        const filtered = bools.filter((b) => b.value.startsWith(afterSpace));
+      // Separa o que já foi digitado em tokens
+      const parts = prefix.split(/\s+/);
+      // prefix = "vector "  → parts = ["vector", ""]
+      // prefix = "vector t" → parts = ["vector", "t"]
+      // prefix = ""         → parts = [""]
+
+      // Se não tem segundo token ainda, completa o primeiro argumento
+      if (parts.length <= 1) {
+        const filtered = commands.filter((c) => c.value.startsWith(prefix));
         return filtered.length > 0 ? filtered : null;
       }
 
-      // Primeiro argumento
-      const filtered = commands.filter((c) => c.value.startsWith(prefix));
+      // Tem segundo token (depois de um espaço)
+      const firstWord = parts[0];
+      const partialSecond = parts.slice(1).join(" ");
+
+      // Só oferece true/false para clear --force é exceção
+      let suggestions: Array<{ value: string; label: string }> = [];
+      if (firstWord === "clear") {
+        suggestions = [
+          { value: "clear --force", label: "--force  — Pula confirmação" },
+        ];
+      } else {
+        // Reconstrói o prefixo inteiro porque o autocomplete SUBSTITUI
+        // o prefixo inteiro pelo value. Então value precisa ser o texto
+        // completo depois de "/memory ".
+        suggestions = [
+          { value: `${firstWord} true`, label: `true  — Ativa` },
+          { value: `${firstWord} false`, label: `false — Desativa` },
+        ];
+      }
+
+      // Filtra: o value completo (ex: "vector true") deve começar com o prefixo (ex: "vector t")
+      const filtered = suggestions.filter((s) => s.value.startsWith(prefix));
       return filtered.length > 0 ? filtered : null;
     },
     handler: async (args, ctx) => {
