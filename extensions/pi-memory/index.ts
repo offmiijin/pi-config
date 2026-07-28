@@ -505,7 +505,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("memory", {
     description:
       "Configure pi-memory features: vector search, LLM extraction, reranker, decay, pruning. " +
-      "Usage: /memory [feature] [true|false]",
+      "Usage: /memory [feature] [true|false] | /memory clear [--force]",
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const subcmd = parts[0]?.toLowerCase();
@@ -605,6 +605,33 @@ export default function (pi: ExtensionAPI) {
             // pruning usa threshold > 0 como flag
             toggleArg("Pruning", ["consolidation", "pruning_confidence_threshold"], config.consolidation.pruning_confidence_threshold > 0);
             break;
+
+          case "clear": {
+            const force = parts.includes("--force");
+            const confirmed = force || (ctx.hasUI && await ctx.ui.confirm("Clear all memories?", "This deletes ALL memories and observations for this project. Irreversible."));
+            if (!confirmed) {
+              ctx.ui.notify("Clear cancelled.", "info");
+              break;
+            }
+            const pid = hashProjectId(ctx.cwd ?? "default");
+            let memDel = 0;
+            let obsDel = 0;
+            try {
+              if (storage) {
+                memDel = storage.deleteAllMemories(pid);
+                obsDel = storage.deleteAllObservations(pid);
+                if (cacheStableInjector) cacheStableInjector.invalidate();
+                if (vectorRetriever) vectorRetriever.clear();
+                stats = resetStats();
+              }
+            } catch (e) {
+              ctx.ui.notify(`Clear failed: ${(e as Error).message}`, "error");
+              break;
+            }
+            ctx.ui.notify(`Cleared: ${memDel} memories, ${obsDel} observations deleted.`, "success");
+            break;
+          }
+
           case "all": {
             const val = parts[1]?.toLowerCase();
             if (val !== "true" && val !== "false") {
@@ -660,6 +687,7 @@ export default function (pi: ExtensionAPI) {
           "── Usage ──",
           '  /memory <feature> true|false  Toggle feature',
           '  /memory all true|false        Toggle all',
+          '  /memory clear [--force]       Delete ALL memories and observations',
           '  /memory                       Interactive (TUI only)',
           '',
           'Features: vector, llm, reranker, decay, pruning',

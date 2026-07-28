@@ -63,6 +63,14 @@ export class UnifiedStore implements IStorage {
     this.sqlite.deleteMemory(id);
   }
 
+  deleteAllMemories(projectId: string): number {
+    return this.sqlite.deleteAllMemories(projectId);
+  }
+
+  deleteAllObservations(projectId: string): number {
+    return this.sqlite.deleteAllObservations(projectId);
+  }
+
   // ── Observations ─────────────────────────────────────────────────
 
   insertObservation(obs: RawObservation): void {

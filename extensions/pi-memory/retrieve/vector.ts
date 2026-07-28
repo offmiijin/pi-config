@@ -69,6 +69,12 @@ export class VectorRetriever {
     }
   }
 
+  /** Remove todos os vetores do índice */
+  clear(): void {
+    this.vectors = [];
+    this.memoryIds = [];
+  }
+
   /** Número de vetores no índice */
   get size(): number {
     return this.vectors.length;

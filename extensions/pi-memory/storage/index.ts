@@ -19,6 +19,8 @@ export interface IStorage {
   getMemoryByHash(projectId: string, contentHash: string): Memory | null;
   updateMemory(memory: Memory): void;
   deleteMemory(id: string): void;
+  deleteAllMemories(projectId: string): number;
+  deleteAllObservations(projectId: string): number;
 
   // ── Observations ─────────────────────────────────────────────────
   insertObservation(obs: RawObservation): void;

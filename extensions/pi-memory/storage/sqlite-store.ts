@@ -109,6 +109,10 @@ const SQL = {
 
   deleteMemory: `DELETE FROM memories WHERE id = $id`,
 
+  deleteAllMemories: `DELETE FROM memories WHERE project_id = $project_id`,
+
+  deleteAllObservations: `DELETE FROM observations WHERE project_id = $project_id`,
+
   insertObservation: `
     INSERT INTO observations (id, session_id, project_id, timestamp, type,
       tool_name, input_json, outcome, content_preview, error_preview,
@@ -230,6 +234,16 @@ export class SqliteStore {
 
   deleteMemory(id: string): void {
     this.db.query(SQL.deleteMemory).run({ $id: id });
+  }
+
+  deleteAllMemories(projectId: string): number {
+    const result = this.db.run(SQL.deleteAllMemories, { $project_id: projectId });
+    return result.changes;
+  }
+
+  deleteAllObservations(projectId: string): number {
+    const result = this.db.run(SQL.deleteAllObservations, { $project_id: projectId });
+    return result.changes;
   }
 
   // ── Observações ────────────────────────────────────────────────────
