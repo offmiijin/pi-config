@@ -510,6 +510,20 @@ export default function (pi: ExtensionAPI) {
       const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const subcmd = parts[0]?.toLowerCase();
 
+      // ── helper: recarrega config do disco para o módulo ──
+      const reloadConfigFromDisk = () => {
+        const projDir = ctx.cwd;
+        if (!projDir) return;
+        const localPath = path.join(projDir, ".pi", "memory.json");
+        try {
+          if (fs.existsSync(localPath)) {
+            const raw = fs.readFileSync(localPath, "utf-8");
+            const localCfg = JSON.parse(raw) as Partial<PiMemoryConfig>;
+            deepMergeConfig(config, localCfg as Record<string, unknown>);
+          }
+        } catch { /* ignora */ }
+      };
+
       // ── helper: salva config no .pi/memory.json ──
       const saveConfigToDisk = (patch: Partial<PiMemoryConfig>) => {
         const projDir = ctx.cwd;
@@ -537,9 +551,10 @@ export default function (pi: ExtensionAPI) {
           }
         }
         fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
-        // Atualiza config em memória
-        deepMergeConfig(config, patch as Record<string, unknown>);
       };
+
+      // Recarrega config do disco ANTES de qualquer operação
+      reloadConfigFromDisk();
 
       // ── helper: toggle via args (CLI mode) ──
       const toggleArg = (label: string, jsonPath: string[], current: boolean) => {
