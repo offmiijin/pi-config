@@ -9,15 +9,6 @@ import type { EditorTheme, KeybindingsManager, SelectListTheme, TUI } from "@ear
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 import path from "node:path";
 
-function formatDateTime(date: Date): string {
-	const d = String(date.getDate()).padStart(2, "0");
-	const m = String(date.getMonth() + 1).padStart(2, "0");
-	const y = date.getFullYear();
-	const h = String(date.getHours()).padStart(2, "0");
-	const min = String(date.getMinutes()).padStart(2, "0");
-	return `${d}/${m}/${y} \u2014 ${h}:${min}`;
-}
-
 function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
 	if (n >= 1_000) return Math.floor(n / 1_000) + "K";
@@ -36,10 +27,6 @@ class ModelInfoEditor extends CustomEditor {
 	private lastOutput = 0;
 	private contextUsage = 0;
 	private contextWindow = 0;
-	private borderKey = "border";
-	private bashDisplay = "";
-	private bashMode: string | null = null;
-	private lastExecTime = "";
 
 	constructor(
 		tui: TUI,
@@ -49,24 +36,6 @@ class ModelInfoEditor extends CustomEditor {
 	) {
 		super(tui, theme, keybindings, { paddingX: 0 });
 		this.uiTheme = uiTheme;
-		this.borderColor = (text: string) => uiTheme.fg(this.borderKey, text);
-	}
-
-	setBorderColor(colorKey: string | null): void {
-		this.borderKey = colorKey ?? "border";
-		this.borderColor = (text: string) => this.uiTheme.fg(this.borderKey, text);
-		this.invalidate();
-	}
-
-	setBashDisplay(text: string | null, mode: string | null): void {
-		this.bashDisplay = text ?? "";
-		this.bashMode = mode;
-		this.invalidate();
-	}
-
-	setLastExecTime(time: string) {
-		this.lastExecTime = time;
-		this.invalidate();
 	}
 
 	setAgentType(type: string) {
@@ -99,8 +68,7 @@ class ModelInfoEditor extends CustomEditor {
 		const lines = super.render(width);
 		if (width <= 4) return lines;
 
-		// Usa borderKey dinamico (setado por setBorderColor) pra rail
-		const borderFg = (text: string) => this.uiTheme.fg(this.borderKey, text);
+		const borderFg = (text: string) => this.uiTheme.fg("border", text);
 		const mutedFg = this.uiTheme.fg.bind(this.uiTheme, "borderMuted");
 		const dimFg = this.uiTheme.fg.bind(this.uiTheme, "dim");
 
@@ -129,20 +97,6 @@ class ModelInfoEditor extends CustomEditor {
 
 		const topBorder = mutedFg("\u2500".repeat(width));
 
-		const execTime = this.lastExecTime
-			? mutedFg(this.lastExecTime)
-			: "";
-		const execW = visibleWidth(execTime);
-
-		const bashIndicator = this.bashDisplay
-			? (this.bashMode === "hidden"
-				? dimFg(this.bashDisplay)
-				: borderFg(this.bashDisplay))
-			: "";
-		const bashW = visibleWidth(bashIndicator);
-
-		const fillSpaces = Math.max(0, innerW - execW - (bashW > 0 ? bashW + 1 : 0));
-		const bashLine = rail + execTime + " ".repeat(fillSpaces) + (bashW > 0 ? " " + bashIndicator : "");
 		const bottomBorder = mutedFg("\u2500".repeat(width));
 
 		const stripped = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
@@ -187,7 +141,7 @@ class ModelInfoEditor extends CustomEditor {
 		const gap = Math.max(1, innerW - leftW - rightW);
 		const metaLine = truncateToWidth(rail + leftPart + " ".repeat(gap) + rightPart, width);
 
-		return [topBorder, bashLine, ...paddedContent, spacer, metaLine, bottomBorder, ...autoComplete];
+		return [topBorder, ...paddedContent, spacer, metaLine, bottomBorder, ...autoComplete];
 	}
 }
 
@@ -197,23 +151,6 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	let sessionTokens = 0;
 	let sessionCost = 0;
 	let footerDataRef: any = null;
-
-	// Escuta evento de bash-mode para mudar cor da borda + texto
-	// E quando bash completa (mode=null), força refresh da branch
-	pi.events.on("custom:bash-mode", ({ mode, text }: { mode: string | null; text?: string | null }) => {
-		if (mode === "visible" || mode === "hidden") {
-			editorRef?.setBorderColor("warning"); // amarelo
-			editorRef?.setBashDisplay(text ?? null, mode);
-		} else {
-			editorRef?.setBorderColor(null); // normal
-			editorRef?.setBashDisplay(null, null);
-			// Bash command completou — força refresh da branch sem depender do watcher
-			// O comando (`git checkout`, etc.) já terminou, HEAD já mudou
-			setTimeout(() => {
-				footerDataRef?.refreshGitBranchAsync?.();
-			}, 100);
-		}
-	});
 
 	// ── escuta agente-switcher ─────────────────────────────────
 	pi.events?.on("custom:agent-switch", ({ type }: { type: string }) => {
@@ -276,12 +213,10 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			const ctxU = ctx.getContextUsage?.()?.tokens || 0;
 			editor.setContextInfo(ctxU, ctxW);
 			editor.setTokenInfo(0, 0, sessionTokens, sessionCost);
-			editor.setLastExecTime(formatDateTime(new Date()));
 			return editor;
 		});
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
-			// Guarda referência pro FooterDataProvider (uso no force refresh pós-bash)
 			footerDataRef = footerData;
 
 			const renderLine = (width: number): string[] => {

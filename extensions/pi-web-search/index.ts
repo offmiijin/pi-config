@@ -186,7 +186,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Fetch full page content from a list of URLs. " +
 			"Extracts clean text from each page (strips HTML tags, scripts, navigation) " +
-			"and saves to /tmp/page_<date>_<random>/. " +
+			"and saves to .sandbox-cache/web-fetch/page_<date>_<random>/. " +
 			"Processes up to 10 URLs in parallel; excess URLs are queued. " +
 			"Each request uses a random User-Agent and a small random delay to avoid blocking. " +
 			"Call after web_search to get the actual content of the URLs found.",
@@ -216,9 +216,11 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			const cwd = (_ctx as any)?.cwd ?? process.cwd();
+
 			let output;
 			try {
-				output = await fetchPages(urls, signal ?? undefined);
+				output = await fetchPages(urls, cwd, signal ?? undefined);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				return {

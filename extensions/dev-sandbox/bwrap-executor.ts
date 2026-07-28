@@ -269,6 +269,30 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
     args.push("--ro-bind", piDocsDir, piDocsDir);
   }
 
+  // ── PATH sob HOME ──────────────────────────────────────
+  // PATH é repassado via SAFE_ENV_VARS, mas HOME é vazio no sandbox.
+  // Monta read-only os diretórios no PATH que estão sob HOME para que
+  // binários gerenciados por mise, cargo, pipx, nix, etc. sejam acessíveis.
+  const pathDirs = (process.env.PATH || "").split(":").filter(Boolean);
+  const mountedParents = new Set<string>();
+  for (const dir of pathDirs) {
+    if (!dir.startsWith(home + "/")) continue;
+    if (!existsSync(dir)) continue;
+    // Sobe até 2 níveis acima de HOME para agrupar diretórios irmãos
+    // Ex: ~/.local/share/mise/installs/node/26/bin → monta ~/.local/share/mise/installs
+    // Ex: ~/.cargo/bin → monta ~/.cargo
+    // Ex: ~/.local/bin → monta ~/.local/bin
+    let parent = dir;
+    for (let i = 0; i < 3; i++) {
+      const next = dirname(parent);
+      if (next === home || next === "/" || next === ".") break;
+      parent = next;
+    }
+    if (mountedParents.has(parent)) continue;
+    mountedParents.add(parent);
+    args.push("--ro-bind", parent, parent);
+  }
+
   // Projeto read-write (ponto central do sandbox)
   args.push("--bind", cwd, cwd);
 

@@ -24,6 +24,9 @@ vi.mock("../utils", async (importOriginal) => {
 
 import { extractText, fetchPages } from "../fetch";
 
+// Test cwd — used for all fetchPages calls
+const testCwd = "/home/user/project";
+
 // ---------------------------------------------------------------------------
 // extractText — pure function, no mocking needed
 // ---------------------------------------------------------------------------
@@ -149,7 +152,7 @@ describe("fetchPages", () => {
 	});
 
 	it("returns correct output structure", async () => {
-		const output = await fetchPages(["https://example.com"]);
+		const output = await fetchPages(["https://example.com"], testCwd);
 
 		expect(output).toHaveProperty("outputDir");
 		expect(output).toHaveProperty("total", 1);
@@ -158,9 +161,12 @@ describe("fetchPages", () => {
 		expect(output.results).toHaveLength(1);
 	});
 
-	it("outputDir matches /tmp/page_<date>_<hex>/ pattern", async () => {
-		const output = await fetchPages(["https://example.com"]);
-		expect(output.outputDir).toMatch(/^\/tmp\/page_\d{8}_[0-9a-f]{8}$/);
+	it("outputDir is under <cwd>/.sandbox-cache/web-fetch/ with date+hex subdir", async () => {
+		const output = await fetchPages(["https://example.com"], testCwd);
+		const expectedPrefix = `${testCwd}/.sandbox-cache/web-fetch/page_`;
+		expect(output.outputDir.startsWith(expectedPrefix)).toBe(true);
+		// Suffix: YYYYMMDD_XXXXXXXX (8-digit date + underscore + 8-char hex)
+		expect(output.outputDir.slice(expectedPrefix.length)).toMatch(/^\d{8}_[0-9a-f]{8}$/);
 	});
 
 	it("processes multiple URLs", async () => {
@@ -169,7 +175,7 @@ describe("fetchPages", () => {
 			"https://example.com/b",
 			"https://example.com/c",
 		];
-		const output = await fetchPages(urls);
+		const output = await fetchPages(urls, testCwd);
 		expect(output.total).toBe(3);
 		expect(output.succeeded).toBe(3);
 		expect(output.results).toHaveLength(3);
@@ -184,7 +190,7 @@ describe("fetchPages", () => {
 			text: async () => "",
 		});
 
-		const output = await fetchPages(["https://example.com/404"]);
+		const output = await fetchPages(["https://example.com/404"], testCwd);
 		expect(output.total).toBe(1);
 		expect(output.succeeded).toBe(0);
 		expect(output.failed).toBe(1);
@@ -194,7 +200,7 @@ describe("fetchPages", () => {
 	it("reports network errors without crashing", async () => {
 		(globalThis.fetch as any).mockRejectedValue(new Error("ENOTFOUND"));
 
-		const output = await fetchPages(["https://invalid.example.com"]);
+		const output = await fetchPages(["https://invalid.example.com"], testCwd);
 		expect(output.total).toBe(1);
 		expect(output.failed).toBe(1);
 		expect(output.results[0].error).toBe("ENOTFOUND");
@@ -211,14 +217,14 @@ describe("fetchPages", () => {
 			text: async () => "%PDF-1.4...",
 		});
 
-		const output = await fetchPages(["https://example.com/doc.pdf"]);
+		const output = await fetchPages(["https://example.com/doc.pdf"], testCwd);
 		expect(output.succeeded).toBe(0);
 		expect(output.failed).toBe(1);
 		expect(output.results[0].error).toContain("UNSUPPORTED");
 	});
 
 	it("handles empty URL list", async () => {
-		const output = await fetchPages([]);
+		const output = await fetchPages([], testCwd);
 		expect(output.total).toBe(0);
 		expect(output.succeeded).toBe(0);
 		expect(output.failed).toBe(0);
@@ -226,7 +232,7 @@ describe("fetchPages", () => {
 	});
 
 	it("includes file path and size for successful pages", async () => {
-		const output = await fetchPages(["https://example.com/page"]);
+		const output = await fetchPages(["https://example.com/page"], testCwd);
 		const r = output.results[0];
 		expect(r.file).toBe("https_example_com_page.txt");
 		expect(r.size).toBeGreaterThan(0);
@@ -254,7 +260,7 @@ describe("fetchPages", () => {
 		const output = await fetchPages([
 			"https://example.com/ok",
 			"https://example.com/fail",
-		]);
+		], testCwd);
 		expect(output.succeeded).toBe(1);
 		expect(output.failed).toBe(1);
 	});
