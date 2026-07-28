@@ -81,20 +81,8 @@ export default function (pi: ExtensionAPI) {
     description: "Disable persistent memory for this session",
   });
 
-  // ── Carregar configuração ──
+  // ── Carregar configuração (inclui migração automática) ──
   config = loadConfig(pi.projectDir);
-
-  // Migracao: vector_enabled/reranker_enabled (legado) para vector_local/vector_api
-  const ret = config.retrieval;
-  if (ret.vector_enabled && !ret.vector_local && !ret.vector_api) {
-    ret.vector_local = true;
-  }
-  if (ret.reranker_enabled && !ret.reranker_local && !ret.reranker_api) {
-    ret.reranker_local = true;
-  }
-  // Deriva enabled dos novos campos
-  ret.vector_enabled = ret.vector_local || ret.vector_api;
-  ret.reranker_enabled = ret.reranker_local || ret.reranker_api;
 
   if (config.disabled) {
     return;
@@ -132,15 +120,16 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Inicializa embedding service + vector retriever (Fase 2.4)
-      if (config.retrieval.vector_enabled) {
+      if (config.retrieval.vector.local.enabled || config.retrieval.vector.api.enabled) {
         const apiKey = process.env.VECTOR_API_KEY || "";
 
         embeddingService = new EmbeddingService({
-          model: config.retrieval.vector_model ?? "all-MiniLM-L6-v2",
+          model: "all-MiniLM-L6-v2",
+          apiModel: config.retrieval.vector.api.model,
           dimension: 384,
           normalize: true,
           apiKey: apiKey || undefined,
-          preferApi: config.retrieval.vector_api && !config.retrieval.vector_local,
+          preferApi: config.retrieval.vector.api.enabled && !config.retrieval.vector.local.enabled,
         });
 
         // Cria VectorRetriever imediatamente (síncrono) — referência válida
@@ -183,14 +172,14 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Inicializa reranker (Fase 2.5) — background, não bloqueia
-      if (config.retrieval.reranker_enabled) {
+      if (config.retrieval.reranker.local.enabled || config.retrieval.reranker.api.enabled) {
         const rerankerApiKey = process.env.RERANKER_API_KEY || "";
 
         rerankerService = new RerankerService({
-          model: config.retrieval.reranker_model ?? "Xenova/ms-marco-MiniLM-L-6-v2",
+          model: "Xenova/ms-marco-MiniLM-L-6-v2",
+          apiModel: config.retrieval.reranker.api.model,
           apiKey: rerankerApiKey || undefined,
-          apiModel: "cohere/rerank-4-pro",
-          preferApi: config.retrieval.reranker_api && !config.retrieval.reranker_local,
+          preferApi: config.retrieval.reranker.api.enabled && !config.retrieval.reranker.local.enabled,
         });
         rerankerService.initialize().catch(() => {
           rerankerService = null;
@@ -198,10 +187,12 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Inicializa HybridRetriever (Fase 2.5) — quando hybrid, vector ou reranker habilitado
+      const vectorEnabled = config.retrieval.vector.local.enabled || config.retrieval.vector.api.enabled;
+      const rerankerEnabled = config.retrieval.reranker.local.enabled || config.retrieval.reranker.api.enabled;
       const needsHybrid =
         config.retrieval.hybrid_enabled ||
-        config.retrieval.vector_enabled ||
-        config.retrieval.reranker_enabled;
+        vectorEnabled ||
+        rerankerEnabled;
 
       if (needsHybrid && retriever) {
         hybridRetriever = new HybridRetriever(
@@ -211,8 +202,8 @@ export default function (pi: ExtensionAPI) {
           vectorRetriever,
           rerankerService,
           {
-            vectorEnabled: config.retrieval.vector_enabled,
-            rerankerEnabled: config.retrieval.reranker_enabled,
+            vectorEnabled,
+            rerankerEnabled,
           }
         );
       }
@@ -613,17 +604,17 @@ export default function (pi: ExtensionAPI) {
       // helpers de display
       const modeLabel = (feat: string): string => {
         if (feat === "vector") {
-          const r = config.retrieval;
-          if (r.vector_local && r.vector_api) return "local + api";
-          if (r.vector_local) return "local";
-          if (r.vector_api) return "api";
+          const v = config.retrieval.vector;
+          if (v.local.enabled && v.api.enabled) return "local + api";
+          if (v.local.enabled) return "local";
+          if (v.api.enabled) return "api";
           return "off";
         }
         if (feat === "reranker") {
-          const r = config.retrieval;
-          if (r.reranker_local && r.reranker_api) return "local + api";
-          if (r.reranker_local) return "local";
-          if (r.reranker_api) return "api";
+          const r = config.retrieval.reranker;
+          if (r.local.enabled && r.api.enabled) return "local + api";
+          if (r.local.enabled) return "local";
+          if (r.api.enabled) return "api";
           return "off";
         }
         if (feat === "llm") {
@@ -715,8 +706,8 @@ export default function (pi: ExtensionAPI) {
         // Configuracao externa (apos fechar SettingsList)
         if (configTarget === "vector" || configTarget === "reranker") {
           const isVec = configTarget === "vector";
-          const curLocal = isVec ? config.retrieval.vector_local : config.retrieval.reranker_local;
-          const curApi   = isVec ? config.retrieval.vector_api   : config.retrieval.reranker_api;
+          const curLocal = isVec ? config.retrieval.vector.local.enabled : config.retrieval.reranker.local.enabled;
+          const curApi   = isVec ? config.retrieval.vector.api.enabled   : config.retrieval.reranker.api.enabled;
           const curMode  = curLocal && curApi ? "local + api" : curLocal ? "local" : curApi ? "api" : "off";
 
           const mode = await ctx.ui.select(
@@ -837,8 +828,8 @@ export default function (pi: ExtensionAPI) {
               const doLocal = wantLocal;
               const doApi   = wantApi && hasKey;
               const patch = isVec
-                ? { retrieval: { vector_local: doLocal, vector_api: doApi, vector_enabled: doLocal || doApi } }
-                : { retrieval: { reranker_local: doLocal, reranker_api: doApi, reranker_enabled: doLocal || doApi } };
+                ? { retrieval: { vector: { local: { enabled: doLocal }, api: { enabled: doApi, model: config.retrieval.vector.api.model } } } }
+                : { retrieval: { reranker: { local: { enabled: doLocal }, api: { enabled: doApi, model: config.retrieval.reranker.api.model } } } };
               saveConfigToDisk(patch as Partial<PiMemoryConfig>);
               const savedMode = doLocal && doApi ? "local + api" : doLocal ? "local" : doApi ? "api" : "off";
               ctx.ui.notify(configTarget + ": " + savedMode + ". Run /reload to apply.", "success");

@@ -114,22 +114,16 @@ export interface PiMemoryConfig {
   /** Configuração de retrieval */
   retrieval: {
     bm25_enabled: boolean;
-    vector_enabled: boolean;
-    /** Local ONNX model ativo? (all-MiniLM-L6-v2, sem API key) */
-    vector_local: boolean;
-    /** API model ativo? (text-embedding-3-small, requer API key) */
-    vector_api: boolean;
+    vector: {
+      local: { enabled: boolean };
+      api: { enabled: boolean; model: string };
+    };
     hybrid_enabled: boolean;
-    reranker_enabled: boolean;
-    /** Local ONNX model ativo? (ms-marco-MiniLM-L-6-v2, sem API key) */
-    reranker_local: boolean;
-    /** API model ativo? (rerank-4-pro, requer API key) */
-    reranker_api: boolean;
+    reranker: {
+      local: { enabled: boolean };
+      api: { enabled: boolean; model: string };
+    };
     default_top_k: number;
-    /** Modelo para vector search. Default: all-MiniLM-L6-v2 */
-    vector_model?: string;
-    /** Modelo para reranker. Default: Xenova/ms-marco-MiniLM-L-6-v2 */
-    reranker_model?: string;
   };
 }
 
@@ -161,13 +155,15 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
   },
   retrieval: {
     bm25_enabled: true,
-    vector_enabled: false,
-    vector_local: false,
-    vector_api: false,
+    vector: {
+      local: { enabled: false },
+      api: { enabled: false, model: "openai/text-embedding-3-small" },
+    },
     hybrid_enabled: false,
-    reranker_enabled: false,
-    reranker_local: false,
-    reranker_api: false,
+    reranker: {
+      local: { enabled: false },
+      api: { enabled: false, model: "cohere/rerank-4-pro" },
+    },
     default_top_k: 10,
   },
 };

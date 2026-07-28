@@ -109,9 +109,15 @@ CAPTURE → EXTRACT → STORE → CONSOLIDATE → RETRIEVE → INJECT
   },
   "retrieval": {
     "bm25_enabled": true,
-    "vector_enabled": false,
+    "vector": {
+      "local": { "enabled": false },
+      "api": { "enabled": false, "model": "openai/text-embedding-3-small" }
+    },
     "hybrid_enabled": false,
-    "reranker_enabled": false,
+    "reranker": {
+      "local": { "enabled": false },
+      "api": { "enabled": false, "model": "cohere/rerank-4-pro" }
+    },
     "default_top_k": 10
   }
 }
@@ -123,9 +129,9 @@ Mesmo formato — sobrescreve campos do global via deep merge.
 
 ### Ativação dinâmica
 
-- **Vector search**: set `retrieval.vector_enabled: true`. Requer `@xenova/transformers` ou `VECTOR_API_KEY`.
+- **Vector search**: set `retrieval.vector.local.enabled: true` (local) ou `retrieval.vector.api.enabled: true` (API). Requer `@xenova/transformers` ou `VECTOR_API_KEY`.
 - **LLM extraction N3**: set `extraction_level: "llm"` e `LLM_API_KEY`.
-- **Reranker**: set `retrieval.reranker_enabled: true`. Usa modelo local ou API (`RERANKER_API_KEY`).
+- **Reranker**: set `retrieval.reranker.local.enabled: true` (local) ou `retrieval.reranker.api.enabled: true` (API). Usa modelo local ou API (`RERANKER_API_KEY`).
 - **Decay/pruning**: set `consolidation.decay_enabled` e `pruning_enabled` (via SweepConsolidator config).
 
 ## Extração N2 — Regex Patterns (18 patterns)
