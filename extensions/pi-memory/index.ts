@@ -163,8 +163,13 @@ export default function (pi: ExtensionAPI) {
 
       // Inicializa reranker (Fase 2.5) — background, não bloqueia
       if (config.retrieval.reranker_enabled) {
+        const rerankerApiKey =
+          process.env.OPENROUTER_API_KEY ?? "";
+
         rerankerService = new RerankerService({
           model: "Xenova/ms-marco-MiniLM-L-6-v2",
+          apiKey: rerankerApiKey || undefined,
+          apiModel: "cohere/rerank-4-pro",
         });
         rerankerService.initialize().catch(() => {
           rerankerService = null;

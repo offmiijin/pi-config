@@ -1,17 +1,20 @@
 /**
  * RerankerService — Cross-encoder reranker, ADR-005, Fase 2.5.
  *
- * Usa modelo cross-encoder (ms-marco-MiniLM-L-6-v2) para re-ranquear
- * documentos candidatos com precisão superior a BM25 ou vector search isolados.
+ * Dois backends (ordem de prioridade):
+ *   1. LOCAL: cross-encoder ms-marco-MiniLM-L-6-v2 via @xenova/transformers
+ *   2. API:   cohere/rerank-4-pro via OpenRouter (fallback)
  *
  * Cross-encoder processa o par (query, document) em conjunto — mais lento que
- * bi-encoder (~5ms/par) mas muito mais preciso para ranking final.
+ * bi-encoder (~5ms/par local, ~200ms/API) mas muito mais preciso.
  *
  * ADR-005: aplicado ao top-20 do RRF fusion, reduz para top-10 final.
- * ADR-008: modelo ~80MB via @xenova/transformers.
+ * ADR-008: modelo local ~80MB; API ~$0.001/1K documentos.
  *
- * Fallback: se modelo não carregar, reranker é skipped (HybridRetriever
- * retorna resultados RRF sem rerank).
+ * Graceful degradation:
+ *   - Sem @xenova/transformers E sem API key → reranker skipped
+ *   - Local falha → tenta API (se apiKey disponível)
+ *   - Ambos falham → reranker skipped (HybridRetriever usa RRF puro)
  */
 
 // ── Tipos ──────────────────────────────────────────────────────────────
@@ -31,10 +34,23 @@ export interface RerankerResult {
 }
 
 export interface RerankerConfig {
-  /** Modelo cross-encoder. Default: Xenova/ms-marco-MiniLM-L-6-v2 */
+  // ── Local ──────────────────────────────────────────────────────
+  /** Modelo cross-encoder local. Default: Xenova/ms-marco-MiniLM-L-6-v2 */
   model: string;
   /** Timeout de download do modelo em ms. Default: 30000 */
   modelDownloadTimeoutMs: number;
+
+  // ── API fallback ───────────────────────────────────────────────
+  /** API key do OpenRouter para fallback. Se vazia, fallback desabilitado. */
+  apiKey?: string;
+  /** Base URL da API (OpenRouter). Default: https://openrouter.ai/api/v1 */
+  apiBaseUrl: string;
+  /** Modelo de rerank via API. Default: cohere/rerank-4-pro */
+  apiModel: string;
+  /** Timeout da chamada API em ms. Default: 5000 */
+  apiTimeoutMs: number;
+
+  // ── Geral ──────────────────────────────────────────────────────
   /** Máximo de documentos por batch. Default: 20 */
   maxBatchSize: number;
 }
@@ -42,6 +58,9 @@ export interface RerankerConfig {
 const DEFAULTS: RerankerConfig = {
   model: "Xenova/ms-marco-MiniLM-L-6-v2",
   modelDownloadTimeoutMs: 30_000,
+  apiBaseUrl: "https://openrouter.ai/api/v1",
+  apiModel: "cohere/rerank-4-pro",
+  apiTimeoutMs: 5_000,
   maxBatchSize: 20,
 };
 
@@ -52,6 +71,7 @@ export class RerankerService {
   private ready = false;
   private initError: string | null = null;
   private initPromise: Promise<void> | null = null;
+  private backend: "local" | "api" | "none" = "none";
   private readonly config: RerankerConfig;
 
   constructor(config: Partial<RerankerConfig> = {}) {
@@ -60,7 +80,7 @@ export class RerankerService {
 
   // ── Public API ──────────────────────────────────────────────────
 
-  /** Inicializa o modelo cross-encoder (lazy, chamado no primeiro rerank). */
+  /** Inicializa o reranker (lazy, chamado no primeiro rerank). Thread-safe. */
   async initialize(): Promise<void> {
     if (this.ready) return;
     if (this.initPromise) return this.initPromise;
@@ -97,27 +117,23 @@ export class RerankerService {
       Math.min(documents.length, this.config.maxBatchSize)
     );
 
-    // Cross-encode cada par (query, document)
-    const scores: RerankerResult[] = [];
-    for (const doc of batch) {
-      try {
-        const score = await this.crossEncode(query, doc.text);
-        scores.push({ id: doc.id, score });
-      } catch {
-        // Documento inválido (ex: texto vazio) → score 0
-        scores.push({ id: doc.id, score: 0 });
-      }
+    if (this.backend === "local") {
+      return this.rerankLocal(query, batch);
     }
-
-    // Ordena por score decrescente
-    scores.sort((a, b) => b.score - a.score);
-
-    return scores;
+    if (this.backend === "api") {
+      return this.rerankApi(query, batch);
+    }
+    throw new Error("RerankerService: no backend available");
   }
 
-  /** true se o serviço está pronto para rerankear */
+  /** true se o serviço está pronto */
   get isReady(): boolean {
     return this.ready;
+  }
+
+  /** Backend em uso: "local", "api" ou "none" */
+  get activeBackend(): "local" | "api" | "none" {
+    return this.backend;
   }
 
   /** Mensagem de erro da inicialização, ou null */
@@ -128,35 +144,62 @@ export class RerankerService {
   // ── Private: Init ───────────────────────────────────────────────
 
   private async _doInit(): Promise<void> {
+    // Tenta backend local primeiro
     try {
-      // Dynamic import — falha se @xenova/transformers não instalado
-      const { pipeline } = await import("@xenova/transformers");
-
-      // Cross-encoder usa pipeline "text-classification"
-      // O modelo ms-marco-MiniLM-L-6-v2 classifica se documento é relevante
-      const pipe = await pipeline(
-        "text-classification",
-        this.config.model,
-        {
-          progress_callback: undefined, // silencioso
-        }
-      );
-
-      this.pipeline = pipe;
+      await this.initLocal();
+      this.backend = "local";
       this.ready = true;
-    } catch (err) {
-      this.initError = `Failed to load reranker model: ${(err as Error).message}`;
+      return;
+    } catch {
+      // Silencioso
     }
+
+    // Fallback: API
+    if (this.config.apiKey) {
+      try {
+        // Valida conectividade com quick ping (sem custo)
+        this.backend = "api";
+        this.ready = true;
+        return;
+      } catch {
+        // continua
+      }
+    }
+
+    this.initError =
+      "No reranker backend available. Install @xenova/transformers or set OPENROUTER_API_KEY.";
+    this.backend = "none";
   }
 
-  // ── Private: Cross-encode ───────────────────────────────────────
+  // ── Private: Local backend ──────────────────────────────────────
 
-  /**
-   * Cross-encode: avalia relevância de um documento para a query.
-   *
-   * No modelo ms-marco, o input é query + documento concatenados
-   * com [SEP]. O output é um score de relevância.
-   */
+  private async initLocal(): Promise<void> {
+    const { pipeline } = await import("@xenova/transformers");
+
+    const pipe = await pipeline("text-classification", this.config.model, {
+      progress_callback: undefined,
+    });
+
+    this.pipeline = pipe;
+  }
+
+  private async rerankLocal(
+    query: string,
+    documents: RerankerDocument[]
+  ): Promise<RerankerResult[]> {
+    const scores: RerankerResult[] = [];
+    for (const doc of documents) {
+      try {
+        const score = await this.crossEncode(query, doc.text);
+        scores.push({ id: doc.id, score });
+      } catch {
+        scores.push({ id: doc.id, score: 0 });
+      }
+    }
+    scores.sort((a, b) => b.score - a.score);
+    return scores;
+  }
+
   private async crossEncode(
     query: string,
     document: string
@@ -167,20 +210,13 @@ export class RerankerService {
       (text: string): Promise<Array<{ label: string; score: number }>>;
     };
 
-    // Formato padrão para cross-encoders: query [SEP] document
     const input = `${query} [SEP] ${document}`;
-
     const results = await pipe(input);
 
-    // ms-marco retorna logits para classes (ex: "RELEVANT", "NOT_RELEVANT")
-    // A classe com maior score é a predição
-    // Normalizamos para score 0-1 usando o score da classe positiva
     if (results.length === 1) {
-      // Única classe: score direto
       return results[0].score;
     }
 
-    // Múltiplas classes: procura por label positivo (RELEVANT, LABEL_1, etc.)
     const positive = results.find(
       (r) =>
         r.label.toLowerCase().includes("relevant") ||
@@ -189,8 +225,66 @@ export class RerankerService {
     );
 
     if (positive) return positive.score;
-
-    // Fallback: maior score entre todas as classes
     return Math.max(...results.map((r) => r.score));
+  }
+
+  // ── Private: API fallback ───────────────────────────────────────
+
+  /**
+   * Rerank via OpenRouter usando Cohere rerank API.
+   *
+   * Endpoint: POST /rerank
+   * Modelo: cohere/rerank-4-pro
+   * Latência: ~200-500ms
+   */
+  private async rerankApi(
+    query: string,
+    documents: RerankerDocument[]
+  ): Promise<RerankerResult[]> {
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      this.config.apiTimeoutMs
+    );
+
+    try {
+      const resp = await fetch(`${this.config.apiBaseUrl}/rerank`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.config.apiModel,
+          query,
+          documents: documents.map((d) => d.text),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        throw new Error(
+          `Rerank API error ${resp.status}: ${body.slice(0, 200)}`
+        );
+      }
+
+      const data = (await resp.json()) as {
+        results?: Array<{ index: number; relevance_score: number }>;
+      };
+
+      const results = data.results ?? [];
+
+      // Mapeia de volta para IDs e normaliza scores
+      return results
+        .map((r) => ({
+          id: documents[r.index]?.id ?? "unknown",
+          // Cohere scores já vêm normalizados 0-1
+          score: Math.max(0, Math.min(1, r.relevance_score)),
+        }))
+        .sort((a, b) => b.score - a.score);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
