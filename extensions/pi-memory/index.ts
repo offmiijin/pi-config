@@ -804,19 +804,39 @@ export default function (pi: ExtensionAPI) {
           );
 
           if (mode && mode !== curMode) {
-            const enableLocal = mode === "local" || mode === "local + api";
-            const enableApi   = mode === "api" || mode === "local + api";
-            if (enableApi) {
-              const k = await ctx.ui.input("API key for " + configTarget, "Leave empty to use OPENROUTER_API_KEY env var.", config.llm_extraction.apiKey || "");
-              if (k && k.trim()) {
-                saveConfigToDisk({ llm_extraction: { apiKey: k.trim() } } as Partial<PiMemoryConfig>);
+            const wantLocal = mode === "local" || mode === "local + api";
+            const wantApi   = mode === "api" || mode === "local + api";
+
+            // Se quer API, verifica se tem chave
+            let hasKey = !!(config.llm_extraction.apiKey || process.env.OPENROUTER_API_KEY);
+            let cancelled = false;
+
+            if (wantApi && !hasKey) {
+              const result = await ctx.ui.input(
+                "API key for " + configTarget,
+                "Required for API mode. Leave empty to cancel.",
+                ""
+              );
+              if (result && result.trim()) {
+                saveConfigToDisk({ llm_extraction: { apiKey: result.trim() } } as Partial<PiMemoryConfig>);
+                hasKey = true;
+              } else {
+                cancelled = true;
               }
             }
-            const patch = isVec
-              ? { retrieval: { vector_local: enableLocal, vector_api: enableApi, vector_enabled: enableLocal || enableApi } }
-              : { retrieval: { reranker_local: enableLocal, reranker_api: enableApi, reranker_enabled: enableLocal || enableApi } };
-            saveConfigToDisk(patch as Partial<PiMemoryConfig>);
-            ctx.ui.notify(configTarget + ": " + mode + ". Run /reload to apply.", "success");
+
+            if (cancelled && !wantLocal) {
+              ctx.ui.notify(configTarget + " API mode requires a key. Nothing changed.", "error");
+            } else {
+              const doLocal = wantLocal;
+              const doApi   = wantApi && hasKey;
+              const patch = isVec
+                ? { retrieval: { vector_local: doLocal, vector_api: doApi, vector_enabled: doLocal || doApi } }
+                : { retrieval: { reranker_local: doLocal, reranker_api: doApi, reranker_enabled: doLocal || doApi } };
+              saveConfigToDisk(patch as Partial<PiMemoryConfig>);
+              const savedMode = doLocal && doApi ? "local + api" : doLocal ? "local" : doApi ? "api" : "off";
+              ctx.ui.notify(configTarget + ": " + savedMode + ". Run /reload to apply.", "success");
+            }
           }
         }
 
