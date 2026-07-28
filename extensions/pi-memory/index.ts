@@ -751,8 +751,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── TUI: SettingsList interativo ──
+      let wantsAdvanced = false;
       try {
-        const { Container, SettingsList, Text } = await import("@earendil-works/pi-tui");
+        const { Container, SettingsList } = await import("@earendil-works/pi-tui");
         const { getSettingsListTheme } = await import("@earendil-works/pi-coding-agent");
         type SettingItem = import("@earendil-works/pi-tui").SettingItem;
 
@@ -787,6 +788,12 @@ export default function (pi: ExtensionAPI) {
             currentValue: String(config.consolidation.pruning_confidence_threshold > 0),
             values: ["true", "false"],
           },
+          {
+            id: "advanced",
+            label: "⚙️  Configure API keys & advanced",
+            currentValue: "→",
+            values: ["→"],
+          },
         ];
 
         await ctx.ui.custom((tui, theme, _kb, done) => {
@@ -801,9 +808,14 @@ export default function (pi: ExtensionAPI) {
 
           const settingsList = new SettingsList(
             items,
-            Math.min(items.length + 2, 15),
+            Math.min(items.length + 3, 18),
             getSettingsListTheme(),
             (id, newValue) => {
+              if (id === "advanced") {
+                wantsAdvanced = true;
+                done(undefined);
+                return;
+              }
               const enable = newValue === "true";
               switch (id) {
                 case "vector":
@@ -841,9 +853,89 @@ export default function (pi: ExtensionAPI) {
             handleInput: (data) => settingsList.handleInput?.(data),
           };
         });
+
+        // ── Advanced: prompts sequenciais de configuração ──
+        if (wantsAdvanced) {
+          const envKey = process.env.OPENROUTER_API_KEY || "";
+
+          // LLM API key
+          const llmKey = await ctx.ui.input(
+            "LLM API key (for N3 extraction)",
+            "Enter key or leave empty to use OPENROUTER_API_KEY env var.",
+            config.llm_extraction.apiKey ?? ""
+          );
+          if (llmKey !== undefined && llmKey !== null) {
+            const trimmed = llmKey.trim();
+            if (trimmed.length > 0 && trimmed !== (config.llm_extraction.apiKey ?? "")) {
+              saveConfigToDisk({ llm_extraction: { apiKey: trimmed } } as Partial<PiMemoryConfig>);
+            }
+          }
+
+          // LLM model
+          const llmModel = await ctx.ui.select(
+            "LLM model",
+            [
+              { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (barato, rápido)" },
+              { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+              { value: "claude-3-haiku", label: "Claude 3 Haiku" },
+              { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+            ],
+            config.llm_extraction.model
+          );
+          if (llmModel && llmModel !== config.llm_extraction.model) {
+            saveConfigToDisk({ llm_extraction: { model: llmModel } } as Partial<PiMemoryConfig>);
+          }
+
+          // Decay days
+          const decayDays = await ctx.ui.select(
+            "Decay: days without access to start confidence decay",
+            [
+              { value: "3", label: "3 days" },
+              { value: "7", label: "7 days" },
+              { value: "14", label: "14 days" },
+              { value: "30", label: "30 days" },
+            ],
+            String(config.consolidation.decay_days)
+          );
+          if (decayDays && Number(decayDays) !== config.consolidation.decay_days) {
+            saveConfigToDisk({ consolidation: { decay_days: Number(decayDays) } } as Partial<PiMemoryConfig>);
+          }
+
+          // Pruning threshold
+          const pruneThreshold = await ctx.ui.select(
+            "Pruning: minimum confidence before deleting",
+            [
+              { value: "0.05", label: "0.05 — Agressivo" },
+              { value: "0.1", label: "0.10 — Padrão" },
+              { value: "0.2", label: "0.20 — Conservador" },
+              { value: "0.5", label: "0.50 — Muito conservador" },
+            ],
+            String(config.consolidation.pruning_confidence_threshold)
+          );
+          if (pruneThreshold && Number(pruneThreshold) !== config.consolidation.pruning_confidence_threshold) {
+            saveConfigToDisk({ consolidation: { pruning_confidence_threshold: Number(pruneThreshold) } } as Partial<PiMemoryConfig>);
+          }
+
+          // Pruning age days
+          const pruneAge = await ctx.ui.select(
+            "Pruning: days without access before deleting",
+            [
+              { value: "7", label: "7 days" },
+              { value: "30", label: "30 days — Padrão" },
+              { value: "60", label: "60 days" },
+              { value: "90", label: "90 days" },
+            ],
+            String(config.consolidation.pruning_age_days)
+          );
+          if (pruneAge && Number(pruneAge) !== config.consolidation.pruning_age_days) {
+            saveConfigToDisk({ consolidation: { pruning_age_days: Number(pruneAge) } } as Partial<PiMemoryConfig>);
+          }
+
+          ctx.ui.notify("Advanced configuration saved. Run /reload to apply.", "success");
+        }
       } catch {
         ctx.ui.notify("Failed to load TUI components for interactive mode.", "error");
-      }
+      } 
     },
   });
 }
