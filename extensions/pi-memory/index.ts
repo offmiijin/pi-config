@@ -505,10 +505,10 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("memory", {
     description:
       "Configure pi-memory features: vector search, LLM extraction, reranker, decay, pruning. " +
-      "Usage: /memory [status|vector|llm|reranker|decay|pruning|all] [on|off]",
+      "Usage: /memory [feature] [true|false]",
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
-      const subcmd = parts[0]?.toLowerCase() ?? "status";
+      const subcmd = parts[0]?.toLowerCase();
 
       // ── helper: salva config no .pi/memory.json ──
       const saveConfigToDisk = (patch: Partial<PiMemoryConfig>) => {
@@ -528,7 +528,6 @@ export default function (pi: ExtensionAPI) {
           }
         } catch { /* ignora */ }
 
-        // Deep merge patch into existing
         const merged = { ...existing };
         for (const [key, val] of Object.entries(patch)) {
           if (val !== null && typeof val === "object" && !Array.isArray(val) && typeof existing[key] === "object" && existing[key] !== null && !Array.isArray(existing[key])) {
@@ -538,126 +537,238 @@ export default function (pi: ExtensionAPI) {
           }
         }
         fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
+        // Atualiza config em memória
+        deepMergeConfig(config, patch as Record<string, unknown>);
       };
 
-      // ── helper: toggle bool field, salva, reload ──
-      const toggle = (label: string, path: string[], current: boolean) => {
+      // ── helper: toggle via args (CLI mode) ──
+      const toggleArg = (label: string, jsonPath: string[], current: boolean) => {
         const val = parts[1]?.toLowerCase();
-        if (val !== "on" && val !== "off") {
+        if (val !== "true" && val !== "false") {
           ctx.ui.notify(
-            `${label}: ${current ? "on" : "off"}. Use \`/memory ${parts[0]} on|off\` to toggle.`,
+            `${label}: ${current}. Use \`/memory ${parts[0]} true|false\` to toggle.`,
             "info"
           );
           return;
         }
-        const enable = val === "on";
+        const enable = val === "true";
         if (enable === current) {
-          ctx.ui.notify(`${label} already ${enable ? "on" : "off"}`, "info");
+          ctx.ui.notify(`${label} already ${enable}`, "info");
           return;
         }
-
-        // Constrói patch aninhado
         let patch: Record<string, unknown> = {};
         let target: Record<string, unknown> = patch;
-        for (let i = 0; i < path.length - 1; i++) {
+        for (let i = 0; i < jsonPath.length - 1; i++) {
           const next: Record<string, unknown> = {};
-          target[path[i]] = next;
+          target[jsonPath[i]] = next;
           target = next;
         }
-        target[path[path.length - 1]] = enable;
-
+        target[jsonPath[jsonPath.length - 1]] = enable;
         saveConfigToDisk(patch as Partial<PiMemoryConfig>);
         ctx.ui.notify(
-          `${label}: ${enable ? "on" : "off"}. Run \`/reload\` to apply.`,
+          `${label}: ${enable}. Run \`/reload\` to apply.`,
           "success"
         );
       };
 
-      // ── Subcomandos ─────────────────────────────────────────
-      switch (subcmd) {
-        case "vector": {
-          toggle("Vector search", ["retrieval", "vector_enabled"], config.retrieval.vector_enabled);
-          break;
-        }
-        case "llm": {
-          toggle("LLM extraction N3", ["llm_extraction", "enabled"], config.llm_extraction.enabled);
-          break;
-        }
-        case "reranker": {
-          toggle("Reranker", ["retrieval", "reranker_enabled"], config.retrieval.reranker_enabled);
-          break;
-        }
-        case "decay": {
-          toggle("Confidence decay", ["consolidation", "decay_enabled"], config.consolidation.decay_enabled);
-          break;
-        }
-        case "pruning": {
-          toggle("Pruning", ["consolidation", "pruning_confidence_threshold"], config.consolidation.pruning_confidence_threshold > 0);
-          break;
-        }
-        case "all": {
-          const val = parts[1]?.toLowerCase();
-          if (val !== "on" && val !== "off") {
-            ctx.ui.notify("Use \`/memory all on|off\`", "info");
+      // Se tem subcomando: modo CLI direto
+      if (subcmd && subcmd !== "interactive") {
+        switch (subcmd) {
+          case "vector":
+            toggleArg("Vector search", ["retrieval", "vector_enabled"], config.retrieval.vector_enabled);
+            break;
+          case "llm":
+            toggleArg("LLM extraction N3", ["llm_extraction", "enabled"], config.llm_extraction.enabled);
+            break;
+          case "reranker":
+            toggleArg("Reranker", ["retrieval", "reranker_enabled"], config.retrieval.reranker_enabled);
+            break;
+          case "decay":
+            toggleArg("Confidence decay", ["consolidation", "decay_enabled"], config.consolidation.decay_enabled);
+            break;
+          case "pruning":
+            // pruning usa threshold > 0 como flag
+            toggleArg("Pruning", ["consolidation", "pruning_confidence_threshold"], config.consolidation.pruning_confidence_threshold > 0);
+            break;
+          case "all": {
+            const val = parts[1]?.toLowerCase();
+            if (val !== "true" && val !== "false") {
+              ctx.ui.notify("Use \`/memory all true|false\`", "info");
+              break;
+            }
+            const enable = val === "true";
+            saveConfigToDisk({
+              llm_extraction: { enabled: enable },
+              retrieval: {
+                vector_enabled: enable,
+                reranker_enabled: enable,
+              },
+              consolidation: {
+                decay_enabled: enable,
+                pruning_confidence_threshold: enable ? 0.1 : 0,
+                pruning_age_days: 30,
+              },
+            } as Partial<PiMemoryConfig>);
+            ctx.ui.notify(
+              `All features: ${enable}. Run \`/reload\` to apply.`,
+              "success"
+            );
             break;
           }
-          const enable = val === "on";
-          saveConfigToDisk({
-            llm_extraction: { enabled: enable },
-            retrieval: {
-              vector_enabled: enable,
-              reranker_enabled: enable,
+          default:
+            ctx.ui.notify("Unknown feature. Try: vector, llm, reranker, decay, pruning, all", "error");
+        }
+        return;
+      }
+
+      // ── Interativo (TUI) ou status (não-TUI) ──
+      const memCount = storage?.countMemories() ?? 0;
+      const obsCount = storage?.countObservations() ?? 0;
+      const pendingExt = storage?.countPendingExtraction() ?? 0;
+
+      if (ctx.mode !== "tui") {
+        const lines = [
+          "🧠 pi-memory configuration",
+          "",
+          "── Features ──",
+          `  Vector search:  ${config.retrieval.vector_enabled}`,
+          `  LLM extraction: ${config.llm_extraction.enabled}  (model: ${config.llm_extraction.model})`,
+          `  Reranker:       ${config.retrieval.reranker_enabled}`,
+          `  Decay:          ${config.consolidation.decay_enabled}`,
+          `  Pruning:        ${config.consolidation.pruning_confidence_threshold > 0}`,
+          "",
+          "── Stats ──",
+          `  Memories:     ${memCount}`,
+          `  Observations: ${obsCount}`,
+          `  Pending ext:  ${pendingExt}`,
+          "",
+          "── Usage ──",
+          '  /memory <feature> true|false  Toggle feature',
+          '  /memory all true|false        Toggle all',
+          '  /memory                       Interactive (TUI only)',
+          '',
+          'Features: vector, llm, reranker, decay, pruning',
+          'Changes saved to .pi/memory.json. Run /reload to apply.',
+        ];
+        ctx.ui.notify(lines.join("\n"), "info");
+        return;
+      }
+
+      // ── TUI: SettingsList interativo ──
+      try {
+        const { Container, SettingsList, Text } = await import("@earendil-works/pi-tui");
+        const { getSettingsListTheme } = await import("@earendil-works/pi-coding-agent");
+        type SettingItem = import("@earendil-works/pi-tui").SettingItem;
+
+        const items: SettingItem[] = [
+          {
+            id: "vector",
+            label: "Vector search",
+            currentValue: String(config.retrieval.vector_enabled),
+            values: ["true", "false"],
+          },
+          {
+            id: "llm",
+            label: "LLM extraction N3",
+            currentValue: String(config.llm_extraction.enabled),
+            values: ["true", "false"],
+          },
+          {
+            id: "reranker",
+            label: "Reranker",
+            currentValue: String(config.retrieval.reranker_enabled),
+            values: ["true", "false"],
+          },
+          {
+            id: "decay",
+            label: "Confidence decay",
+            currentValue: String(config.consolidation.decay_enabled),
+            values: ["true", "false"],
+          },
+          {
+            id: "pruning",
+            label: "Pruning",
+            currentValue: String(config.consolidation.pruning_confidence_threshold > 0),
+            values: ["true", "false"],
+          },
+        ];
+
+        await ctx.ui.custom((tui, theme, _kb, done) => {
+          const headerText = `🧠 pi-memory  (${memCount} mem, ${obsCount} obs, ${pendingExt} pending)`;
+          const container = new Container();
+          container.addChild(new (class {
+            render(_width: number) {
+              return [theme.fg("accent", theme.bold(headerText)), ""];
+            }
+            invalidate() {}
+          })());
+
+          const settingsList = new SettingsList(
+            items,
+            Math.min(items.length + 2, 15),
+            getSettingsListTheme(),
+            (id, newValue) => {
+              const enable = newValue === "true";
+              switch (id) {
+                case "vector":
+                  saveConfigToDisk({ retrieval: { vector_enabled: enable } } as Partial<PiMemoryConfig>);
+                  break;
+                case "llm":
+                  saveConfigToDisk({ llm_extraction: { enabled: enable } } as Partial<PiMemoryConfig>);
+                  break;
+                case "reranker":
+                  saveConfigToDisk({ retrieval: { reranker_enabled: enable } } as Partial<PiMemoryConfig>);
+                  break;
+                case "decay":
+                  saveConfigToDisk({ consolidation: { decay_enabled: enable } } as Partial<PiMemoryConfig>);
+                  break;
+                case "pruning":
+                  saveConfigToDisk({
+                    consolidation: {
+                      pruning_confidence_threshold: enable ? 0.1 : 0,
+                      pruning_age_days: 30,
+                    },
+                  } as Partial<PiMemoryConfig>);
+                  break;
+              }
+              ctx.ui.notify(`Memory ${id}: ${enable}. Run /reload to apply.`, "info");
             },
-            consolidation: {
-              decay_enabled: enable,
-              pruning_confidence_threshold: enable ? 0.1 : 0,
-              pruning_age_days: 30,
-            },
-          } as Partial<PiMemoryConfig>);
-          ctx.ui.notify(
-            `All features: ${enable ? "on" : "off"}. Run \`/reload\` to apply.`,
-            "success"
+            () => done(undefined),
+            { enableSearch: true },
           );
-          break;
-        }
 
-        // ── status (default) ──
-        default: {
-          const memCount = storage?.countMemories() ?? 0;
-          const obsCount = storage?.countObservations() ?? 0;
-          const pendingExt = storage?.countPendingExtraction() ?? 0;
+          container.addChild(settingsList);
 
-          const lines = [
-            "🧠 pi-memory configuration",
-            "",
-            "── Features ──",
-            `  Vector search:  ${config.retrieval.vector_enabled ? "✅ on" : "⬜ off"}`,
-            `  LLM extraction: ${config.llm_extraction.enabled ? "✅ on" : "⬜ off"}  (model: ${config.llm_extraction.model})`,
-            `  Reranker:       ${config.retrieval.reranker_enabled ? "✅ on" : "⬜ off"}`,
-            `  Decay:          ${config.consolidation.decay_enabled ? "✅ on" : "⬜ off"}`,
-            `  Pruning:        ${config.consolidation.pruning_confidence_threshold > 0 ? "✅ on" : "⬜ off"}`,
-            "",
-            "── Stats ──",
-            `  Memories:     ${memCount}`,
-            `  Observations: ${obsCount}`,
-            `  Pending ext:  ${pendingExt}`,
-            "",
-            "── Usage ──",
-            '  /memory <feature> on|off   Toggle a feature',
-            '  /memory all on|off         Toggle all features',
-            '  /memory                    Show this status',
-            '',
-            'Features: vector, llm, reranker, decay, pruning',
-            'Changes saved to .pi/memory.json. Run /reload to apply.',
-          ];
-          ctx.ui.notify(lines.join("\n"), "info");
-        }
+          return {
+            render: (w) => container.render(w),
+            invalidate: () => container.invalidate(),
+            handleInput: (data) => settingsList.handleInput?.(data),
+          };
+        });
+      } catch {
+        ctx.ui.notify("Failed to load TUI components for interactive mode.", "error");
       }
     },
   });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+
+/** Faz deep merge de um patch no objeto config em memória (mutação in-place) */
+function deepMergeConfig(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    const tv = target[key];
+    if (isObj(sv) && isObj(tv)) {
+      deepMergeConfig(tv as Record<string, unknown>, sv as Record<string, unknown>);
+    } else {
+      (target as Record<string, unknown>)[key] = sv;
+    }
+  }
+}
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
 
 /**
  * Gera um ID de projeto curto (8 chars hex) a partir do diretório.
