@@ -686,110 +686,74 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── helpers de display ──
-      const featStatus = (feat: string): string => {
-        if (feat === "vector" || feat === "reranker") {
-          const r = feat === "vector" ? config.retrieval : config.retrieval;
-          const local = feat === "vector" ? config.retrieval.vector_local : config.retrieval.reranker_local;
-          const api = feat === "vector" ? config.retrieval.vector_api : config.retrieval.reranker_api;
-          const parts: string[] = [];
-          if (local) parts.push("local");
-          if (api) parts.push("api");
-          return parts.length > 0 ? `✅ ${parts.join(" + ")}` : "⬜ false";
+      const modeLabel = (feat: string): string => {
+        if (feat === "vector") {
+          const r = config.retrieval;
+          if (r.vector_local && r.vector_api) return "local + api";
+          if (r.vector_local) return "local";
+          if (r.vector_api) return "api";
+          return "off";
+        }
+        if (feat === "reranker") {
+          const r = config.retrieval;
+          if (r.reranker_local && r.reranker_api) return "local + api";
+          if (r.reranker_local) return "local";
+          if (r.reranker_api) return "api";
+          return "off";
         }
         if (feat === "llm") {
-          if (!config.llm_extraction.enabled) return "⬜ false";
-          return `✅ ${config.llm_extraction.model}`;
+          return config.llm_extraction.enabled ? config.llm_extraction.model : "off";
         }
-        return "⬜ false";
+        return "off";
       };
 
-      // ── Interativo (TUI) ou status (não-TUI) ──
       const memCount = storage?.countMemories() ?? 0;
       const obsCount = storage?.countObservations() ?? 0;
       const pendingExt = storage?.countPendingExtraction() ?? 0;
 
       if (ctx.mode !== "tui") {
         const lines = [
-          "🧠 pi-memory configuration",
+          "pi-memory configuration",
           "",
-          "── Features ──",
-          `  Vector search:  ${featStatus("vector")}`,
-          `  LLM extraction: ${featStatus("llm")}`,
-          `  Reranker:       ${featStatus("reranker")}`,
-          `  Decay:          ${config.consolidation.decay_days}d`,
-          `  Pruning:        thresh ${config.consolidation.pruning_confidence_threshold}, age ${config.consolidation.pruning_age_days}d`,
+          "-- Features --",
+          "  Vector:  " + modeLabel("vector"),
+          "  LLM:     " + modeLabel("llm"),
+          "  Reranker: " + modeLabel("reranker"),
+          "  Decay:   " + config.consolidation.decay_days + "d",
+          "  Pruning: thresh " + config.consolidation.pruning_confidence_threshold + ", age " + config.consolidation.pruning_age_days + "d",
           "",
-          "── Stats ──",
-          `  Memories:     ${memCount}`,
-          `  Observations: ${obsCount}`,
-          `  Pending ext:  ${pendingExt}`,
+          "  Memories: " + memCount + "  |  Observations: " + obsCount + "  |  Pending: " + pendingExt,
           "",
-          "── Usage (TUI) ──",
-          '  /memory        SettingsList interativo',
-          '  Enter feature: Vector/LLM/Reranker → API key + model',
-          '  Enter decay:   cycles 3→7→14→30 dias',
-          '  Enter pruning: cycles threshold 0.05→0.1→0.2→0.5',
-          '  Enter age:     cycles 7→30→60→90 dias',
-          '',
-          'Changes saved to .pi/memory.json. Run /reload to apply.',
+          "Use /memory (TUI) to configure: vector/llm/reranker -> mode + key, decay/pruning cycle values.",
         ];
         ctx.ui.notify(lines.join("\n"), "info");
         return;
       }
 
-      // ── TUI: SettingsList interativo ──
+      // TUI: SettingsList
       let configTarget: string | null = null;
       try {
         const { Container, SettingsList } = await import("@earendil-works/pi-tui");
         const { getSettingsListTheme } = await import("@earendil-works/pi-coding-agent");
         type SettingItem = import("@earendil-works/pi-tui").SettingItem;
 
+        const vMode = modeLabel("vector");
+        const rMode = modeLabel("reranker");
+
         const items: SettingItem[] = [
-          {
-            id: "vector",
-            label: "Vector search",
-            currentValue: featStatus("vector"),
-            values: [featStatus("vector")],
-          },
-          {
-            id: "llm",
-            label: "LLM extraction N3",
-            currentValue: featStatus("llm"),
-            values: [featStatus("llm")],
-          },
-          {
-            id: "reranker",
-            label: "Reranker",
-            currentValue: featStatus("reranker"),
-            values: [featStatus("reranker")],
-          },
-          {
-            id: "decay",
-            label: "Decay (days)",
-            currentValue: String(config.consolidation.decay_days),
-            values: ["3", "7", "14", "30"],
-          },
-          {
-            id: "prune_threshold",
-            label: "Pruning threshold",
-            currentValue: String(config.consolidation.pruning_confidence_threshold),
-            values: ["0.05", "0.1", "0.2", "0.5"],
-          },
-          {
-            id: "prune_age",
-            label: "Pruning age (days)",
-            currentValue: String(config.consolidation.pruning_age_days),
-            values: ["7", "30", "60", "90"],
-          },
+          { id: "vector",  label: "Vector search",     currentValue: vMode, values: [vMode] },
+          { id: "llm",     label: "LLM extraction N3", currentValue: modeLabel("llm"), values: [modeLabel("llm")] },
+          { id: "reranker", label: "Reranker",          currentValue: rMode, values: [rMode] },
+          { id: "decay",   label: "Decay (days)",      currentValue: String(config.consolidation.decay_days), values: ["3", "7", "14", "30"] },
+          { id: "prune_threshold", label: "Pruning threshold", currentValue: String(config.consolidation.pruning_confidence_threshold), values: ["0.05", "0.1", "0.2", "0.5"] },
+          { id: "prune_age", label: "Pruning age (days)", currentValue: String(config.consolidation.pruning_age_days), values: ["7", "30", "60", "90"] },
         ];
 
         await ctx.ui.custom((tui, theme, _kb, done) => {
-          const headerText = `🧠 pi-memory  (${memCount} mem, ${obsCount} obs, ${pendingExt} pending)`;
+          const header = "pi-memory (" + memCount + " mem, " + obsCount + " obs, " + pendingExt + " pending)";
           const container = new Container();
           container.addChild(new (class {
-            render(_width: number) {
-              return [theme.fg("accent", theme.bold(headerText)), ""];
-            }
+            render(_width: number) { return [theme.fg("accent", theme.bold(header)), ""]; }
             invalidate() {}
           })());
 
@@ -798,25 +762,20 @@ export default function (pi: ExtensionAPI) {
             Math.min(items.length + 3, 18),
             getSettingsListTheme(),
             (id, newValue) => {
-              switch (id) {
-                case "vector":
-                case "llm":
-                case "reranker":
-                  configTarget = id;
-                  done(undefined);
-                  return;
-                case "decay":
-                  saveConfigToDisk({ consolidation: { decay_days: Number(newValue) } } as Partial<PiMemoryConfig>);
-                  ctx.ui.notify(`Decay: ${newValue}d. Run /reload to apply.`, "info");
-                  break;
-                case "prune_threshold":
-                  saveConfigToDisk({ consolidation: { pruning_confidence_threshold: Number(newValue) } } as Partial<PiMemoryConfig>);
-                  ctx.ui.notify(`Pruning threshold: ${newValue}. Run /reload to apply.`, "info");
-                  break;
-                case "prune_age":
-                  saveConfigToDisk({ consolidation: { pruning_age_days: Number(newValue) } } as Partial<PiMemoryConfig>);
-                  ctx.ui.notify(`Pruning age: ${newValue}d. Run /reload to apply.`, "info");
-                  break;
+              if (id === "vector" || id === "reranker" || id === "llm") {
+                configTarget = id;
+                done(undefined);
+                return;
+              }
+              if (id === "decay") {
+                saveConfigToDisk({ consolidation: { decay_days: Number(newValue) } } as Partial<PiMemoryConfig>);
+                ctx.ui.notify("Decay: " + newValue + "d. Run /reload to apply.", "info");
+              } else if (id === "prune_threshold") {
+                saveConfigToDisk({ consolidation: { pruning_confidence_threshold: Number(newValue) } } as Partial<PiMemoryConfig>);
+                ctx.ui.notify("Threshold: " + newValue + ". Run /reload to apply.", "info");
+              } else if (id === "prune_age") {
+                saveConfigToDisk({ consolidation: { pruning_age_days: Number(newValue) } } as Partial<PiMemoryConfig>);
+                ctx.ui.notify("Age: " + newValue + "d. Run /reload to apply.", "info");
               }
             },
             () => done(undefined),
@@ -824,7 +783,6 @@ export default function (pi: ExtensionAPI) {
           );
 
           container.addChild(settingsList);
-
           return {
             render: (w) => container.render(w),
             invalidate: () => container.invalidate(),
@@ -832,93 +790,65 @@ export default function (pi: ExtensionAPI) {
           };
         });
 
-        // ── Config sequencial: API key + modelo ──
-        if (configTarget) {
-          // ── vector / reranker: modo (off / local / api / local + api) ──
-          if (configTarget === "vector" || configTarget === "reranker") {
-            const isVec = configTarget === "vector";
-            const curLocal = isVec ? config.retrieval.vector_local : config.retrieval.reranker_local;
-            const curApi   = isVec ? config.retrieval.vector_api   : config.retrieval.reranker_api;
-            const curMode  = curLocal && curApi ? "local + api"
-                            : curLocal          ? "local"
-                            : curApi            ? "api"
-                            :                     "off";
+        // Configuracao externa (apos fechar SettingsList)
+        if (configTarget === "vector" || configTarget === "reranker") {
+          const isVec = configTarget === "vector";
+          const curLocal = isVec ? config.retrieval.vector_local : config.retrieval.reranker_local;
+          const curApi   = isVec ? config.retrieval.vector_api   : config.retrieval.reranker_api;
+          const curMode  = curLocal && curApi ? "local + api" : curLocal ? "local" : curApi ? "api" : "off";
 
-            const modeResult = await ctx.ui.select(
-              `${configTarget} mode`,
-              [
-                { value: "off", label: "off  — Desativado" },
-                { value: "local", label: "local  — Modelo ONNX local (sem API key)" },
-                { value: "api", label: "API  — Requer API key" },
-                { value: "local + api", label: "local + api  — Ambos ativos" },
-              ],
-              curMode
-            );
+          const mode = await ctx.ui.select(
+            configTarget + " mode",
+            [
+              { value: "off",         label: "off  — Desativado" },
+              { value: "local",       label: "local  — ONNX local (sem API key)" },
+              { value: "api",         label: "API  — Requer API key" },
+              { value: "local + api", label: "local + api  — Ambos ativos" },
+            ],
+            curMode
+          );
 
-            if (modeResult && modeResult !== curMode) {
-              const enableLocal = modeResult === "local" || modeResult === "local + api";
-              const enableApi   = modeResult === "api" || modeResult === "local + api";
-
-              if (enableApi) {
-                const currentKey = config.llm_extraction.apiKey || "";
-                const keyResult = await ctx.ui.input(
-                  `API key for ${configTarget}`,
-                  "Enter key or leave empty to use OPENROUTER_API_KEY env var.",
-                  currentKey
-                );
-                if (keyResult !== undefined && keyResult !== null) {
-                  const trimmedKey = keyResult.trim();
-                  if (trimmedKey.length > 0 && trimmedKey !== currentKey) {
-                    saveConfigToDisk({ llm_extraction: { apiKey: trimmedKey } } as Partial<PiMemoryConfig>);
-                  }
-                }
+          if (mode && mode !== curMode) {
+            const enableLocal = mode === "local" || mode === "local + api";
+            const enableApi   = mode === "api" || mode === "local + api";
+            if (enableApi) {
+              const k = await ctx.ui.input("API key for " + configTarget, "Leave empty to use OPENROUTER_API_KEY env var.", config.llm_extraction.apiKey || "");
+              if (k && k.trim()) {
+                saveConfigToDisk({ llm_extraction: { apiKey: k.trim() } } as Partial<PiMemoryConfig>);
               }
-
-              const patch = isVec
-                ? { retrieval: { vector_local: enableLocal, vector_api: enableApi, vector_enabled: enableLocal || enableApi } }
-                : { retrieval: { reranker_local: enableLocal, reranker_api: enableApi, reranker_enabled: enableLocal || enableApi } };
-              saveConfigToDisk(patch as Partial<PiMemoryConfig>);
-              ctx.ui.notify(`${configTarget}: ${modeResult}. Run /reload to apply.`, "success");
             }
-          }
-
-          // ── llm: API key + modelo (fluxo existente) ──
-          if (configTarget === "llm") {
-            const currentKey = config.llm_extraction.apiKey || "";
-            const keyResult = await ctx.ui.input(
-              `API key for LLM`,
-              "Enter key or leave empty to use OPENROUTER_API_KEY env var.",
-              currentKey
-            );
-            if (keyResult !== undefined && keyResult !== null) {
-              const trimmedKey = keyResult.trim();
-              if (trimmedKey.length > 0 && trimmedKey !== currentKey) {
-                saveConfigToDisk({ llm_extraction: { apiKey: trimmedKey, enabled: true } } as Partial<PiMemoryConfig>);
-              } else if (trimmedKey.length === 0 && currentKey.length > 0) {
-                saveConfigToDisk({ llm_extraction: { apiKey: "", enabled: false } } as Partial<PiMemoryConfig>);
-              }
-
-              const modelResult = await ctx.ui.select(
-                "LLM model",
-                [
-                  { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
-                  { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-                  { value: "claude-3-haiku", label: "Claude 3 Haiku" },
-                  { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-                ],
-                config.llm_extraction.model
-              );
-
-              if (modelResult && modelResult !== config.llm_extraction.model) {
-                saveConfigToDisk({ llm_extraction: { model: modelResult, enabled: true } } as Partial<PiMemoryConfig>);
-              }
-
-              ctx.ui.notify(`LLM configured. Run /reload to apply.`, "success");
-            }
+            const patch = isVec
+              ? { retrieval: { vector_local: enableLocal, vector_api: enableApi, vector_enabled: enableLocal || enableApi } }
+              : { retrieval: { reranker_local: enableLocal, reranker_api: enableApi, reranker_enabled: enableLocal || enableApi } };
+            saveConfigToDisk(patch as Partial<PiMemoryConfig>);
+            ctx.ui.notify(configTarget + ": " + mode + ". Run /reload to apply.", "success");
           }
         }
-      } catch {
-        ctx.ui.notify("Failed to load TUI components for interactive mode.", "error");
+
+        if (configTarget === "llm") {
+          const curKey = config.llm_extraction.apiKey || "";
+          const k = await ctx.ui.input("API key for LLM", "Leave empty to use OPENROUTER_API_KEY env var.", curKey);
+          if (k !== undefined && k !== null) {
+            const trimmed = k.trim();
+            if (trimmed.length > 0 && trimmed !== curKey) {
+              saveConfigToDisk({ llm_extraction: { apiKey: trimmed, enabled: true } } as Partial<PiMemoryConfig>);
+            } else if (trimmed.length === 0 && curKey.length > 0) {
+              saveConfigToDisk({ llm_extraction: { apiKey: "", enabled: false } } as Partial<PiMemoryConfig>);
+            }
+            const model = await ctx.ui.select("LLM model", [
+              { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+              { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+              { value: "claude-3-haiku", label: "Claude 3 Haiku" },
+              { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+            ], config.llm_extraction.model);
+            if (model && model !== config.llm_extraction.model) {
+              saveConfigToDisk({ llm_extraction: { model: model, enabled: true } } as Partial<PiMemoryConfig>);
+            }
+            ctx.ui.notify("LLM configured. Run /reload to apply.", "success");
+          }
+        }
+      } catch (e) {
+        ctx.ui.notify("TUI error: " + (e as Error).message, "error");
       } 
     },
   });
