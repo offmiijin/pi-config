@@ -838,60 +838,123 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (configTarget === "llm") {
-          const curKey = process.env.LLM_API_KEY || "";
-          const k = await ctx.ui.input(
-            "API key for LLM",
-            "Will be saved to extensions/pi-memory/.env. Leave empty and confirm to disable.",
-            curKey
+          const curMode = config.llm_extraction.enabled ? "api" : "off";
+          const mode = await ctx.ui.select(
+            "LLM extraction mode",
+            ["off", "api"],
+            curMode
           );
-          if (k === undefined || k === null) {
-            // Cancelado — não faz nada
+
+          if (!mode || mode === curMode) {
+            // Nada mudou ou cancelado
+          } else if (mode === "off") {
+            // Desabilita
+            saveEnvKey("LLM_API_KEY", "");
+            saveConfigToDisk({
+              extraction_level: "regex",
+              llm_extraction: { enabled: false },
+            } as unknown as Partial<PiMemoryConfig>);
+            ctx.ui.notify("LLM extraction disabled. Run /reload to apply.", "success");
           } else {
-            const trimmed = k.trim();
-            let effectiveKey = trimmed;
+            // API mode — resolve chave
+            const curKey = process.env.LLM_API_KEY || "";
+            let hasKey = !!curKey;
+            let cancelled = false;
 
-            // Se não digitou chave nova e não tem LLM_API_KEY, oferece reuso
-            if (!effectiveKey && !curKey) {
-              const existingKeys: Array<{ label: string; varName: string }> = [];
-              if (process.env.VECTOR_API_KEY) existingKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
-              if (process.env.RERANKER_API_KEY) existingKeys.push({ label: "Reranker API key", varName: "RERANKER_API_KEY" });
+            // Coleta chaves existentes de outros serviços
+            const otherKeys: Array<{ label: string; varName: string }> = [];
+            if (process.env.VECTOR_API_KEY) otherKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
+            if (process.env.RERANKER_API_KEY) otherKeys.push({ label: "Reranker API key", varName: "RERANKER_API_KEY" });
 
-              if (existingKeys.length > 0) {
-                const reuseOpts = ["Enter new key", ...existingKeys.map((ek) => `Reuse ${ek.label}`)];
-                const reuseChoice = await ctx.ui.select(
+            if (otherKeys.length > 0) {
+              const reuseOpts = [
+                curKey ? "Enter different key" : "Enter new key",
+                ...otherKeys.map((k) => `Reuse ${k.label}`),
+              ];
+              const reuseChoice = await ctx.ui.select(
+                "API key for LLM",
+                reuseOpts,
+                reuseOpts[0]
+              );
+
+              if (reuseChoice && reuseChoice.startsWith("Reuse")) {
+                const chosen = otherKeys.find((k) => `Reuse ${k.label}` === reuseChoice);
+                if (chosen) {
+                  saveEnvKey("LLM_API_KEY", process.env[chosen.varName]!);
+                  hasKey = true;
+                }
+              } else if (curKey) {
+                // Já tem chave — input com atual como default
+                const result = await ctx.ui.input(
                   "API key for LLM",
-                  reuseOpts,
-                  "Enter new key"
+                  "Leave as-is to keep current key, or enter a new one.",
+                  curKey
                 );
-                if (reuseChoice && reuseChoice.startsWith("Reuse")) {
-                  const chosen = existingKeys.find((ek) => `Reuse ${ek.label}` === reuseChoice);
-                  if (chosen) {
-                    effectiveKey = process.env[chosen.varName]!;
+                if (result !== null && result !== undefined) {
+                  const trimmed = result.trim();
+                  if (trimmed && trimmed !== curKey) {
+                    saveEnvKey("LLM_API_KEY", trimmed);
                   }
+                  hasKey = true;
+                } else {
+                  cancelled = true;
+                }
+              } else {
+                // Não tem chave — input vazio
+                const result = await ctx.ui.input(
+                  "API key for LLM",
+                  "Required for LLM extraction. Will be saved to extensions/pi-memory/.env",
+                  ""
+                );
+                if (result && result.trim()) {
+                  saveEnvKey("LLM_API_KEY", result.trim());
+                  hasKey = true;
+                } else {
+                  cancelled = true;
+                }
+              }
+            } else {
+              // Nenhuma outra chave — input direto
+              if (curKey) {
+                const result = await ctx.ui.input(
+                  "API key for LLM",
+                  "Leave as-is to keep current key, or enter a new one.",
+                  curKey
+                );
+                if (result !== null && result !== undefined) {
+                  const trimmed = result.trim();
+                  if (trimmed && trimmed !== curKey) {
+                    saveEnvKey("LLM_API_KEY", trimmed);
+                  }
+                  hasKey = true;
+                } else {
+                  cancelled = true;
+                }
+              } else {
+                const result = await ctx.ui.input(
+                  "API key for LLM",
+                  "Required for LLM extraction. Will be saved to extensions/pi-memory/.env",
+                  ""
+                );
+                if (result && result.trim()) {
+                  saveEnvKey("LLM_API_KEY", result.trim());
+                  hasKey = true;
+                } else {
+                  cancelled = true;
                 }
               }
             }
 
-            const hasKey = effectiveKey.length > 0;
-
-            if (hasKey) {
-              saveEnvKey("LLM_API_KEY", effectiveKey);
-              // Único modelo suportado atualmente
+            if (cancelled) {
+              ctx.ui.notify("LLM configuration cancelled.", "info");
+            } else if (hasKey) {
               const model = "deepseek/deepseek-v4-flash";
               saveConfigToDisk({
                 extraction_level: "llm",
                 llm_extraction: { model, enabled: true },
               } as unknown as Partial<PiMemoryConfig>);
-            } else if (curKey.length > 0) {
-              // Remove chave existente — desabilita
-              saveEnvKey("LLM_API_KEY", "");
-              saveConfigToDisk({
-                extraction_level: "regex",
-                llm_extraction: { enabled: false },
-              } as unknown as Partial<PiMemoryConfig>);
+              ctx.ui.notify("LLM configured. Run /reload to apply.", "success");
             }
-
-            ctx.ui.notify("LLM configured. Run /reload to apply.", "success");
           }
         }
 
