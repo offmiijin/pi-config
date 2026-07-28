@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "./config";
+import { loadConfig, extraConfigPath } from "./config";
 import type { PiMemoryConfig, MemoryStats, RetrievalResult } from "./types";
 import { UnifiedStore } from "./storage/unified-store";
 import type { IStorage } from "./storage/index";
@@ -556,29 +556,22 @@ export default function (pi: ExtensionAPI) {
     description: "Configure pi-memory: vector/llm/reranker mode, decay, pruning, clear. TUI only.",
     getArgumentCompletions: () => null,
     handler: async (_args, ctx) => {
-      // helper: recarrega config do disco para o modulo
+      // helper: recarrega config do disco para o modulo (global apenas)
       const reloadConfigFromDisk = () => {
-        const projDir = ctx.cwd;
-        if (!projDir) return;
-        const localPath = path.join(projDir, ".pi", "memory.json");
+        const cfgPath = extraConfigPath();
         try {
-          if (fs.existsSync(localPath)) {
-            const raw = fs.readFileSync(localPath, "utf-8");
-            const localCfg = JSON.parse(raw) as Partial<PiMemoryConfig>;
-            deepMergeConfig(config, localCfg as Record<string, unknown>);
+          if (fs.existsSync(cfgPath)) {
+            const raw = fs.readFileSync(cfgPath, "utf-8");
+            const extraCfg = JSON.parse(raw) as Partial<PiMemoryConfig>;
+            deepMergeConfig(config, extraCfg as Record<string, unknown>);
           }
         } catch { /* ignora */ }
       };
 
-      // helper: salva config no .pi/memory.json
+      // helper: salva config no ~/.pi/agent/extensions/pi-memory.json
       const saveConfigToDisk = (patch: Partial<PiMemoryConfig>) => {
-        const projDir = ctx.cwd;
-        if (!projDir) {
-          ctx.ui.notify("No project directory - config not saved", "error");
-          return;
-        }
-        const configDir = path.join(projDir, ".pi");
-        const configPath = path.join(configDir, "memory.json");
+        const configPath = extraConfigPath();
+        const configDir = path.dirname(configPath);
         fs.mkdirSync(configDir, { recursive: true });
 
         let existing: Record<string, unknown> = {};

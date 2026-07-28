@@ -1,5 +1,12 @@
 /**
- * Configuração do pi-memory: global + project-local.
+ * Configuração do pi-memory: defaults + global config.json + extra global.
+ *
+ * Ordem de precedência (último sobrescreve):
+ *   1. DEFAULT_CONFIG (types.ts)
+ *   2. ~/.pi/agent/memory/config.json (global, criado pelo sistema)
+ *   3. ~/.pi/agent/extensions/pi-memory.json (extra global, editado pelo usuário via /memory)
+ *
+ * Não existe config por projeto — toda configuração é global.
  */
 
 import type { PiMemoryConfig } from "./types";
@@ -8,17 +15,21 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
+/** Caminho do arquivo de configuração extra global (~/.pi/agent/extensions/pi-memory.json). */
+export function extraConfigPath(): string {
+  return path.join(os.homedir(), ".pi", "agent", "extensions", "pi-memory.json");
+}
+
 /**
- * Carrega configuração mesclando defaults, global (~/.pi/agent/memory/config.json)
- * e project-local (<project>/.pi/memory.json).
+ * Carrega configuração mesclando defaults, config.json do data_dir e .pi/memory.json global.
  */
-export function loadConfig(project_dir?: string): PiMemoryConfig {
+export function loadConfig(_project_dir?: string): PiMemoryConfig {
   const config: PiMemoryConfig = deepClone(DEFAULT_CONFIG);
 
   // Data dir padrão
   config.data_dir = path.join(os.homedir(), ".pi", "agent", "memory");
 
-  // ── Global config ──
+  // ── Global config (data_dir) ──
   const global_path = path.join(config.data_dir, "config.json");
   if (fs.existsSync(global_path)) {
     try {
@@ -30,17 +41,15 @@ export function loadConfig(project_dir?: string): PiMemoryConfig {
     }
   }
 
-  // ── Project-local config ──
-  if (project_dir) {
-    const local_path = path.join(project_dir, ".pi", "memory.json");
-    if (fs.existsSync(local_path)) {
-      try {
-        const raw = fs.readFileSync(local_path, "utf-8");
-        const local_cfg = JSON.parse(raw) as Partial<PiMemoryConfig>;
-        deepMerge(config, local_cfg);
-      } catch {
-        // ignora erro de parse
-      }
+  // ── Extra config global (~/.pi/agent/.pi/memory.json) ──
+  const extra_path = extraConfigPath();
+  if (fs.existsSync(extra_path)) {
+    try {
+      const raw = fs.readFileSync(extra_path, "utf-8");
+      const extra_cfg = JSON.parse(raw) as Partial<PiMemoryConfig>;
+      deepMerge(config, extra_cfg);
+    } catch {
+      // ignora erro de parse
     }
   }
 
