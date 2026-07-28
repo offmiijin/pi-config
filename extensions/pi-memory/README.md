@@ -9,6 +9,9 @@ Retém conhecimento através de sessões — preferências, decisões de design,
 ```bash
 # A extensão já está em ~/.pi/agent/extensions/pi-memory/, carregada automaticamente.
 
+# Instalar dependências (necessário para vector search e reranker local):
+cd ~/.pi/agent/extensions/pi-memory && bun install
+
 # Para desabilitar:
 pi --no-memory
 ```
