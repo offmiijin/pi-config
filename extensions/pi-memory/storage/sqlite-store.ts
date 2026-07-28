@@ -97,6 +97,8 @@ const SQL = {
 
   getMemoryByHash: `SELECT * FROM memories WHERE project_id = $project_id AND content_hash = $content_hash`,
 
+  getMemoryByHashGlobal: `SELECT * FROM memories WHERE content_hash = $content_hash LIMIT 1`,
+
   updateMemory: `
     UPDATE memories SET
       text = $text, embedding = $embedding, type = $type, scope = $scope,
@@ -108,6 +110,8 @@ const SQL = {
   `,
 
   deleteMemory: `DELETE FROM memories WHERE id = $id`,
+
+  getAllMemories: `SELECT * FROM memories ORDER BY timestamp DESC`,
 
   deleteAllMemories: `DELETE FROM memories WHERE project_id = $project_id`,
 
@@ -146,9 +150,22 @@ const SQL = {
     LIMIT $limit
   `,
 
+  ftsSearchAll: `
+    SELECT m.*, bm25(memories_fts) as bm25_score
+    FROM memories m
+    JOIN memories_fts ON m.rowid = memories_fts.rowid
+    WHERE memories_fts MATCH $query
+    ORDER BY bm25_score
+    LIMIT $limit
+  `,
+
   getMemoriesWithEmbeddings: `SELECT * FROM memories WHERE project_id = $project_id AND embedding IS NOT NULL`,
 
   getMemoriesWithoutEmbedding: `SELECT * FROM memories WHERE project_id = $project_id AND embedding IS NULL ORDER BY timestamp ASC`,
+
+  getAllMemoriesWithEmbeddings: `SELECT * FROM memories WHERE embedding IS NOT NULL`,
+
+  getAllMemoriesWithoutEmbedding: `SELECT * FROM memories WHERE embedding IS NULL ORDER BY timestamp ASC`,
 
   updateEmbedding: `UPDATE memories SET embedding = $embedding WHERE id = $id`,
 };
@@ -204,9 +221,23 @@ export class SqliteStore {
     return rows.map((r) => this.rowToMemory(r));
   }
 
+  /** Returns ALL memories (no project filter). Used by global DB queries. */
+  getAllMemories(): Memory[] {
+    const rows = this.db.query(SQL.getAllMemories).all() as Record<string, unknown>[];
+    return rows.map((r) => this.rowToMemory(r));
+  }
+
   getMemoryByHash(projectId: string, contentHash: string): Memory | null {
     const row = this.db.query(SQL.getMemoryByHash).get({
       $project_id: projectId,
+      $content_hash: contentHash,
+    }) as Record<string, unknown> | undefined;
+    return row ? this.rowToMemory(row) : null;
+  }
+
+  /** Hash lookup across all project_ids (used by global DB). */
+  getMemoryByHashGlobal(contentHash: string): Memory | null {
+    const row = this.db.query(SQL.getMemoryByHashGlobal).get({
       $content_hash: contentHash,
     }) as Record<string, unknown> | undefined;
     return row ? this.rowToMemory(row) : null;
@@ -338,6 +369,20 @@ export class SqliteStore {
     }));
   }
 
+  /** Search FTS across ALL projects (for global DB queries). */
+  searchFtsAll(query: string, limit = 20): Array<{ memory: Memory; bm25Score: number }> {
+    const ftsQuery = this.buildFtsQuery(query);
+    const rows = this.db.query(SQL.ftsSearchAll).all({
+      $query: ftsQuery,
+      $limit: limit,
+    }) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      memory: this.rowToMemory(r),
+      bm25Score: r["bm25_score"] as number,
+    }));
+  }
+
   // ── Embeddings ─────────────────────────────────────────────────────
 
   getMemoriesWithEmbeddings(projectId: string): Memory[] {
@@ -351,6 +396,18 @@ export class SqliteStore {
     const rows = this.db.query(SQL.getMemoriesWithoutEmbedding).all({
       $project_id: projectId,
     }) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToMemory(r));
+  }
+
+  /** Get all memories with embeddings (no project filter — for global DB). */
+  getAllMemoriesWithEmbeddings(): Memory[] {
+    const rows = this.db.query(SQL.getAllMemoriesWithEmbeddings).all() as Record<string, unknown>[];
+    return rows.map((r) => this.rowToMemory(r));
+  }
+
+  /** Get all memories without embedding (no project filter — for global DB). */
+  getAllMemoriesWithoutEmbedding(): Memory[] {
+    const rows = this.db.query(SQL.getAllMemoriesWithoutEmbedding).all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToMemory(r));
   }
 
