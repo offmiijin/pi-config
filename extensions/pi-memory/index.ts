@@ -799,12 +799,7 @@ export default function (pi: ExtensionAPI) {
 
           const mode = await ctx.ui.select(
             configTarget + " mode",
-            [
-              { value: "off",         label: "off  — Desativado" },
-              { value: "local",       label: "local  — ONNX local (sem API key)" },
-              { value: "api",         label: "API  — Requer API key" },
-              { value: "local + api", label: "local + api  — Ambos ativos" },
-            ],
+            ["off", "local", "api", "local + api"],
             curMode
           );
 
@@ -836,10 +831,7 @@ export default function (pi: ExtensionAPI) {
               saveConfigToDisk({ llm_extraction: { apiKey: "", enabled: false } } as Partial<PiMemoryConfig>);
             }
             const model = await ctx.ui.select("LLM model", [
-              { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
-              { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-              { value: "claude-3-haiku", label: "Claude 3 Haiku" },
-              { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+              "deepseek/deepseek-v4-flash", "gpt-4o-mini", "claude-3-haiku", "gemini-2.0-flash",
             ], config.llm_extraction.model);
             if (model && model !== config.llm_extraction.model) {
               saveConfigToDisk({ llm_extraction: { model: model, enabled: true } } as Partial<PiMemoryConfig>);
