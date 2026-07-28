@@ -420,10 +420,23 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   // --clearenv já foi adicionado no início dos args.
   // Agora repassa apenas vars seguras (desenvolvimento/runtime).
   for (const [key, value] of Object.entries(process.env)) {
-    if (SAFE_ENV_VARS.has(key) && value !== undefined) {
+    if (SAFE_ENV_VARS.has(key) && value !== undefined && key !== "PATH") {
       args.push("--setenv", key, value);
     }
   }
+
+  // PATH: garante que /usr/bin e /bin SEMPRE estejam inclusos,
+  // independente de process.env.PATH. Necessário porque em instalações
+  // npm global, process.env.PATH pode não incluir diretórios padrão.
+  const hostPath = process.env.PATH || "";
+  const requiredPaths = ["/usr/local/bin", "/usr/bin", "/bin"];
+  const pathParts = hostPath.split(":").filter(Boolean);
+  for (const rp of requiredPaths) {
+    if (!pathParts.includes(rp)) {
+      pathParts.push(rp);
+    }
+  }
+  args.push("--setenv", "PATH", pathParts.join(":"));
 
   // HOME e USER — configurados via --setenv (diretório já criado acima)
   args.push("--setenv", "HOME", home);
