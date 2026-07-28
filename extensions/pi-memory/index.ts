@@ -512,7 +512,7 @@ export default function (pi: ExtensionAPI) {
 
       // ── helper: salva config no .pi/memory.json ──
       const saveConfigToDisk = (patch: Partial<PiMemoryConfig>) => {
-        const projDir = pi.projectDir;
+        const projDir = ctx.cwd;
         if (!projDir) {
           ctx.ui.notify("No project directory — config not saved", "error");
           return;
