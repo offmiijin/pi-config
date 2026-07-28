@@ -133,7 +133,7 @@ export default function (pi: ExtensionAPI) {
 
       // Inicializa embedding service + vector retriever (Fase 2.4)
       if (config.retrieval.vector_enabled) {
-        const apiKey = process.env.OPENROUTER_API_KEY || "";
+        const apiKey = process.env.VECTOR_API_KEY || "";
 
         embeddingService = new EmbeddingService({
           model: config.retrieval.vector_model ?? "all-MiniLM-L6-v2",
@@ -184,7 +184,7 @@ export default function (pi: ExtensionAPI) {
 
       // Inicializa reranker (Fase 2.5) — background, não bloqueia
       if (config.retrieval.reranker_enabled) {
-        const rerankerApiKey = process.env.OPENROUTER_API_KEY || "";
+        const rerankerApiKey = process.env.RERANKER_API_KEY || "";
 
         rerankerService = new RerankerService({
           model: config.retrieval.reranker_model ?? "Xenova/ms-marco-MiniLM-L-6-v2",
@@ -249,7 +249,7 @@ export default function (pi: ExtensionAPI) {
         config.llm_extraction.enabled;
 
       if (llmEnabled) {
-        const apiKey = process.env.OPENROUTER_API_KEY || "";
+        const apiKey = process.env.LLM_API_KEY || "";
 
         if (apiKey) {
           const llmConfig: Partial<LlmExtractorConfig> = {
@@ -729,21 +729,105 @@ export default function (pi: ExtensionAPI) {
             const wantLocal = mode === "local" || mode === "local + api";
             const wantApi   = mode === "api" || mode === "local + api";
 
-            // Se quer API, verifica se tem chave (env var ou .env)
-            let hasKey = !!process.env.OPENROUTER_API_KEY;
+            // Define env var name for this service
+            const envVarName = isVec ? "VECTOR_API_KEY" : "RERANKER_API_KEY";
+
+            // Se quer API, sempre oferece input de chave (com default da atual)
+            // ou reuso de chave de outro serviço
+            let hasKey = !!process.env[envVarName];
             let cancelled = false;
 
-            if (wantApi && !hasKey) {
-              const result = await ctx.ui.input(
-                "API key for " + configTarget,
-                "Required for API mode. Will be saved to extensions/pi-memory/.env",
-                ""
-              );
-              if (result && result.trim()) {
-                saveEnvKey(result.trim());
-                hasKey = true;
+            if (wantApi) {
+              // Coleta chaves existentes de outros serviços
+              const existingKeys: Array<{ label: string; varName: string }> = [];
+              if (process.env.LLM_API_KEY) existingKeys.push({ label: "LLM API key", varName: "LLM_API_KEY" });
+              if (isVec && process.env.RERANKER_API_KEY) existingKeys.push({ label: "Reranker API key", varName: "RERANKER_API_KEY" });
+              if (!isVec && process.env.VECTOR_API_KEY) existingKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
+
+              // Filtra a própria chave (não oferece reuso dela mesma)
+              const otherKeys = existingKeys.filter((k) => k.varName !== envVarName);
+
+              // Monta opções: input direto OU reuso de outro serviço
+              if (otherKeys.length > 0) {
+                const curVal = process.env[envVarName];
+                const reuseOpts = [
+                  curVal ? "Enter different key" : "Enter new key",
+                  ...otherKeys.map((k) => `Reuse ${k.label}`),
+                ];
+                const reuseChoice = await ctx.ui.select(
+                  "API key for " + configTarget,
+                  reuseOpts,
+                  reuseOpts[0]
+                );
+
+                if (reuseChoice && reuseChoice.startsWith("Reuse")) {
+                  const chosen = otherKeys.find((k) => `Reuse ${k.label}` === reuseChoice);
+                  if (chosen) {
+                    saveEnvKey(envVarName, process.env[chosen.varName]!);
+                    hasKey = true;
+                  }
+                } else if (curVal) {
+                  // Já tem chave — pode ter escolhido "Enter different key"
+                  // Mostra input com a atual como default
+                  const result = await ctx.ui.input(
+                    "API key for " + configTarget,
+                    "Leave as-is to keep current key, or enter a new one.",
+                    curVal
+                  );
+                  if (result !== null && result !== undefined) {
+                    const trimmed = result.trim();
+                    if (trimmed && trimmed !== curVal) {
+                      saveEnvKey(envVarName, trimmed);
+                    }
+                    hasKey = true;
+                  } else {
+                    cancelled = true;
+                  }
+                } else {
+                  // Não tem chave — mostra input vazio
+                  const result = await ctx.ui.input(
+                    "API key for " + configTarget,
+                    "Required for API mode. Will be saved to extensions/pi-memory/.env",
+                    ""
+                  );
+                  if (result && result.trim()) {
+                    saveEnvKey(envVarName, result.trim());
+                    hasKey = true;
+                  } else {
+                    cancelled = true;
+                  }
+                }
               } else {
-                cancelled = true;
+                // Nenhuma outra chave disponível — input direto
+                const curVal = process.env[envVarName];
+                if (curVal) {
+                  const result = await ctx.ui.input(
+                    "API key for " + configTarget,
+                    "Leave as-is to keep current key, or enter a new one.",
+                    curVal
+                  );
+                  if (result !== null && result !== undefined) {
+                    const trimmed = result.trim();
+                    if (trimmed && trimmed !== curVal) {
+                      saveEnvKey(envVarName, trimmed);
+                    }
+                    hasKey = true;
+                  } else {
+                    cancelled = true;
+                  }
+                } else {
+                  const result = await ctx.ui.input(
+                    "API key for " + configTarget,
+                    "Required for API mode. Will be saved to extensions/pi-memory/.env",
+                    ""
+                  );
+                  if (result && result.trim()) {
+                    saveEnvKey(envVarName, result.trim());
+                    hasKey = true;
+                  } else {
+                    cancelled = true;
+                  }
+                }
               }
             }
 
@@ -763,25 +847,60 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (configTarget === "llm") {
-          const curKey = process.env.OPENROUTER_API_KEY || "";
+          const curKey = process.env.LLM_API_KEY || "";
           const k = await ctx.ui.input(
             "API key for LLM",
             "Will be saved to extensions/pi-memory/.env. Leave empty and confirm to disable.",
             curKey
           );
-          if (k !== undefined && k !== null) {
+          if (k === undefined || k === null) {
+            // Cancelado — não faz nada
+          } else {
             const trimmed = k.trim();
-            if (trimmed.length > 0 && trimmed !== curKey) {
-              saveEnvKey(trimmed);
-            } else if (trimmed.length === 0 && curKey.length > 0) {
-              saveEnvKey("");
+            let effectiveKey = trimmed;
+
+            // Se não digitou chave nova e não tem LLM_API_KEY, oferece reuso
+            if (!effectiveKey && !curKey) {
+              const existingKeys: Array<{ label: string; varName: string }> = [];
+              if (process.env.VECTOR_API_KEY) existingKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
+              if (process.env.RERANKER_API_KEY) existingKeys.push({ label: "Reranker API key", varName: "RERANKER_API_KEY" });
+
+              if (existingKeys.length > 0) {
+                const reuseOpts = ["Enter new key", ...existingKeys.map((ek) => `Reuse ${ek.label}`)];
+                const reuseChoice = await ctx.ui.select(
+                  "API key for LLM",
+                  reuseOpts,
+                  "Enter new key"
+                );
+                if (reuseChoice && reuseChoice.startsWith("Reuse")) {
+                  const chosen = existingKeys.find((ek) => `Reuse ${ek.label}` === reuseChoice);
+                  if (chosen) {
+                    effectiveKey = process.env[chosen.varName]!;
+                  }
+                }
+              }
             }
-            const model = await ctx.ui.select("LLM model", [
-              "deepseek/deepseek-v4-flash", "gpt-4o-mini", "claude-3-haiku", "gemini-2.0-flash",
-            ], config.llm_extraction.model);
-            if (model && model !== config.llm_extraction.model) {
-              saveConfigToDisk({ llm_extraction: { model: model, enabled: true } } as Partial<PiMemoryConfig>);
+
+            const hasKey = effectiveKey.length > 0;
+
+            if (hasKey) {
+              saveEnvKey("LLM_API_KEY", effectiveKey);
+              const model = await ctx.ui.select("LLM model", [
+                "deepseek/deepseek-v4-flash", "gpt-4o-mini", "claude-3-haiku", "gemini-2.0-flash",
+              ], config.llm_extraction.model);
+              saveConfigToDisk({
+                extraction_level: "llm",
+                llm_extraction: { model: model ?? config.llm_extraction.model, enabled: true },
+              } as unknown as Partial<PiMemoryConfig>);
+            } else if (curKey.length > 0) {
+              // Remove chave existente — desabilita
+              saveEnvKey("LLM_API_KEY", "");
+              saveConfigToDisk({
+                extraction_level: "regex",
+                llm_extraction: { enabled: false },
+              } as unknown as Partial<PiMemoryConfig>);
             }
+
             ctx.ui.notify("LLM configured. Run /reload to apply.", "success");
           }
         }
@@ -850,6 +969,7 @@ function envFilePath(): string {
 /**
  * Carrega variáveis do arquivo .env para process.env.
  * Apenas chaves ainda não definidas (não sobrescreve env vars existentes).
+ * Inclui migração automática: OPENROUTER_API_KEY → LLM_API_KEY / VECTOR_API_KEY / RERANKER_API_KEY.
  */
 function loadEnvFile(): void {
   try {
@@ -870,16 +990,24 @@ function loadEnvFile(): void {
         process.env[key] = cleanVal;
       }
     }
+
+    // ── Migração: OPENROUTER_API_KEY → LLM_API_KEY / VECTOR_API_KEY / RERANKER_API_KEY ──
+    const oldKey = process.env["OPENROUTER_API_KEY"];
+    if (oldKey) {
+      if (!process.env["LLM_API_KEY"]) process.env["LLM_API_KEY"] = oldKey;
+      if (!process.env["VECTOR_API_KEY"]) process.env["VECTOR_API_KEY"] = oldKey;
+      if (!process.env["RERANKER_API_KEY"]) process.env["RERANKER_API_KEY"] = oldKey;
+    }
   } catch {
     // .env é best-effort
   }
 }
 
 /**
- * Salva (ou remove) a OPENROUTER_API_KEY no arquivo .env.
- * Se key for vazia, remove a linha do arquivo.
+ * Salva (ou remove) uma variável de ambiente no arquivo .env.
+ * Se value for vazia, remove a linha do arquivo.
  */
-function saveEnvKey(key: string): void {
+function saveEnvKey(varName: string, value: string): void {
   try {
     const envPath = envFilePath();
     let lines: string[] = [];
@@ -889,21 +1017,21 @@ function saveEnvKey(key: string): void {
       lines = fs.readFileSync(envPath, 'utf-8').split('\n');
     }
 
-    if (key) {
-      const newLine = `OPENROUTER_API_KEY=${key}`;
+    if (value) {
+      const newLine = `${varName}=${value}`;
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trimStart().startsWith('OPENROUTER_API_KEY=')) {
+        if (lines[i].trimStart().startsWith(`${varName}=`)) {
           lines[i] = newLine;
           found = true;
           break;
         }
       }
       if (!found) lines.push(newLine);
-      process.env.OPENROUTER_API_KEY = key;
+      process.env[varName] = value;
     } else {
       // Remove linha
-      lines = lines.filter(l => !l.trimStart().startsWith('OPENROUTER_API_KEY='));
-      delete process.env.OPENROUTER_API_KEY;
+      lines = lines.filter(l => !l.trimStart().startsWith(`${varName}=`));
+      delete process.env[varName];
     }
 
     fs.writeFileSync(envPath, lines.join('\n').trimEnd() + '\n', 'utf-8');

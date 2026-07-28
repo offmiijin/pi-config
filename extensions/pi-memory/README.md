@@ -123,9 +123,9 @@ Mesmo formato — sobrescreve campos do global via deep merge.
 
 ### Ativação dinâmica
 
-- **Vector search**: set `retrieval.vector_enabled: true`. Requer `@xenova/transformers` ou `OPENROUTER_API_KEY`.
-- **LLM extraction N3**: set `extraction_level: "llm"` e `OPENROUTER_API_KEY`.
-- **Reranker**: set `retrieval.reranker_enabled: true`. Usa modelo local ou API.
+- **Vector search**: set `retrieval.vector_enabled: true`. Requer `@xenova/transformers` ou `VECTOR_API_KEY`.
+- **LLM extraction N3**: set `extraction_level: "llm"` e `LLM_API_KEY`.
+- **Reranker**: set `retrieval.reranker_enabled: true`. Usa modelo local ou API (`RERANKER_API_KEY`).
 - **Decay/pruning**: set `consolidation.decay_enabled` e `pruning_enabled` (via SweepConsolidator config).
 
 ## Extração N2 — Regex Patterns (18 patterns)
@@ -270,7 +270,9 @@ Após alterar config com `/memory`, execute `/reload` para aplicar as mudanças.
 
 - **Runtime**: Bun (`bun:sqlite`) — nativo, zero deps externas
 - **Opcional (embedding local)**: `@xenova/transformers` — WASM/ONNX, ~80MB, modelo all-MiniLM-L6-v2
-- **Opcional (LLM extraction + reranker API)**: `OPENROUTER_API_KEY` env var
+- **Opcional (LLM extraction)**: `LLM_API_KEY` env var
+- **Opcional (vector API)**: `VECTOR_API_KEY` env var
+- **Opcional (reranker API)**: `RERANKER_API_KEY` env var
 - **Sem APIs externas obrigatórias** — 100% funcional no modo base (BM25-only, regex extraction)
 
 ## Estrutura do Código
@@ -334,8 +336,8 @@ extensions/pi-memory/
 
 ## Limitações
 
-- Sem extração N3 sem `OPENROUTER_API_KEY`
-- Sem vector search sem `@xenova/transformers` ou `OPENROUTER_API_KEY`
+- Sem extração N3 sem `LLM_API_KEY`
+- Sem vector search sem `@xenova/transformers` ou `VECTOR_API_KEY`
 - Apenas BM25 no modo base (sem embeddings, sem reranker)
 - Pruning/decay desabilitados por padrão (ativar via config)
 - Embedding backfill assíncrono — índice vetorial pode ficar desatualizado até completar

@@ -96,7 +96,7 @@ export interface PiMemoryConfig {
     sweep_observation_threshold: number;
     /** Intervalo máximo entre sweeps em ms */
     sweep_interval_ms: number;
-    /** API key para features que usam OpenRouter (fallback: OPENROUTER_API_KEY env) */
+    /** API key para features que usam OpenRouter (fallback: LLM_API_KEY env) */
     apiKey?: string;
   };
 

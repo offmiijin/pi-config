@@ -180,7 +180,7 @@ export class RerankerService {
     }
 
     this.initError =
-      "No reranker backend available. Install @xenova/transformers or set OPENROUTER_API_KEY.";
+      "No reranker backend available. Install @xenova/transformers or set RERANKER_API_KEY.";
     this.backend = "none";
   }
 

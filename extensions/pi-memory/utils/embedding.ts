@@ -4,7 +4,7 @@
  * ADR-005: Modelo all-MiniLM-L6-v2 (384 dims, ~80MB), roda 100% local.
  * ADR-008: Usa @xenova/transformers (WASM/ONNX), sem API keys.
  *
- * Fallback: se modelo local falhar e OPENROUTER_API_KEY estiver disponível,
+ * Fallback: se modelo local falhar e VECTOR_API_KEY estiver disponível,
  * usa embeddings API do OpenRouter (custo ~$0.0001/1K tokens).
  *
  * Arquitetura: lazy init — modelo só é baixado/carregado na primeira chamada.
@@ -154,7 +154,7 @@ export class EmbeddingService {
       }
     }
 
-    this.initError = "No embedding backend available. Install @xenova/transformers or set OPENROUTER_API_KEY.";
+    this.initError = "No embedding backend available. Install @xenova/transformers or set VECTOR_API_KEY.";
     this.backend = "none";
   }
 
