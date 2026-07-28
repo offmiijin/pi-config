@@ -647,7 +647,8 @@ export default function (pi: ExtensionAPI) {
           { id: "llm",     label: "LLM extraction N3", currentValue: modeLabel("llm"), values: [modeLabel("llm")] },
           { id: "reranker", label: "Reranker",          currentValue: rMode, values: [rMode] },
           { id: "pruning", label: "Pruning", currentValue: config.consolidation.pruning_enabled ? "on" : "off", values: ["on", "off"] },
-          { id: "decay",   label: "Decay (days)",      currentValue: String(config.consolidation.decay_days), values: ["3", "7", "14", "30"] },
+          { id: "decay",   label: "Decay",              currentValue: config.consolidation.decay_enabled ? "on" : "off", values: ["on", "off"] },
+          { id: "decay_days", label: "Decay (days)",    currentValue: String(config.consolidation.decay_days), values: ["3", "7", "14", "30"] },
           { id: "prune_threshold", label: "Pruning threshold", currentValue: String(config.consolidation.pruning_confidence_threshold), values: ["0.05", "0.1", "0.2", "0.5"] },
           { id: "prune_age", label: "Pruning age (days)", currentValue: String(config.consolidation.pruning_age_days), values: ["7", "30", "60", "90"] },
           { id: "clear",    label: "Clear all memories",     currentValue: "clear", values: ["clear"] },
@@ -681,8 +682,12 @@ export default function (pi: ExtensionAPI) {
                 saveConfigToDisk({ consolidation: { pruning_enabled: on } } as Partial<PiMemoryConfig>);
                 ctx.ui.notify("Pruning: " + (on ? "on" : "off") + ". Run /reload to apply.", "info");
               } else if (id === "decay") {
+                const on = newValue === "on";
+                saveConfigToDisk({ consolidation: { decay_enabled: on } } as Partial<PiMemoryConfig>);
+                ctx.ui.notify("Decay: " + (on ? "on" : "off") + ". Run /reload to apply.", "info");
+              } else if (id === "decay_days") {
                 saveConfigToDisk({ consolidation: { decay_days: Number(newValue) } } as Partial<PiMemoryConfig>);
-                ctx.ui.notify("Decay: " + newValue + "d. Run /reload to apply.", "info");
+                ctx.ui.notify("Decay days: " + newValue + "d. Run /reload to apply.", "info");
               } else if (id === "prune_threshold") {
                 saveConfigToDisk({ consolidation: { pruning_confidence_threshold: Number(newValue) } } as Partial<PiMemoryConfig>);
                 ctx.ui.notify("Threshold: " + newValue + ". Run /reload to apply.", "info");
