@@ -74,7 +74,6 @@ export default function (pi: ExtensionAPI) {
       const noSandbox = pi.getFlag("no-sandbox") as boolean;
       if (noSandbox) {
         enabled = false;
-        console.error("[dev-sandbox] Sandbox desabilitado via --no-sandbox");
         if (ctx.hasUI) {
           ctx.ui.notify(
             "Sandbox desabilitado via --no-sandbox",
@@ -89,14 +88,12 @@ export default function (pi: ExtensionAPI) {
 
       if (!config.enabled) {
         enabled = false;
-        console.error("[dev-sandbox] Sandbox desabilitado na config (config.enabled = false)");
         return;
       }
 
       // Verifica bwrap
       if (!isBwrapAvailable()) {
         enabled = false;
-        console.error("[dev-sandbox] bubblewrap não encontrado");
         if (ctx.hasUI) {
           ctx.ui.notify(
             "bubblewrap não encontrado. Instale com: apt install bubblewrap",
@@ -112,7 +109,6 @@ export default function (pi: ExtensionAPI) {
         config.seccomp.bpfPath = join(EXT_DIR, "seccomp.bpf");
       }
       if (config.seccomp.enabled && !existsSync(config.seccomp.bpfPath)) {
-        console.error(`[dev-sandbox] seccomp.bpf não encontrado em ${config.seccomp.bpfPath}, modo degradado`);
         if (ctx.hasUI) {
           ctx.ui.notify(
             `Filtro seccomp não encontrado em ${config.seccomp.bpfPath}.\n` +
@@ -125,8 +121,6 @@ export default function (pi: ExtensionAPI) {
       }
 
       enabled = true;
-      console.error(`[dev-sandbox] Sandbox ATIVO. cwd=${localCwd} internet=${config.internet.enabled} ssh=${config.ssh.mode}`);
-
       // Injeta config no grep tool
       setGrepConfig(config);
 
@@ -141,7 +135,6 @@ export default function (pi: ExtensionAPI) {
         );
       }
     } catch (err: any) {
-      console.error("[dev-sandbox] Erro no session_start:", err?.message ?? err);
       enabled = false;
       config = null;
       return;
@@ -219,7 +212,6 @@ export default function (pi: ExtensionAPI) {
         });
         return await tool.execute(id, params, signal, onUpdate);
       } catch (err: any) {
-        console.error("[dev-sandbox] Erro na tool read:", err?.message ?? err);
         throw err;
       }
     },
@@ -239,7 +231,6 @@ export default function (pi: ExtensionAPI) {
         });
         return await tool.execute(id, params, signal, onUpdate);
       } catch (err: any) {
-        console.error("[dev-sandbox] Erro na tool write:", err?.message ?? err, "\ncwd:", cwd, "\nenabled:", enabled);
         throw err;
       }
     },
@@ -259,7 +250,6 @@ export default function (pi: ExtensionAPI) {
         });
         return await tool.execute(id, params, signal, onUpdate);
       } catch (err: any) {
-        console.error("[dev-sandbox] Erro na tool edit:", err?.message ?? err, "\ncwd:", cwd, "\nenabled:", enabled);
         throw err;
       }
     },
@@ -283,7 +273,6 @@ export default function (pi: ExtensionAPI) {
         });
         return await tool.execute(id, params, signal, onUpdate);
       } catch (err: any) {
-        console.error("[dev-sandbox] Erro na tool bash:", err?.message ?? err, "\ncwd:", cwd, "\nenabled:", enabled);
         throw err;
       }
     },
@@ -303,7 +292,6 @@ export default function (pi: ExtensionAPI) {
         });
         return await tool.execute(id, params, signal, onUpdate);
       } catch (err: any) {
-        console.error("[dev-sandbox] Erro na tool find:", err?.message ?? err);
         throw err;
       }
     },
@@ -323,7 +311,6 @@ export default function (pi: ExtensionAPI) {
         });
         return await tool.execute(id, params, signal, onUpdate);
       } catch (err: any) {
-        console.error("[dev-sandbox] Erro na tool ls:", err?.message ?? err);
         throw err;
       }
     },
@@ -341,7 +328,6 @@ export default function (pi: ExtensionAPI) {
         const tool = createGrepTool(cwd);
         return await tool.execute(id, params, signal, onUpdate, ctx);
       } catch (err: any) {
-        console.error("[dev-sandbox] Erro na tool grep:", err?.message ?? err);
         throw err;
       }
     },
