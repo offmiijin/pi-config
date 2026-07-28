@@ -504,57 +504,54 @@ export default function (pi: ExtensionAPI) {
   // ── Command: /memory ──────────────────────────────────────────────
   pi.registerCommand("memory", {
     description:
-      "Configure pi-memory features: vector search, LLM extraction, reranker, decay, pruning. " +
-      "Usage: /memory [feature] [true|false] | /memory clear [--force]",
+      "Configure pi-memory features: vector, llm, reranker, decay, pruning. " +
+      "Usage: /memory (TUI: interactive) | /memory decay <days> | /memory pruning <threshold> [age] | /memory clear [--force]",
     getArgumentCompletions: (prefix: string) => {
-      const features = [
-        { value: "vector", label: "Vector search" },
-        { value: "llm", label: "LLM extraction N3" },
-        { value: "reranker", label: "Reranker" },
-        { value: "decay", label: "Confidence decay" },
-        { value: "pruning", label: "Pruning" },
-      ];
-      const commands = [
-        { value: "all", label: "Toggle all features" },
+      const firstCmds = [
+        { value: "vector", label: "Vector search (configuravia TUI)" },
+        { value: "llm", label: "LLM extraction N3 (configuravia TUI)" },
+        { value: "reranker", label: "Reranker (configuravia TUI)" },
+        { value: "decay", label: "Decay (days): 3, 7, 14, 30" },
+        { value: "pruning", label: "Pruning: threshold + age" },
         { value: "clear", label: "Delete ALL memories and observations" },
-        ...features,
       ];
 
-      // Separa o que já foi digitado em tokens
       const parts = prefix.split(/\s+/);
-      // prefix = "vector "  → parts = ["vector", ""]
-      // prefix = "vector t" → parts = ["vector", "t"]
-      // prefix = ""         → parts = [""]
 
-      // Se não tem segundo token ainda, completa o primeiro argumento
+      // Primeiro argumento
       if (parts.length <= 1) {
-        const filtered = commands.filter((c) => c.value.startsWith(prefix));
+        const filtered = firstCmds.filter((c) => c.value.startsWith(prefix));
         return filtered.length > 0 ? filtered : null;
       }
 
-      // Tem segundo token (depois de um espaço)
+      // Segundo argumento
       const firstWord = parts[0];
       const partialSecond = parts.slice(1).join(" ");
 
-      // Só oferece true/false para clear --force é exceção
-      let suggestions: Array<{ value: string; label: string }> = [];
       if (firstWord === "clear") {
-        suggestions = [
-          { value: "clear --force", label: "--force  — Pula confirmação" },
-        ];
-      } else {
-        // Reconstrói o prefixo inteiro porque o autocomplete SUBSTITUI
-        // o prefixo inteiro pelo value. Então value precisa ser o texto
-        // completo depois de "/memory ".
-        suggestions = [
-          { value: `${firstWord} true`, label: `true  — Ativa` },
-          { value: `${firstWord} false`, label: `false — Desativa` },
-        ];
+        const s = [{ value: "clear --force", label: "--force  Pula confirmacao" }];
+        return s.filter((x) => x.value.startsWith(prefix));
+      }
+      if (firstWord === "decay") {
+        const s = [3, 7, 14, 30].map((d) => ({
+          value: `decay ${d}`,
+          label: `${d} days`,
+        }));
+        return s.filter((x) => x.value.startsWith(prefix));
+      }
+      if (firstWord === "pruning") {
+        const thresholds = [0.05, 0.1, 0.2, 0.5];
+        const s = thresholds.flatMap((t) =>
+          [7, 30, 60, 90].map((a) => ({
+            value: `pruning ${t} ${a}`,
+            label: `threshold ${t}, age ${a}d`,
+          }))
+        );
+        return s.filter((x) => x.value.startsWith(prefix));
       }
 
-      // Filtra: o value completo (ex: "vector true") deve começar com o prefixo (ex: "vector t")
-      const filtered = suggestions.filter((s) => s.value.startsWith(prefix));
-      return filtered.length > 0 ? filtered : null;
+      // vector/llm/reranker nao tem segundo argumento via CLI
+      return null;
     },
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
@@ -606,56 +603,45 @@ export default function (pi: ExtensionAPI) {
       // Recarrega config do disco ANTES de qualquer operação
       reloadConfigFromDisk();
 
-      // ── helper: toggle via args (CLI mode) ──
-      const toggleArg = (label: string, jsonPath: string[], current: boolean) => {
-        const val = parts[1]?.toLowerCase();
-        if (val !== "true" && val !== "false") {
-          ctx.ui.notify(
-            `${label}: ${current}. Use \`/memory ${parts[0]} true|false\` to toggle.`,
-            "info"
-          );
-          return;
-        }
-        const enable = val === "true";
-        if (enable === current) {
-          ctx.ui.notify(`${label} already ${enable}`, "info");
-          return;
-        }
-        let patch: Record<string, unknown> = {};
-        let target: Record<string, unknown> = patch;
-        for (let i = 0; i < jsonPath.length - 1; i++) {
-          const next: Record<string, unknown> = {};
-          target[jsonPath[i]] = next;
-          target = next;
-        }
-        target[jsonPath[jsonPath.length - 1]] = enable;
-        saveConfigToDisk(patch as Partial<PiMemoryConfig>);
-        ctx.ui.notify(
-          `${label}: ${enable}. Run \`/reload\` to apply.`,
-          "success"
-        );
-      };
-
       // Se tem subcomando: modo CLI direto
       if (subcmd && subcmd !== "interactive") {
         switch (subcmd) {
           case "vector":
-            toggleArg("Vector search", ["retrieval", "vector_enabled"], config.retrieval.vector_enabled);
-            break;
           case "llm":
-            toggleArg("LLM extraction N3", ["llm_extraction", "enabled"], config.llm_extraction.enabled);
-            break;
           case "reranker":
-            toggleArg("Reranker", ["retrieval", "reranker_enabled"], config.retrieval.reranker_enabled);
+            ctx.ui.notify(
+              `Use TUI para configurar ${subcmd}: /memory -> Enter em "${subcmd}" -> API key + modelo.`,
+              "info"
+            );
             break;
-          case "decay":
-            toggleArg("Confidence decay", ["consolidation", "decay_enabled"], config.consolidation.decay_enabled);
+          case "decay": {
+            const val = parts[1];
+            const days = [3, 7, 14, 30];
+            if (val && days.includes(Number(val))) {
+              saveConfigToDisk({ consolidation: { decay_days: Number(val) } } as Partial<PiMemoryConfig>);
+              ctx.ui.notify(`Decay: ${val}d. Run /reload to apply.`, "success");
+            } else {
+              ctx.ui.notify(`Decay: ${config.consolidation.decay_days}d. Options: ${days.join(", ")}`, "info");
+            }
             break;
-          case "pruning":
-            // pruning usa threshold > 0 como flag
-            toggleArg("Pruning", ["consolidation", "pruning_confidence_threshold"], config.consolidation.pruning_confidence_threshold > 0);
+          }
+          case "pruning": {
+            const thresh = parts[1] ? Number(parts[1]) : NaN;
+            const age = parts[2] ? Number(parts[2]) : NaN;
+            const validThresh = [0.05, 0.1, 0.2, 0.5];
+            const validAge = [7, 30, 60, 90];
+            if (!isNaN(thresh) && validThresh.includes(thresh)) {
+              const patch: Record<string, unknown> = { consolidation: { pruning_confidence_threshold: thresh } as Record<string, unknown> };
+              if (!isNaN(age) && validAge.includes(age)) {
+                (patch.consolidation as Record<string, unknown>).pruning_age_days = age;
+              }
+              saveConfigToDisk(patch as Partial<PiMemoryConfig>);
+              ctx.ui.notify(`Pruning: threshold ${thresh}, age ${age || config.consolidation.pruning_age_days}d. Run /reload to apply.`, "success");
+            } else {
+              ctx.ui.notify(`Pruning: threshold ${config.consolidation.pruning_confidence_threshold}, age ${config.consolidation.pruning_age_days}d. Usage: /memory pruning <threshold> [age]`, "info");
+            }
             break;
-
+          }
           case "clear": {
             const force = parts.includes("--force");
             const confirmed = force || (ctx.hasUI && await ctx.ui.confirm("Clear all memories?", "This deletes ALL memories and observations for this project. Irreversible."));
@@ -681,37 +667,23 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify(`Cleared: ${memDel} memories, ${obsDel} observations deleted.`, "success");
             break;
           }
-
-          case "all": {
-            const val = parts[1]?.toLowerCase();
-            if (val !== "true" && val !== "false") {
-              ctx.ui.notify("Use \`/memory all true|false\`", "info");
-              break;
-            }
-            const enable = val === "true";
-            saveConfigToDisk({
-              llm_extraction: { enabled: enable },
-              retrieval: {
-                vector_enabled: enable,
-                reranker_enabled: enable,
-              },
-              consolidation: {
-                decay_enabled: enable,
-                pruning_confidence_threshold: enable ? 0.1 : 0,
-                pruning_age_days: 30,
-              },
-            } as Partial<PiMemoryConfig>);
-            ctx.ui.notify(
-              `All features: ${enable}. Run \`/reload\` to apply.`,
-              "success"
-            );
-            break;
-          }
           default:
-            ctx.ui.notify("Unknown feature. Try: vector, llm, reranker, decay, pruning, all", "error");
+            ctx.ui.notify("Unknown command. Try /memory (TUI) or: decay, pruning, clear", "error");
         }
         return;
       }
+
+      // ── helpers de display ──
+      const hasApiKey = (): boolean => {
+        return !!(config.llm_extraction.apiKey || process.env.OPENROUTER_API_KEY);
+      };
+      const featStatus = (feat: string): string => {
+        if (!hasApiKey()) return "⬜ false";
+        if (feat === "llm") return `✅ ${config.llm_extraction.model}`;
+        if (feat === "vector") return `✅ ${config.retrieval.vector_model || "all-MiniLM-L6-v2"}`;
+        if (feat === "reranker") return `✅ ${config.retrieval.reranker_model || "ms-marco-MiniLM-L-6-v2"}`;
+        return "✅ configured";
+      };
 
       // ── Interativo (TUI) ou status (não-TUI) ──
       const memCount = storage?.countMemories() ?? 0;
@@ -723,27 +695,24 @@ export default function (pi: ExtensionAPI) {
           "🧠 pi-memory configuration",
           "",
           "── Features ──",
-          `  Vector search:  ${config.retrieval.vector_enabled}`,
-          `  LLM extraction: ${config.llm_extraction.enabled}  (model: ${config.llm_extraction.model})`,
-          `  Reranker:       ${config.retrieval.reranker_enabled}`,
-          `  Decay:          ${config.consolidation.decay_enabled}`,
-          `  Pruning:        ${config.consolidation.pruning_confidence_threshold > 0}`,
+          `  Vector search:  ${featStatus("vector")}`,
+          `  LLM extraction: ${featStatus("llm")}`,
+          `  Reranker:       ${featStatus("reranker")}`,
+          `  Decay:          ${config.consolidation.decay_days}d`,
+          `  Pruning:        thresh ${config.consolidation.pruning_confidence_threshold}, age ${config.consolidation.pruning_age_days}d`,
           "",
           "── Stats ──",
           `  Memories:     ${memCount}`,
           `  Observations: ${obsCount}`,
           `  Pending ext:  ${pendingExt}`,
           "",
-          "── Usage ──",
-          '  /memory vector|llm|reranker|decay|pruning true|false',
-          '    Ex.: /memory vector true         Ativa vector search',
-          '         /memory llm false            Desativa extração LLM',
-          '         /memory pruning true         Ativa pruning',
+          "── Usage (TUI) ──",
+          '  /memory        SettingsList interativo',
+          '  Enter feature: Vector/LLM/Reranker → API key + model',
+          '  Enter decay:   cycles 3→7→14→30 dias',
+          '  Enter pruning: cycles threshold 0.05→0.1→0.2→0.5',
+          '  Enter age:     cycles 7→30→60→90 dias',
           '',
-          '  /memory all true|false              Toggle all features',
-          '  /memory clear [--force]             Delete ALL memories',
-          '',
-          '  (no TUI: Tab mostra autocomplete dos comandos)',
           'Changes saved to .pi/memory.json. Run /reload to apply.',
         ];
         ctx.ui.notify(lines.join("\n"), "info");
@@ -751,7 +720,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── TUI: SettingsList interativo ──
-      let wantsAdvanced = false;
+      let configTarget: string | null = null;
       try {
         const { Container, SettingsList } = await import("@earendil-works/pi-tui");
         const { getSettingsListTheme } = await import("@earendil-works/pi-coding-agent");
@@ -761,38 +730,38 @@ export default function (pi: ExtensionAPI) {
           {
             id: "vector",
             label: "Vector search",
-            currentValue: String(config.retrieval.vector_enabled),
-            values: ["true", "false"],
+            currentValue: featStatus("vector"),
+            values: [featStatus("vector")],
           },
           {
             id: "llm",
             label: "LLM extraction N3",
-            currentValue: String(config.llm_extraction.enabled),
-            values: ["true", "false"],
+            currentValue: featStatus("llm"),
+            values: [featStatus("llm")],
           },
           {
             id: "reranker",
             label: "Reranker",
-            currentValue: String(config.retrieval.reranker_enabled),
-            values: ["true", "false"],
+            currentValue: featStatus("reranker"),
+            values: [featStatus("reranker")],
           },
           {
             id: "decay",
-            label: "Confidence decay",
-            currentValue: String(config.consolidation.decay_enabled),
-            values: ["true", "false"],
+            label: "Decay (days)",
+            currentValue: String(config.consolidation.decay_days),
+            values: ["3", "7", "14", "30"],
           },
           {
-            id: "pruning",
-            label: "Pruning",
-            currentValue: String(config.consolidation.pruning_confidence_threshold > 0),
-            values: ["true", "false"],
+            id: "prune_threshold",
+            label: "Pruning threshold",
+            currentValue: String(config.consolidation.pruning_confidence_threshold),
+            values: ["0.05", "0.1", "0.2", "0.5"],
           },
           {
-            id: "advanced",
-            label: "⚙️  Configure API keys & advanced",
-            currentValue: "→",
-            values: ["→"],
+            id: "prune_age",
+            label: "Pruning age (days)",
+            currentValue: String(config.consolidation.pruning_age_days),
+            values: ["7", "30", "60", "90"],
           },
         ];
 
@@ -811,35 +780,26 @@ export default function (pi: ExtensionAPI) {
             Math.min(items.length + 3, 18),
             getSettingsListTheme(),
             (id, newValue) => {
-              if (id === "advanced") {
-                wantsAdvanced = true;
-                done(undefined);
-                return;
-              }
-              const enable = newValue === "true";
               switch (id) {
                 case "vector":
-                  saveConfigToDisk({ retrieval: { vector_enabled: enable } } as Partial<PiMemoryConfig>);
-                  break;
                 case "llm":
-                  saveConfigToDisk({ llm_extraction: { enabled: enable } } as Partial<PiMemoryConfig>);
-                  break;
                 case "reranker":
-                  saveConfigToDisk({ retrieval: { reranker_enabled: enable } } as Partial<PiMemoryConfig>);
-                  break;
+                  configTarget = id;
+                  done(undefined);
+                  return;
                 case "decay":
-                  saveConfigToDisk({ consolidation: { decay_enabled: enable } } as Partial<PiMemoryConfig>);
+                  saveConfigToDisk({ consolidation: { decay_days: Number(newValue) } } as Partial<PiMemoryConfig>);
+                  ctx.ui.notify(`Decay: ${newValue}d. Run /reload to apply.`, "info");
                   break;
-                case "pruning":
-                  saveConfigToDisk({
-                    consolidation: {
-                      pruning_confidence_threshold: enable ? 0.1 : 0,
-                      pruning_age_days: 30,
-                    },
-                  } as Partial<PiMemoryConfig>);
+                case "prune_threshold":
+                  saveConfigToDisk({ consolidation: { pruning_confidence_threshold: Number(newValue) } } as Partial<PiMemoryConfig>);
+                  ctx.ui.notify(`Pruning threshold: ${newValue}. Run /reload to apply.`, "info");
+                  break;
+                case "prune_age":
+                  saveConfigToDisk({ consolidation: { pruning_age_days: Number(newValue) } } as Partial<PiMemoryConfig>);
+                  ctx.ui.notify(`Pruning age: ${newValue}d. Run /reload to apply.`, "info");
                   break;
               }
-              ctx.ui.notify(`Memory ${id}: ${enable}. Run /reload to apply.`, "info");
             },
             () => done(undefined),
             { enableSearch: true },
@@ -854,84 +814,73 @@ export default function (pi: ExtensionAPI) {
           };
         });
 
-        // ── Advanced: prompts sequenciais de configuração ──
-        if (wantsAdvanced) {
-          const envKey = process.env.OPENROUTER_API_KEY || "";
-
-          // LLM API key
-          const llmKey = await ctx.ui.input(
-            "LLM API key (for N3 extraction)",
+        // ── Config sequencial: API key + modelo ──
+        if (configTarget) {
+          const currentKey = config.llm_extraction.apiKey || "";
+          const keyResult = await ctx.ui.input(
+            `API key for ${configTarget}`,
             "Enter key or leave empty to use OPENROUTER_API_KEY env var.",
-            config.llm_extraction.apiKey ?? ""
+            currentKey
           );
-          if (llmKey !== undefined && llmKey !== null) {
-            const trimmed = llmKey.trim();
-            if (trimmed.length > 0 && trimmed !== (config.llm_extraction.apiKey ?? "")) {
-              saveConfigToDisk({ llm_extraction: { apiKey: trimmed } } as Partial<PiMemoryConfig>);
+          if (keyResult !== undefined && keyResult !== null) {
+            const trimmedKey = keyResult.trim();
+            if (trimmedKey !== currentKey) {
+              if (trimmedKey.length > 0) {
+                saveConfigToDisk({ llm_extraction: { apiKey: trimmedKey } } as Partial<PiMemoryConfig>);
+              } else {
+                // Se limpou o campo, remove a key salva (usa env var)
+                saveConfigToDisk({ llm_extraction: { apiKey: "" } } as Partial<PiMemoryConfig>);
+              }
             }
-          }
 
-          // LLM model
-          const llmModel = await ctx.ui.select(
-            "LLM model",
-            [
-              { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (barato, rápido)" },
-              { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-              { value: "claude-3-haiku", label: "Claude 3 Haiku" },
-              { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-            ],
-            config.llm_extraction.model
-          );
-          if (llmModel && llmModel !== config.llm_extraction.model) {
-            saveConfigToDisk({ llm_extraction: { model: llmModel } } as Partial<PiMemoryConfig>);
-          }
+            // Escolha de modelo específico por feature
+            const modelKey = configTarget === "vector"
+              ? "retrieval.vector_model"
+              : configTarget === "reranker"
+                ? "retrieval.reranker_model"
+                : "llm_extraction.model";
 
-          // Decay days
-          const decayDays = await ctx.ui.select(
-            "Decay: days without access to start confidence decay",
-            [
-              { value: "3", label: "3 days" },
-              { value: "7", label: "7 days" },
-              { value: "14", label: "14 days" },
-              { value: "30", label: "30 days" },
-            ],
-            String(config.consolidation.decay_days)
-          );
-          if (decayDays && Number(decayDays) !== config.consolidation.decay_days) {
-            saveConfigToDisk({ consolidation: { decay_days: Number(decayDays) } } as Partial<PiMemoryConfig>);
-          }
+            const modelOptions = configTarget === "vector"
+              ? [
+                  { value: "all-MiniLM-L6-v2", label: "all-MiniLM-L6-v2 (local, 384d)" },
+                  { value: "openai/text-embedding-3-small", label: "text-embedding-3-small (API)" },
+                ]
+              : configTarget === "reranker"
+                ? [
+                    { value: "Xenova/ms-marco-MiniLM-L-6-v2", label: "ms-marco-MiniLM-L-6-v2 (local)" },
+                    { value: "cohere/rerank-4-pro", label: "rerank-4-pro (API)" },
+                  ]
+                : [
+                    { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+                    { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+                    { value: "claude-3-haiku", label: "Claude 3 Haiku" },
+                    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+                  ];
 
-          // Pruning threshold
-          const pruneThreshold = await ctx.ui.select(
-            "Pruning: minimum confidence before deleting",
-            [
-              { value: "0.05", label: "0.05 — Agressivo" },
-              { value: "0.1", label: "0.10 — Padrão" },
-              { value: "0.2", label: "0.20 — Conservador" },
-              { value: "0.5", label: "0.50 — Muito conservador" },
-            ],
-            String(config.consolidation.pruning_confidence_threshold)
-          );
-          if (pruneThreshold && Number(pruneThreshold) !== config.consolidation.pruning_confidence_threshold) {
-            saveConfigToDisk({ consolidation: { pruning_confidence_threshold: Number(pruneThreshold) } } as Partial<PiMemoryConfig>);
-          }
+            const currentModel = configTarget === "vector"
+              ? config.retrieval.vector_model || "all-MiniLM-L6-v2"
+              : configTarget === "reranker"
+                ? config.retrieval.reranker_model || "Xenova/ms-marco-MiniLM-L-6-v2"
+                : config.llm_extraction.model;
 
-          // Pruning age days
-          const pruneAge = await ctx.ui.select(
-            "Pruning: days without access before deleting",
-            [
-              { value: "7", label: "7 days" },
-              { value: "30", label: "30 days — Padrão" },
-              { value: "60", label: "60 days" },
-              { value: "90", label: "90 days" },
-            ],
-            String(config.consolidation.pruning_age_days)
-          );
-          if (pruneAge && Number(pruneAge) !== config.consolidation.pruning_age_days) {
-            saveConfigToDisk({ consolidation: { pruning_age_days: Number(pruneAge) } } as Partial<PiMemoryConfig>);
-          }
+            const modelResult = await ctx.ui.select(
+              `Model for ${configTarget}`,
+              modelOptions,
+              currentModel
+            );
 
-          ctx.ui.notify("Advanced configuration saved. Run /reload to apply.", "success");
+            if (modelResult && modelResult !== currentModel) {
+              if (configTarget === "vector") {
+                saveConfigToDisk({ retrieval: { vector_model: modelResult } } as Partial<PiMemoryConfig>);
+              } else if (configTarget === "reranker") {
+                saveConfigToDisk({ retrieval: { reranker_model: modelResult } } as Partial<PiMemoryConfig>);
+              } else {
+                saveConfigToDisk({ llm_extraction: { model: modelResult } } as Partial<PiMemoryConfig>);
+              }
+            }
+
+            ctx.ui.notify(`${configTarget} configured. Run /reload to apply.`, "success");
+          }
         }
       } catch {
         ctx.ui.notify("Failed to load TUI components for interactive mode.", "error");

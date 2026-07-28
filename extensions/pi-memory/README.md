@@ -261,10 +261,10 @@ Projeto ID é hash do diretório (8 chars hex, estável por diretório).
 | Comando/Flag | Descrição |
 |---|---|
 | `pi --no-memory` | Desabilita memória para esta sessão |
-| `/memory` | Modo interativo (TUI) com `SettingsList` — navega com setas, alterna com Enter. Em modo não-TUI, mostra status + instruções |
-| `/memory <feature> true\|false` | Ativa/desativa feature via CLI. Ex: `/memory vector true` |
-| `/memory all true\|false` | Ativa/desativa todas as features de uma vez |
-| `/memory interactive` | Força modo interativo TUI |
+| `/memory` | Modo interativo TUI: toggles para decay/pruning, Enter em vector/llm/reranker → API key + modelo |
+| `/memory decay <3\|7\|14\|30>` | Define dias do decay via CLI |
+| `/memory pruning <threshold> [age]` | Define threshold e idade do pruning |
+| `/memory clear [--force]` | Apaga todas as memórias e observações |
 | `/skill:pi-memory` | Carrega skill com guia de uso das tools |
 
 Após alterar config com `/memory`, execute `/reload` para aplicar as mudanças.

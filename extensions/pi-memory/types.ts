@@ -96,6 +96,8 @@ export interface PiMemoryConfig {
     sweep_observation_threshold: number;
     /** Intervalo máximo entre sweeps em ms */
     sweep_interval_ms: number;
+    /** API key para features que usam OpenRouter (fallback: OPENROUTER_API_KEY env) */
+    apiKey?: string;
   };
 
   /** Configuração de consolidação */
@@ -115,6 +117,10 @@ export interface PiMemoryConfig {
     hybrid_enabled: boolean;
     reranker_enabled: boolean;
     default_top_k: number;
+    /** Modelo para vector search. Default: all-MiniLM-L6-v2 */
+    vector_model?: string;
+    /** Modelo para reranker. Default: Xenova/ms-marco-MiniLM-L-6-v2 */
+    reranker_model?: string;
   };
 }
 
