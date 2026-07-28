@@ -28,6 +28,7 @@ import { createMemorySearchTool } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
 import { createMemoryStatusTool } from "./tools/memory-status";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
 
 // ── Estado interno ─────────────────────────────────────────────────────
@@ -498,6 +499,161 @@ export default function (pi: ExtensionAPI) {
       } as IStorage,
       projectId
     ),
+  });
+
+  // ── Command: /memory ──────────────────────────────────────────────
+  pi.registerCommand("memory", {
+    description:
+      "Configure pi-memory features: vector search, LLM extraction, reranker, decay, pruning. " +
+      "Usage: /memory [status|vector|llm|reranker|decay|pruning|all] [on|off]",
+    handler: async (args, ctx) => {
+      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const subcmd = parts[0]?.toLowerCase() ?? "status";
+
+      // ── helper: salva config no .pi/memory.json ──
+      const saveConfigToDisk = (patch: Partial<PiMemoryConfig>) => {
+        const projDir = pi.projectDir;
+        if (!projDir) {
+          ctx.ui.notify("No project directory — config not saved", "error");
+          return;
+        }
+        const configDir = path.join(projDir, ".pi");
+        const configPath = path.join(configDir, "memory.json");
+        fs.mkdirSync(configDir, { recursive: true });
+
+        let existing: Record<string, unknown> = {};
+        try {
+          if (fs.existsSync(configPath)) {
+            existing = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+          }
+        } catch { /* ignora */ }
+
+        // Deep merge patch into existing
+        const merged = { ...existing };
+        for (const [key, val] of Object.entries(patch)) {
+          if (val !== null && typeof val === "object" && !Array.isArray(val) && typeof existing[key] === "object" && existing[key] !== null && !Array.isArray(existing[key])) {
+            merged[key] = { ...(existing[key] as Record<string, unknown>), ...(val as Record<string, unknown>) };
+          } else {
+            merged[key] = val;
+          }
+        }
+        fs.writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
+      };
+
+      // ── helper: toggle bool field, salva, reload ──
+      const toggle = (label: string, path: string[], current: boolean) => {
+        const val = parts[1]?.toLowerCase();
+        if (val !== "on" && val !== "off") {
+          ctx.ui.notify(
+            `${label}: ${current ? "on" : "off"}. Use \`/memory ${parts[0]} on|off\` to toggle.`,
+            "info"
+          );
+          return;
+        }
+        const enable = val === "on";
+        if (enable === current) {
+          ctx.ui.notify(`${label} already ${enable ? "on" : "off"}`, "info");
+          return;
+        }
+
+        // Constrói patch aninhado
+        let patch: Record<string, unknown> = {};
+        let target: Record<string, unknown> = patch;
+        for (let i = 0; i < path.length - 1; i++) {
+          const next: Record<string, unknown> = {};
+          target[path[i]] = next;
+          target = next;
+        }
+        target[path[path.length - 1]] = enable;
+
+        saveConfigToDisk(patch as Partial<PiMemoryConfig>);
+        ctx.ui.notify(
+          `${label}: ${enable ? "on" : "off"}. Run \`/reload\` to apply.`,
+          "success"
+        );
+      };
+
+      // ── Subcomandos ─────────────────────────────────────────
+      switch (subcmd) {
+        case "vector": {
+          toggle("Vector search", ["retrieval", "vector_enabled"], config.retrieval.vector_enabled);
+          break;
+        }
+        case "llm": {
+          toggle("LLM extraction N3", ["llm_extraction", "enabled"], config.llm_extraction.enabled);
+          break;
+        }
+        case "reranker": {
+          toggle("Reranker", ["retrieval", "reranker_enabled"], config.retrieval.reranker_enabled);
+          break;
+        }
+        case "decay": {
+          toggle("Confidence decay", ["consolidation", "decay_enabled"], config.consolidation.decay_enabled);
+          break;
+        }
+        case "pruning": {
+          toggle("Pruning", ["consolidation", "pruning_confidence_threshold"], config.consolidation.pruning_confidence_threshold > 0);
+          break;
+        }
+        case "all": {
+          const val = parts[1]?.toLowerCase();
+          if (val !== "on" && val !== "off") {
+            ctx.ui.notify("Use \`/memory all on|off\`", "info");
+            break;
+          }
+          const enable = val === "on";
+          saveConfigToDisk({
+            llm_extraction: { enabled: enable },
+            retrieval: {
+              vector_enabled: enable,
+              reranker_enabled: enable,
+            },
+            consolidation: {
+              decay_enabled: enable,
+              pruning_confidence_threshold: enable ? 0.1 : 0,
+              pruning_age_days: 30,
+            },
+          } as Partial<PiMemoryConfig>);
+          ctx.ui.notify(
+            `All features: ${enable ? "on" : "off"}. Run \`/reload\` to apply.`,
+            "success"
+          );
+          break;
+        }
+
+        // ── status (default) ──
+        default: {
+          const memCount = storage?.countMemories() ?? 0;
+          const obsCount = storage?.countObservations() ?? 0;
+          const pendingExt = storage?.countPendingExtraction() ?? 0;
+
+          const lines = [
+            "🧠 pi-memory configuration",
+            "",
+            "── Features ──",
+            `  Vector search:  ${config.retrieval.vector_enabled ? "✅ on" : "⬜ off"}`,
+            `  LLM extraction: ${config.llm_extraction.enabled ? "✅ on" : "⬜ off"}  (model: ${config.llm_extraction.model})`,
+            `  Reranker:       ${config.retrieval.reranker_enabled ? "✅ on" : "⬜ off"}`,
+            `  Decay:          ${config.consolidation.decay_enabled ? "✅ on" : "⬜ off"}`,
+            `  Pruning:        ${config.consolidation.pruning_confidence_threshold > 0 ? "✅ on" : "⬜ off"}`,
+            "",
+            "── Stats ──",
+            `  Memories:     ${memCount}`,
+            `  Observations: ${obsCount}`,
+            `  Pending ext:  ${pendingExt}`,
+            "",
+            "── Usage ──",
+            '  /memory <feature> on|off   Toggle a feature',
+            '  /memory all on|off         Toggle all features',
+            '  /memory                    Show this status',
+            '',
+            'Features: vector, llm, reranker, decay, pruning',
+            'Changes saved to .pi/memory.json. Run /reload to apply.',
+          ];
+          ctx.ui.notify(lines.join("\n"), "info");
+        }
+      }
+    },
   });
 }
 

@@ -261,7 +261,12 @@ Projeto ID é hash do diretório (8 chars hex, estável por diretório).
 | Comando/Flag | Descrição |
 |---|---|
 | `pi --no-memory` | Desabilita memória para esta sessão |
+| `/memory` | Mostra status das features (vector, llm, reranker, decay, pruning) e estatísticas |
+| `/memory <feature> on\|off` | Ativa/desativa feature. Ex: `/memory vector on` |
+| `/memory all on\|off` | Ativa/desativa todas as features de uma vez |
 | `/skill:pi-memory` | Carrega skill com guia de uso das tools |
+
+Após alterar config com `/memory`, execute `/reload` para aplicar as mudanças.
 
 ## Dependências
 
