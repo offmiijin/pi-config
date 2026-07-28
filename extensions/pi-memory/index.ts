@@ -30,6 +30,7 @@ import { createMemoryStatusTool } from "./tools/memory-status";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 
 // ── Estado interno ─────────────────────────────────────────────────────
 let config: PiMemoryConfig;
@@ -75,6 +76,10 @@ function resetStats(): MemoryStats {
 export default function (pi: ExtensionAPI) {
   // ── Carregar .env (API key segura, fora do alcance do agente) ─────
   loadEnvFile();
+
+  // ── Verificação de runtime ──────────────────────────────────────
+  // Em Node.js sem better-sqlite3, emite warning cedo.
+  checkRuntime();
 
   // ── Flag ──────────────────────────────────────────────────────────
   pi.registerFlag?.("no-memory", {
@@ -1002,6 +1007,29 @@ export default function (pi: ExtensionAPI) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Verifica se o runtime tem o necessário para storage.
+ * Em Node.js sem better-sqlite3, emite warning via console.
+ * Não lança erro — o sistema degrada graciosamente no session_start.
+ */
+function checkRuntime(): void {
+  // Só verifica em Node (Bun tem bun:sqlite nativo)
+  if (typeof (globalThis as any).Bun !== "undefined") return;
+
+  // Node: verifica se better-sqlite3 está disponível
+  try {
+    createRequire(import.meta.url)("better-sqlite3");
+  } catch {
+    console.warn(
+      "[pi-memory] Aviso: better-sqlite3 não encontrado.\n" +
+      "  O sistema de memória requer better-sqlite3 para Node.js.\n" +
+      "  Instale: npm install better-sqlite3\n" +
+      "  Ou use Bun (runtime nativo com bun:sqlite).\n" +
+      "  A extensão continuará carregada mas o storage falhará no session_start."
+    );
+  }
+}
 
 /** Faz deep merge de um patch no objeto config em memória (mutação in-place) */
 function deepMergeConfig(target: Record<string, unknown>, source: Record<string, unknown>): void {
