@@ -23,6 +23,8 @@ export interface EmbeddingServiceConfig {
   modelDownloadTimeoutMs: number;
   /** API key para fallback (OpenRouter). Se não informada, fallback desabilitado. */
   apiKey?: string;
+  /** Se true, tenta API antes do backend local. Default: false */
+  preferApi: boolean;
   /** Base URL para API de embeddings (OpenAI-compatível). Default: OpenRouter */
   apiBaseUrl: string;
   /** Modelo API para fallback. Default: "openai/text-embedding-3-small" */
@@ -36,6 +38,7 @@ const DEFAULTS: EmbeddingServiceConfig = {
   modelDownloadTimeoutMs: 30_000,
   apiBaseUrl: "https://openrouter.ai/api/v1",
   apiModel: "openai/text-embedding-3-small",
+  preferApi: false,
 };
 
 // ── EmbeddingService ────────────────────────────────────────────────────
@@ -119,19 +122,29 @@ export class EmbeddingService {
   // ── Private: Init ───────────────────────────────────────────────
 
   private async _doInit(): Promise<void> {
-    // Tenta backend local primeiro
+    if (this.config.preferApi && this.config.apiKey) {
+      // Prioridade: API
+      try {
+        this.backend = "api";
+        this.ready = true;
+        return;
+      } catch {
+        this.initError = "API embedding backend failed";
+      }
+    }
+
+    // Tenta backend local
     try {
       await this.initLocal();
       this.backend = "local";
       this.ready = true;
       return;
-    } catch (err) {
-      // Log silencioso — o agente não precisa ver isso
-      // (console.warn só no modo debug)
+    } catch {
+      // Silencioso
     }
 
-    // Fallback: API
-    if (this.config.apiKey) {
+    // Fallback: API (se não tentou antes)
+    if (!this.config.preferApi && this.config.apiKey) {
       try {
         this.backend = "api";
         this.ready = true;

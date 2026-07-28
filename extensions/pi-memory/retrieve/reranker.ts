@@ -53,6 +53,8 @@ export interface RerankerConfig {
   // ── Geral ──────────────────────────────────────────────────────
   /** Máximo de documentos por batch. Default: 20 */
   maxBatchSize: number;
+  /** Se true, tenta API antes do backend local. Default: false */
+  preferApi: boolean;
 }
 
 const DEFAULTS: RerankerConfig = {
@@ -62,6 +64,7 @@ const DEFAULTS: RerankerConfig = {
   apiModel: "cohere/rerank-4-pro",
   apiTimeoutMs: 5_000,
   maxBatchSize: 20,
+  preferApi: false,
 };
 
 // ── RerankerService ────────────────────────────────────────────────────
@@ -144,7 +147,18 @@ export class RerankerService {
   // ── Private: Init ───────────────────────────────────────────────
 
   private async _doInit(): Promise<void> {
-    // Tenta backend local primeiro
+    if (this.config.preferApi && this.config.apiKey) {
+      // Prioridade: API
+      try {
+        this.backend = "api";
+        this.ready = true;
+        return;
+      } catch {
+        // Silencioso
+      }
+    }
+
+    // Tenta backend local
     try {
       await this.initLocal();
       this.backend = "local";
@@ -154,10 +168,9 @@ export class RerankerService {
       // Silencioso
     }
 
-    // Fallback: API
-    if (this.config.apiKey) {
+    // Fallback: API (se não tentou antes)
+    if (!this.config.preferApi && this.config.apiKey) {
       try {
-        // Valida conectividade com quick ping (sem custo)
         this.backend = "api";
         this.ready = true;
         return;

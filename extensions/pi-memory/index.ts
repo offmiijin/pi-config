@@ -73,6 +73,9 @@ function resetStats(): MemoryStats {
 }
 
 export default function (pi: ExtensionAPI) {
+  // ── Carregar .env (API key segura, fora do alcance do agente) ─────
+  loadEnvFile();
+
   // ── Flag ──────────────────────────────────────────────────────────
   pi.registerFlag?.("no-memory", {
     description: "Disable persistent memory for this session",
@@ -130,14 +133,14 @@ export default function (pi: ExtensionAPI) {
 
       // Inicializa embedding service + vector retriever (Fase 2.4)
       if (config.retrieval.vector_enabled) {
-        const apiKey =
-          process.env.OPENROUTER_API_KEY ?? "";
+        const apiKey = process.env.OPENROUTER_API_KEY || "";
 
         embeddingService = new EmbeddingService({
           model: config.retrieval.vector_model ?? "all-MiniLM-L6-v2",
           dimension: 384,
           normalize: true,
           apiKey: apiKey || undefined,
+          preferApi: config.retrieval.vector_api && !config.retrieval.vector_local,
         });
 
         // Cria VectorRetriever imediatamente (síncrono) — referência válida
@@ -181,13 +184,13 @@ export default function (pi: ExtensionAPI) {
 
       // Inicializa reranker (Fase 2.5) — background, não bloqueia
       if (config.retrieval.reranker_enabled) {
-        const rerankerApiKey =
-          process.env.OPENROUTER_API_KEY ?? "";
+        const rerankerApiKey = process.env.OPENROUTER_API_KEY || "";
 
         rerankerService = new RerankerService({
           model: config.retrieval.reranker_model ?? "Xenova/ms-marco-MiniLM-L-6-v2",
           apiKey: rerankerApiKey || undefined,
           apiModel: "cohere/rerank-4-pro",
+          preferApi: config.retrieval.reranker_api && !config.retrieval.reranker_local,
         });
         rerankerService.initialize().catch(() => {
           rerankerService = null;
@@ -246,8 +249,7 @@ export default function (pi: ExtensionAPI) {
         config.llm_extraction.enabled;
 
       if (llmEnabled) {
-        const apiKey =
-          process.env.OPENROUTER_API_KEY ?? "";
+        const apiKey = process.env.OPENROUTER_API_KEY || "";
 
         if (apiKey) {
           const llmConfig: Partial<LlmExtractorConfig> = {
@@ -727,18 +729,18 @@ export default function (pi: ExtensionAPI) {
             const wantLocal = mode === "local" || mode === "local + api";
             const wantApi   = mode === "api" || mode === "local + api";
 
-            // Se quer API, verifica se tem chave
-            let hasKey = !!(config.llm_extraction.apiKey || process.env.OPENROUTER_API_KEY);
+            // Se quer API, verifica se tem chave (env var ou .env)
+            let hasKey = !!process.env.OPENROUTER_API_KEY;
             let cancelled = false;
 
             if (wantApi && !hasKey) {
               const result = await ctx.ui.input(
                 "API key for " + configTarget,
-                "Required for API mode. Leave empty to cancel.",
+                "Required for API mode. Will be saved to extensions/pi-memory/.env",
                 ""
               );
               if (result && result.trim()) {
-                saveConfigToDisk({ llm_extraction: { apiKey: result.trim() } } as Partial<PiMemoryConfig>);
+                saveEnvKey(result.trim());
                 hasKey = true;
               } else {
                 cancelled = true;
@@ -761,14 +763,18 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (configTarget === "llm") {
-          const curKey = config.llm_extraction.apiKey || "";
-          const k = await ctx.ui.input("API key for LLM", "Leave empty to use OPENROUTER_API_KEY env var.", curKey);
+          const curKey = process.env.OPENROUTER_API_KEY || "";
+          const k = await ctx.ui.input(
+            "API key for LLM",
+            "Will be saved to extensions/pi-memory/.env. Leave empty and confirm to disable.",
+            curKey
+          );
           if (k !== undefined && k !== null) {
             const trimmed = k.trim();
             if (trimmed.length > 0 && trimmed !== curKey) {
-              saveConfigToDisk({ llm_extraction: { apiKey: trimmed, enabled: true } } as Partial<PiMemoryConfig>);
+              saveEnvKey(trimmed);
             } else if (trimmed.length === 0 && curKey.length > 0) {
-              saveConfigToDisk({ llm_extraction: { apiKey: "", enabled: false } } as Partial<PiMemoryConfig>);
+              saveEnvKey("");
             }
             const model = await ctx.ui.select("LLM model", [
               "deepseek/deepseek-v4-flash", "gpt-4o-mini", "claude-3-haiku", "gemini-2.0-flash",
@@ -834,6 +840,76 @@ function deepMergeConfig(target: Record<string, unknown>, source: Record<string,
 }
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Caminho do arquivo .env relativo a este módulo */
+function envFilePath(): string {
+  return path.join(path.dirname(new URL(import.meta.url).pathname), '.env');
+}
+
+/**
+ * Carrega variáveis do arquivo .env para process.env.
+ * Apenas chaves ainda não definidas (não sobrescreve env vars existentes).
+ */
+function loadEnvFile(): void {
+  try {
+    const envPath = envFilePath();
+    if (!fs.existsSync(envPath)) return;
+    const content = fs.readFileSync(envPath, 'utf-8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const val = trimmed.slice(eqIdx + 1).trim();
+      // Remove quotes wrapping
+      const cleanVal = val.replace(/^["']|["']$/g, '');
+      // Só define se não existir (env var do shell tem prioridade)
+      if (!process.env[key] && cleanVal) {
+        process.env[key] = cleanVal;
+      }
+    }
+  } catch {
+    // .env é best-effort
+  }
+}
+
+/**
+ * Salva (ou remove) a OPENROUTER_API_KEY no arquivo .env.
+ * Se key for vazia, remove a linha do arquivo.
+ */
+function saveEnvKey(key: string): void {
+  try {
+    const envPath = envFilePath();
+    let lines: string[] = [];
+    let found = false;
+
+    if (fs.existsSync(envPath)) {
+      lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+    }
+
+    if (key) {
+      const newLine = `OPENROUTER_API_KEY=${key}`;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trimStart().startsWith('OPENROUTER_API_KEY=')) {
+          lines[i] = newLine;
+          found = true;
+          break;
+        }
+      }
+      if (!found) lines.push(newLine);
+      process.env.OPENROUTER_API_KEY = key;
+    } else {
+      // Remove linha
+      lines = lines.filter(l => !l.trimStart().startsWith('OPENROUTER_API_KEY='));
+      delete process.env.OPENROUTER_API_KEY;
+    }
+
+    fs.writeFileSync(envPath, lines.join('\n').trimEnd() + '\n', 'utf-8');
+  } catch {
+    // Best-effort
+  }
 }
 
 /**
