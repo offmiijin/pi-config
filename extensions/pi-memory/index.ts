@@ -885,12 +885,11 @@ export default function (pi: ExtensionAPI) {
 
             if (hasKey) {
               saveEnvKey("LLM_API_KEY", effectiveKey);
-              const model = await ctx.ui.select("LLM model", [
-                "deepseek/deepseek-v4-flash", "gpt-4o-mini", "claude-3-haiku", "gemini-2.0-flash",
-              ], config.llm_extraction.model);
+              // Único modelo suportado atualmente
+              const model = "deepseek/deepseek-v4-flash";
               saveConfigToDisk({
                 extraction_level: "llm",
-                llm_extraction: { model: model ?? config.llm_extraction.model, enabled: true },
+                llm_extraction: { model, enabled: true },
               } as unknown as Partial<PiMemoryConfig>);
             } else if (curKey.length > 0) {
               // Remove chave existente — desabilita
