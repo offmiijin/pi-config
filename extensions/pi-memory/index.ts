@@ -781,7 +781,8 @@ export default function (pi: ExtensionAPI) {
           if (!confirmed) {
             ctx.ui.notify("Clear cancelled.", "info");
           } else {
-            const pid = hashProjectId(ctx.cwd ?? "default");
+            // Usa pi.projectDir (mesmo do session_start), não ctx.cwd (que difere)
+            const pid = hashProjectId(pi.projectDir ?? "default");
             let memDel = 0;
             let obsDel = 0;
             try {
@@ -797,6 +798,8 @@ export default function (pi: ExtensionAPI) {
             }
             if (memDel > 0 || obsDel > 0) {
               ctx.ui.notify("Cleared: " + memDel + " memories, " + obsDel + " observations deleted.", "success");
+            } else {
+              ctx.ui.notify("No memories found for project " + pid + ".", "warning");
             }
           }
         }
