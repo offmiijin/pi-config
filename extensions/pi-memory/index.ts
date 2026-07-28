@@ -506,6 +506,36 @@ export default function (pi: ExtensionAPI) {
     description:
       "Configure pi-memory features: vector search, LLM extraction, reranker, decay, pruning. " +
       "Usage: /memory [feature] [true|false] | /memory clear [--force]",
+    getArgumentCompletions: (prefix: string) => {
+      const features = [
+        { value: "vector", label: "Vector search" },
+        { value: "llm", label: "LLM extraction N3" },
+        { value: "reranker", label: "Reranker" },
+        { value: "decay", label: "Confidence decay" },
+        { value: "pruning", label: "Pruning" },
+      ];
+      const commands = [
+        { value: "all", label: "Toggle all features" },
+        { value: "clear", label: "Delete ALL memories and observations" },
+        ...features,
+      ];
+
+      // Se tem espaço, é segundo argumento (true/false)
+      const spaceIdx = prefix.indexOf(" ");
+      if (spaceIdx !== -1) {
+        const afterSpace = prefix.slice(spaceIdx + 1);
+        const bools = [
+          { value: "true", label: "true  — Ativa" },
+          { value: "false", label: "false — Desativa" },
+        ];
+        const filtered = bools.filter((b) => b.value.startsWith(afterSpace));
+        return filtered.length > 0 ? filtered : null;
+      }
+
+      // Primeiro argumento
+      const filtered = commands.filter((c) => c.value.startsWith(prefix));
+      return filtered.length > 0 ? filtered : null;
+    },
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const subcmd = parts[0]?.toLowerCase();
@@ -693,6 +723,7 @@ export default function (pi: ExtensionAPI) {
           '  /memory all true|false              Toggle all features',
           '  /memory clear [--force]             Delete ALL memories',
           '',
+          '  (no TUI: Tab mostra autocomplete dos comandos)',
           'Changes saved to .pi/memory.json. Run /reload to apply.',
         ];
         ctx.ui.notify(lines.join("\n"), "info");
