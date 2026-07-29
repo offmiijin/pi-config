@@ -6,7 +6,7 @@
  * extrai fatos atômicos e persiste via pipeline N1 (consolidate).
  *
  * ADR-002: Nível 3 — LLM barato (background, ~$0.0002/extração).
- * Default model: deepseek/deepseek-v4-flash via OpenRouter.
+ * Default model: mistralai/mistral-nemo via OpenRouter.
  */
 
 import type { RawObservation, ExtractedFact, Memory } from "../types";
@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 export interface LlmExtractorConfig {
   /** API key do OpenRouter (ou provider compatível) */
   apiKey: string;
-  /** Modelo LLM. Default: deepseek/deepseek-v4-flash */
+  /** Modelo LLM. Default: mistralai/mistral-nemo */
   model: string;
   /** Base URL da API OpenAI-compatível. Default: OpenRouter */
   baseUrl: string;
@@ -36,7 +36,7 @@ export interface LlmExtractorConfig {
 }
 
 const DEFAULTS: Partial<LlmExtractorConfig> = {
-  model: "deepseek/deepseek-v4-flash",
+  model: "mistralai/mistral-nemo",
   baseUrl: "https://openrouter.ai/api/v1",
   timeoutMs: 5_000,
   batchSize: 10,

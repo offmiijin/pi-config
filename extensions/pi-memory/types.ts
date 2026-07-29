@@ -139,7 +139,7 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
   extraction_level: "regex",
   llm_extraction: {
     enabled: false,
-    model: "deepseek/deepseek-v4-flash",
+    model: "mistralai/mistral-nemo",
     timeout_ms: 5_000,
     sweep_observation_threshold: 10,
     sweep_interval_ms: 30_000,

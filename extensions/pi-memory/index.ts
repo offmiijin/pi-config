@@ -623,7 +623,7 @@ export default function (pi: ExtensionAPI) {
           return "off";
         }
         if (feat === "llm") {
-          return config.llm_extraction.enabled ? config.llm_extraction.model : "off";
+          return config.llm_extraction.enabled ? "api" : "off";
         }
         return "off";
       };
@@ -958,7 +958,7 @@ export default function (pi: ExtensionAPI) {
             if (cancelled) {
               ctx.ui.notify("LLM configuration cancelled.", "info");
             } else if (hasKey) {
-              const model = "deepseek/deepseek-v4-flash";
+              const model = "mistralai/mistral-nemo";
               saveConfigToDisk({
                 extraction_level: "llm",
                 llm_extraction: { model, enabled: true },

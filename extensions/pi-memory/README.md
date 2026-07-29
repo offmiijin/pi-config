@@ -26,7 +26,7 @@ CAPTURE → EXTRACT → STORE → CONSOLIDATE → RETRIEVE → INJECT
 |---|---|---|
 | **CAPTURE** | Toda tool call gera observação bruta (fire-and-forget, TTL 7 dias). Buffer em memória com flush em lote (periódico + ao atingir maxSize). | ✅ |
 | **EXTRACT N2** | Regex patterns inline (~1ms) extraem fatos de tool results — test failures, dep changes, git actions, runtime errors, file ops, preference declarations, config changes. Custo zero. | ✅ |
-| **EXTRACT N3** | LLM barato (default: `deepseek/deepseek-v4-flash` via OpenRouter) processa observações em background após turnos "ricos" (bash/edit/write). Prompt estruturado, parsing multi-formato (JSON direto, code block, inline array). Retry automático (3 tentativas). | ✅ (opt-in) |
+| **EXTRACT N3** | LLM barato (default: `mistralai/mistral-nemo` via OpenRouter) processa observações em background após turnos "ricos" (bash/edit/write). Prompt estruturado, parsing multi-formato (JSON direto, code block, inline array). Retry automático (3 tentativas). | ✅ (opt-in) |
 | **STORE** | SQLite + FTS5 (warm) + JSON em disco (cold/auditoria). WAL mode. Triggers FTS5 mantêm índice de texto sincronizado automaticamente. | ✅ |
 | **CONSOLIDATE N1** | Dedup por hash SHA256 + último fato vence por chave composta (type+scope+tags). Detecção de contradição via 13 patterns regex. Reforço incremental de confidence (+0.05 por reforço, cap 1.0). | ✅ |
 | **CONSOLIDATE N2** | Sweep periódico (default: 30min). Agrupa observações pendentes por tool_name, extrai por grupo, aplica decay de confidence, pruning de memórias obsoletas, limpeza de TTL. | ✅ |
@@ -97,7 +97,7 @@ CAPTURE → EXTRACT → STORE → CONSOLIDATE → RETRIEVE → INJECT
   "extraction_level": "regex",
   "llm_extraction": {
     "enabled": false,
-    "model": "deepseek/deepseek-v4-flash",
+    "model": "mistralai/mistral-nemo",
     "timeout_ms": 5000,
     "sweep_observation_threshold": 10,
     "sweep_interval_ms": 30000
@@ -162,7 +162,7 @@ Fluxo:
 4. Cada fato passa pelo pipeline N1 (dedup + last-fact-wins)
 5. Observações marcadas como extraídas; retry 3x em falha
 
-Custo estimado: ~$0.0002/fato (deepseek-v4-flash via OpenRouter).
+Custo estimado: ~$0.0002/fato (mistral-nemo via OpenRouter).
 
 ## Consolidação N1 — Pipeline (automática em toda escrita)
 

@@ -96,7 +96,7 @@ function baseConfig(
 ): LlmExtractorConfig {
   return {
     apiKey: "test-key",
-    model: "deepseek/deepseek-v4-flash",
+    model: "mistralai/mistral-nemo",
     baseUrl: "https://openrouter.ai/api/v1",
     timeoutMs: 1000,
     batchSize: 3,
@@ -156,7 +156,7 @@ describe("LlmExtractor", () => {
     it("deve usar defaults quando não há overrides", () => {
       const e = new LlmExtractor(storage, "proj-1", { apiKey: "k" });
       expect((e as unknown as { config: LlmExtractorConfig }).config.model).toBe(
-        "deepseek/deepseek-v4-flash",
+        "mistralai/mistral-nemo",
       );
     });
 
