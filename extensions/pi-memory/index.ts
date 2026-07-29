@@ -10,7 +10,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, extraConfigPath } from "./config";
 import type { PiMemoryConfig, MemoryStats, RetrievalResult } from "./types";
-import { UnifiedStore } from "./storage/unified-store";
+import { SqliteStore } from "./storage/sqlite-store";
 import type { IStorage } from "./storage/index";
 import { ObservationBuffer } from "./capture/buffer";
 import { createCaptureHooks } from "./capture/hooks";
@@ -110,11 +110,10 @@ export default function (pi: ExtensionAPI) {
 
     // Cria diretório de dados
     const dbPath = path.join(config.data_dir, `${projectId}.db`);
-    const jsonDir = path.join(config.data_dir, "data");
 
     try {
       // Inicializa storage
-      storage = new UnifiedStore(dbPath, jsonDir);
+      storage = new SqliteStore(dbPath);
       storage.open();
 
       // Inicializa buffer

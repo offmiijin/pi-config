@@ -11,6 +11,7 @@ import type { SqliteDatabase } from "./sqlite-adapter";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Memory, MemoryType, MemoryScope, RawObservation } from "../types";
+import type { IStorage } from "./index";
 
 // ── SQL DDL ────────────────────────────────────────────────────────────
 
@@ -173,7 +174,7 @@ const SQL = {
 
 // ── Store ──────────────────────────────────────────────────────────────
 
-export class SqliteStore {
+export class SqliteStore implements IStorage {
   private db: SqliteDatabase;
 
   constructor(dbPath: string | ":memory:") {
@@ -437,6 +438,10 @@ export class SqliteStore {
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────
+
+  open(): void {
+    // Construtor já abre o DB. Nada extra necessário.
+  }
 
   close(): void {
     this.db.close();
