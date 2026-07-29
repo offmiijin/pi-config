@@ -25,7 +25,7 @@ CAPTURE → EXTRACT → STORE → CONSOLIDATE → RETRIEVE → INJECT
 | Estágio | O que faz | Status |
 |---|---|---|
 | **CAPTURE** | Toda tool call gera observação bruta (fire-and-forget, TTL 7 dias). Buffer em memória com flush em lote (periódico + ao atingir maxSize). | ✅ |
-| **EXTRACT** | LLM (default: `mistralai/mistral-nemo` via OpenRouter) processa observações em background após turnos "ricos" (bash/edit/write). Prompt estruturado, parsing multi-formato. Retry automático (3 tentativas). | ✅ (requer `LLM_API_KEY`) |
+| **EXTRACT** | LLM (default: `openai/gpt-4o-mini` via OpenRouter) processa observações em background após turnos "ricos" (bash/edit/write). Prompt estruturado, parsing multi-formato. Retry automático (3 tentativas). | ✅ (requer `LLM_API_KEY`) |
 | **STORE** | SQLite + FTS5 (WAL mode). Triggers FTS5 mantêm índice de texto sincronizado automaticamente. | ✅ |
 | **CONSOLIDATE N1** | Dedup por hash SHA256 + último fato vence por chave composta (type+scope+tags). Detecção de contradição via 13 patterns regex PT-BR+EN. Reforço incremental de confidence (+0.05 por reforço, cap 1.0). | ✅ |
 | **CONSOLIDATE N2** | Sweep periódico (default: 30min). Agrupa observações pendentes, extrai via LLM, aplica decay de confidence, pruning de memórias obsoletas, limpeza de TTL. | ✅ |
@@ -93,7 +93,7 @@ Sem cold path JSON. SQLite é a única fonte da verdade.
   "extraction_level": "llm",
   "llm_extraction": {
     "enabled": false,
-    "model": "mistralai/mistral-nemo",
+    "model": "openai/gpt-4o-mini",
     "timeout_ms": 5000,
     "sweep_observation_threshold": 100,
     "sweep_interval_ms": 30000,
@@ -140,7 +140,7 @@ Fluxo:
 4. Cada fato passa pelo pipeline N1 (dedup + last-fact-wins)
 5. Observações marcadas como extraídas; retry 3x em falha
 
-Custo estimado: ~$0.0002/fato (mistral-nemo via OpenRouter).
+Custo estimado: ~$0.0003/fato (gpt-4o-mini via OpenRouter).
 
 **Sem `LLM_API_KEY`, extração automática não acontece.** Apenas fatos escritos via `memory_write` são persistidos.
 

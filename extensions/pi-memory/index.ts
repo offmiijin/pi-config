@@ -713,7 +713,7 @@ export default function (pi: ExtensionAPI) {
               if (cancelled) {
                 ctx.ui.notify("LLM configuration cancelled.", "info");
               } else if (hasKey) {
-                const model = "mistralai/mistral-nemo";
+                const model = "openai/gpt-4o-mini";
                 saveConfigToDisk({
                   extraction_level: "llm",
                   llm_extraction: { model, enabled: true },

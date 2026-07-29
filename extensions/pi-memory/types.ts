@@ -99,7 +99,7 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
   extraction_level: "llm",
   llm_extraction: {
     enabled: false,
-    model: "mistralai/mistral-nemo",
+    model: "openai/gpt-4o-mini",
     timeout_ms: 5_000,
     batch_size: 50,
     sweep_consolidator_interval_ms: 1_800_000,

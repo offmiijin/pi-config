@@ -28,7 +28,7 @@ export interface LlmExtractorConfig {
 }
 
 const DEFAULTS: Partial<LlmExtractorConfig> = {
-  model: "mistralai/mistral-nemo",
+  model: "openai/gpt-4o-mini",
   baseUrl: "https://openrouter.ai/api/v1",
   timeoutMs: 5_000,
   batchSize: 50,
