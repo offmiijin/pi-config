@@ -103,6 +103,17 @@ Options:
 | `memory_search` | Buscar páginas por texto |
 | `memory_status` | Verificar estado: total de páginas, breakdown, git status |
 | `memory_restore_page` | Restaurar versão anterior de uma página |
+| `memory_extract` | Forçar extração LLM de observações pendentes |
+
+## Quando forçar extração
+
+Use `memory_extract` quando:
+1. Usuário diz "extraia memórias disso", "aprenda com essa sessão", "transforme em conhecimento"
+2. Sessão foi rica mas curta (menos de 50 observações) e quer gerar páginas sem esperar
+3. Quer revisar o que o LLM extraiu das interações recentes
+
+A ferramenta processa observações pendentes (não extraídas) e retorna as páginas geradas.
+O LLM pode retornar array vazio se não encontrar conhecimento extraível.
 
 ## Ciclo de vida
 

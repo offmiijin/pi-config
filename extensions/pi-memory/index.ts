@@ -27,6 +27,7 @@ import { createMemorySearchTool } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
 import { createMemoryStatusTool } from "./tools/memory-status";
 import { createMemoryRestoreTool } from "./tools/memory-restore";
+import { createMemoryExtractTool } from "./tools/memory-extract";
 import { GitLayer } from "./wiki/git-layer";
 import { slugify } from "./wiki/slugify";
 import { PageStore } from "./storage/page-store";
@@ -455,6 +456,14 @@ export default function (pi: ExtensionAPI) {
       storage: storage ?? (null as unknown as IStorage),
       pageStore,
       gitLayer,
+    })),
+  });
+
+  pi.registerTool({
+    ...createMemoryExtractTool(() => ({
+      storage: storage ?? (null as unknown as IStorage),
+      llmExtractor: llmExtractor ?? (null as unknown as LlmExtractor),
+      projectId,
     })),
   });
 
