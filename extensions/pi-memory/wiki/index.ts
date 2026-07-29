@@ -21,3 +21,5 @@ export { WikiWriter } from "./writer";
 export type { WikiWriterConfig } from "./writer";
 export { Indexer } from "./indexer";
 export type { IndexerConfig, IndexResult } from "./indexer";
+export { GitLayer } from "./git-layer";
+export type { GitLayerConfig, CommitInfo } from "./git-layer";

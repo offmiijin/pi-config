@@ -17,6 +17,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import { WikiWriter } from "../wiki/writer";
+import { GitLayer } from "../wiki/git-layer";
+import type { GitLayerConfig } from "../wiki/git-layer";
 import { slugifyPathByType, resolveUniquePath } from "../wiki/slugify";
 import type { Frontmatter } from "../wiki/frontmatter";
 import type { Page, PageType, PageScope, PageSearchResult } from "../types";
@@ -61,11 +63,14 @@ export interface PageInfo {
 
 export class PageStore {
   private readonly writer: WikiWriter;
+  private readonly gitLayer: GitLayer;
   private readonly storage: IStorage;
 
-  constructor(wikiRoot: string, storage: IStorage) {
+  constructor(wikiRoot: string, storage: IStorage, gitConfig?: GitLayerConfig) {
     this.writer = new WikiWriter({ rootDir: wikiRoot });
+    this.gitLayer = new GitLayer(wikiRoot, gitConfig ?? { enabled: false });
     this.storage = storage;
+    this.gitLayer.init();
   }
 
   /**
@@ -117,6 +122,9 @@ export class PageStore {
     const contentHash = createHash("sha256").update(written).digest("hex");
     const mtime = fs.statSync(fullPath).mtimeMs;
 
+    // 5b. Git: stage (commit implícito via batch ou imediato)
+    this.gitLayer.stage(fullPath);
+
     // 6. Atualiza SQLite
     const page: Page = {
       id: existingPage?.id ?? randomUUID(),
@@ -167,8 +175,10 @@ export class PageStore {
    */
   deletePage(projectId: string, pagePath: string): void {
     const scope = projectId === "_global" ? "global" : "project";
+    const fullPath = this.writer.resolvePath(scope, projectId, pagePath);
     this.writer.deletePage(scope, projectId, pagePath);
     this.storage.deletePage(projectId, pagePath);
+    this.gitLayer.stage(fullPath);
   }
 
   /**
