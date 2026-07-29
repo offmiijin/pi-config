@@ -36,3 +36,4 @@ extensions/dev-sandbox/gen-seccomp-binmemory/
 models-store.json
 npm/
 memory/
+extensions/pi-memory.json
