@@ -28,6 +28,7 @@ import { createMemoryWriteTool } from "./tools/memory-write";
 import { createMemoryStatusTool } from "./tools/memory-status";
 import { createMemoryRestoreTool } from "./tools/memory-restore";
 import { GitLayer } from "./wiki/git-layer";
+import { slugify } from "./wiki/slugify";
 import { PageStore } from "./storage/page-store";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -103,9 +104,11 @@ export default function (pi: ExtensionAPI) {
     if (config.disabled) return;
     if (storage) return;
 
-    const projectId = hashProjectId(pi.projectDir ?? "default");
+    const projectId = hashProjectId(pi.projectDir);
     sessionId = randomUUID();
-    const dbPath = path.join(config.data_dir, `${projectId}.db`);
+    const dbDir = path.join(config.data_dir, "index", projectId);
+    fs.mkdirSync(dbDir, { recursive: true });
+    const dbPath = path.join(dbDir, "data.db");
 
     try {
       storage = new SqliteStore(dbPath);
@@ -288,7 +291,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_result", async (event, _ctx) => {
     if (!buffer || !sessionId) return;
 
-    const projectId = hashProjectId(pi.projectDir ?? "default");
+    const projectId = hashProjectId(pi.projectDir);
 
     const hooks = createCaptureHooks({
       buffer,
@@ -309,7 +312,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, _ctx) => {
     if (!cacheStableInjector || !storage) return;
 
-    const projectId = hashProjectId(pi.projectDir ?? "default");
+    const projectId = hashProjectId(pi.projectDir);
 
     // CAPTURE: registra user prompt como observação
     if (buffer && sessionId) {
@@ -367,7 +370,7 @@ export default function (pi: ExtensionAPI) {
 
     if (buffer) buffer.flush();
 
-    const projectId = hashProjectId(pi.projectDir ?? "default");
+    const projectId = hashProjectId(pi.projectDir);
     const pending = storage.getPendingObservations(projectId);
 
     if (pending.length > 0) {
@@ -416,7 +419,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ── Tools ─────────────────────────────────────────────────────────
-  const projectId = hashProjectId(pi.projectDir ?? "default");
+  const projectId = hashProjectId(pi.projectDir);
 
   pi.registerTool({
     ...createMemorySearchTool(
@@ -723,7 +726,7 @@ export default function (pi: ExtensionAPI) {
           if (!confirmed) {
             ctx.ui.notify("Clear cancelled.", "info");
           } else {
-            const pid = hashProjectId(pi.projectDir ?? "default");
+            const pid = hashProjectId(pi.projectDir);
             let pageDel = 0;
             let obsDel = 0;
             try {
@@ -842,13 +845,10 @@ function saveEnvKey(varName: string, value: string): void {
   }
 }
 
-function hashProjectId(projectDir: string): string {
-  if (!projectDir || projectDir === "default") return "default";
-  let hash = 0;
-  for (let i = 0; i < projectDir.length; i++) {
-    hash = (hash * 31 + projectDir.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0").slice(0, 8);
+function hashProjectId(projectDir: string | null | undefined): string {
+  const dir = (projectDir === "" || projectDir === "default") ? "default" : (projectDir || process.cwd());
+  if (!dir || dir === "default") return "default";
+  return `--${slugify(dir)}--`;
 }
 
 /**

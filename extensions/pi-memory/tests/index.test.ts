@@ -5,20 +5,24 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { slugify } from "../wiki/slugify";
 
 // ── hashProjectId ──────────────────────────────────────────────────────
 // Extraída aqui para teste (a original está dentro do escopo da factory)
 
-function hashProjectId(projectDir: string): string {
-  if (!projectDir || projectDir === "default") return "default";
-  let hash = 0;
-  for (let i = 0; i < projectDir.length; i++) {
-    hash = (hash * 31 + projectDir.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0").slice(0, 8);
+function hashProjectId(projectDir: string | null | undefined): string {
+  const dir = (projectDir === "" || projectDir === "default") ? "default" : (projectDir || process.cwd());
+  if (!dir || dir === "default") return "default";
+  return `--${slugify(dir)}--`;
 }
 
 describe("hashProjectId", () => {
+  it("deve retornar hash de process.cwd() para null ou undefined", () => {
+    const expected = hashProjectId(process.cwd());
+    expect(hashProjectId(null)).toBe(expected);
+    expect(hashProjectId(undefined)).toBe(expected);
+  });
+
   it("deve retornar 'default' para string vazia", () => {
     expect(hashProjectId("")).toBe("default");
   });
@@ -39,10 +43,9 @@ describe("hashProjectId", () => {
     expect(a).not.toBe(b);
   });
 
-  it("deve retornar string de 8 caracteres hex", () => {
-    const hash = hashProjectId("/some/path");
-    expect(hash).toHaveLength(8);
-    expect(/^[0-9a-f]{8}$/.test(hash)).toBe(true);
+  it("deve retornar slug no formato --slug--", () => {
+    const slug = hashProjectId("/home/user/projects/my-app");
+    expect(slug).toBe("--home-user-projects-my-app--");
   });
 
   it("deve ser determinístico", () => {
