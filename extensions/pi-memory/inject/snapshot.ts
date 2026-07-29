@@ -174,7 +174,7 @@ export class CacheStableInjector {
   // ── Private ─────────────────────────────────────────────────────
 
   private shouldRebuild(): boolean {
-    if (this.cached === null) return true;
+    if (!this.cached) return true;    // null ou vazio → rebuild
 
     // Day rollover
     const today = new Date().toISOString().slice(0, 10);

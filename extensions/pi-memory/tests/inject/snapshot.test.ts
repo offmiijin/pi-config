@@ -103,11 +103,12 @@ describe("CacheStableInjector", () => {
   });
 
   it("deve reconstruir após day rollover (via invalidate simulando)", async () => {
-    const searchFn = makeSearchFn([]);
+    const searchFn = makeSearchFn([makeResult("Usa bun", 1.0)]);
     const injector = new CacheStableInjector(searchFn);
 
-    // Primeira chamada popula o cache
-    await injector.getMemoryBlock("como fazer deploy?");
+    // Primeira chamada popula o cache (resultado não-vazio)
+    const block = await injector.getMemoryBlock("como fazer deploy?");
+    expect(block).toContain("Usa bun");
     expect(searchFn).toHaveBeenCalledTimes(1);
 
     // Mesmo dia, sem invalidate: cache hit
@@ -117,7 +118,11 @@ describe("CacheStableInjector", () => {
     // Simula day rollover via invalidate
     injector.invalidate();
 
-    await injector.getMemoryBlock("como fazer deploy?");
+    // Mock muda resultado pro rebuild mostrar conteúdo diferente
+    searchFn.mockResolvedValue([makeResult("Usa pnpm", 1.0)]);
+
+    const block2 = await injector.getMemoryBlock("como fazer deploy?");
+    expect(block2).toContain("Usa pnpm");
     expect(searchFn).toHaveBeenCalledTimes(2);
   });
 
@@ -194,7 +199,7 @@ describe("CacheStableInjector", () => {
   });
 
   it("deve reportar cache age e turns since rebuild", async () => {
-    const searchFn = makeSearchFn([]);
+    const searchFn = makeSearchFn([makeResult("Usa bun", 1.0)]);
     const injector = new CacheStableInjector(searchFn);
 
     await injector.getMemoryBlock("query numero um");
