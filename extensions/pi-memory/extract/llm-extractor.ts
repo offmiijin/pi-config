@@ -42,17 +42,6 @@ const DEFAULTS: Partial<LlmExtractorConfig> = {
 // ── Prompt template ────────────────────────────────────────────────────
 
 function buildExtractionPrompt(observations: RawObservation[]): string {
-  // ── Dicas dinâmicas (cross-projeto, sem hardcoding) ──
-  const fileExtensions = new Set<string>();
-  const toolNames = new Set<string>();
-  for (const obs of observations) {
-    if (obs.tool_name) toolNames.add(obs.tool_name);
-    for (const fp of obs.file_paths) {
-      const ext = fp.match(/\.([a-zA-Z0-9]+)$/)?.[1];
-      if (ext) fileExtensions.add(ext);
-    }
-  }
-
   const interactions = observations
     .map((obs, i) => {
       const parts: string[] = [];
@@ -81,36 +70,25 @@ function buildExtractionPrompt(observations: RawObservation[]): string {
     })
     .join("\n\n");
 
-  const hints = [];
-  if (fileExtensions.size > 0) {
-    hints.push(`File extensions found: ${[...fileExtensions].sort().join(", ")}`);
-  }
-  if (toolNames.size > 0) {
-    hints.push(`Tools used: ${[...toolNames].sort().join(", ")}`);
-  }
+  return `You are a forensic analyst reviewing a coding agent's interactions to build a project knowledge base.
 
-  return `You are a forensic analyst reviewing a coding agent's interactions.
+Below are ${observations.length} interactions from a coding session. Extract structured knowledge about the project being worked on.
 
-Your task: extract ONLY facts that are EXPLICITLY stated in the interactions below.
-
-${hints.length > 0 ? `Context hints (derived from interactions):\n${hints.map((h) => `- ${h}`).join("\n")}\n` : ""}
-Below are ${observations.length} interactions.
-
-CRITICAL RULES — violations will be rejected:
-1. ONLY extract information that appears VERBATIM in the interactions.
-2. DO NOT invent technologies, frameworks, libraries, tools, or details.
-3. If a fact is implied but not explicitly stated, DO NOT include it.
-4. Do NOT guess the project type. If interactions show TypeScript files, say "TypeScript", not "Express.js" or "React".
-5. If you are unsure whether something was stated, OMIT the page.
-6. If the interactions contain NO extractable knowledge, return { "pages": [] }.
-7. Each page MUST cite specific interaction numbers as evidence in the body.
+CRITICAL RULES:
+1. Facts MUST be grounded in evidence from the interactions below. Cite interaction numbers.
+2. DO NOT invent technologies, frameworks, or libraries not shown in the interactions.
+3. Distinguish the PROJECT from the ANALYSIS SESSION:
+   - PROJECT facts: language, framework, dependencies, architecture, domain concepts, code patterns, bugs
+   - SESSION metadata (file extensions found, tools used to analyze) should NOT be extracted as pages
+4. Synthesize from evidence: if composer.json shows "laravel/laravel" and directory has "app/Models", extract "Laravel project".
+5. If you are unsure, OMIT the page. Empty response = { "pages": [] }.
 
 Return a JSON object:
 {
   "pages": [
     {
-      "title": "Descriptive page title (will be used as filename)",
-      "body": "Full markdown content. Use ## headings for sections. Be concise but complete. Cite interaction numbers.",
+      "title": "Descriptive page title",
+      "body": "## HH:MM Extraction title\n- Detailed fact with evidence from interaction #N.\n- Another relevant finding with context and specifics.\n- More details as needed — no word limit, only useful information.",
       "type": "decision | preference | lesson | pattern | fact",
       "scope": "project",
       "tags": ["tag1", "tag2"],
@@ -119,15 +97,23 @@ Return a JSON object:
   ]
 }
 
-Extraction guidelines:
-- DECISIONS: architecture choices, library selections, design patterns (MUST be explicitly chosen in interactions)
-- PREFERENCES: tool choices, coding style, conventions (scope: "global" if cross-project)
-- LESSONS: bugs found, debugging insights, error messages encountered (MUST include actual error text)
-- PATTERNS: recurring code structures, naming conventions (MUST be visible in the code shown)
-- FACTS: objective project characteristics, dependencies shown in package.json, deployment info stated
-- IGNORE: file listings, successful installs, standard build output, trivial grep results
-- confidence: 0.5 for single mention, 0.7 for multiple interactions confirming. Max 0.7.
-- Return ONLY the JSON object, no other text. Do NOT wrap in markdown code blocks.`;
+Body format requirements:
+- ALWAYS start with "## HH:MM Extraction title" (use current time if unknown, e.g. "## 17:44 Project structure").
+- Below the header, use bullet points (-) for each piece of information.
+- Each bullet should be detailed and self-contained — future readers may only see this page.
+- NO word limit. Write as much as needed to fully document each finding.
+- Cite evidence: "(interação #N)" at the end of each bullet.
+
+Extraction guide:
+- DECISIONS: architecture choices, library selections (e.g. "chose Laravel as framework")
+- PREFERENCES: coding style, conventions visible in code (scope: "global" if cross-project)
+- LESSONS: bugs found, errors encountered, debugging insights
+- PATTERNS: recurring code structures, naming conventions visible across files
+- FACTS: dependencies (composer.json, package.json), PHP version, project structure, domain concepts
+- IGNORE: file listings without content, successful install logs, trivial grep/ls results
+- IGNORE: meta-information about the analysis session itself (tools used, file extensions scanned)
+- confidence: 0.5-0.7. Multiple interactions confirming same fact = higher.
+- Return ONLY the JSON object, no other text.`;
 }
 
 // ── Response parser ────────────────────────────────────────────────────
