@@ -64,16 +64,25 @@ function buildExtractionPrompt(observations: RawObservation[]): string {
     .map((obs, i) => {
       const parts: string[] = [];
       parts.push(`### Interaction ${i + 1}`);
-      parts.push(`Tool: ${obs.tool_name ?? "unknown"}`);
-      parts.push(`Outcome: ${obs.outcome}`);
-      if (obs.content_preview) {
-        parts.push(`Output: ${obs.content_preview.slice(0, 500)}`);
-      }
-      if (obs.error_preview) {
-        parts.push(`Error: ${obs.error_preview.slice(0, 300)}`);
-      }
-      if (obs.file_paths.length > 0) {
-        parts.push(`Files: ${obs.file_paths.join(", ")}`);
+
+      if (obs.type === "user_prompt") {
+        parts.push(`Type: User prompt`);
+        if (obs.content_preview) {
+          parts.push(`Content: ${obs.content_preview.slice(0, 500)}`);
+        }
+      } else {
+        parts.push(`Type: Tool result`);
+        parts.push(`Tool: ${obs.tool_name ?? "unknown"}`);
+        parts.push(`Outcome: ${obs.outcome}`);
+        if (obs.content_preview) {
+          parts.push(`Output: ${obs.content_preview.slice(0, 500)}`);
+        }
+        if (obs.error_preview) {
+          parts.push(`Error: ${obs.error_preview.slice(0, 300)}`);
+        }
+        if (obs.file_paths.length > 0) {
+          parts.push(`Files: ${obs.file_paths.join(", ")}`);
+        }
       }
       return parts.join("\n");
     })
@@ -81,7 +90,8 @@ function buildExtractionPrompt(observations: RawObservation[]): string {
 
   return `You are extracting structured knowledge from a coding agent's interactions.
 
-Below are ${observations.length} interactions between a coding agent and its tools.
+Below are ${observations.length} interactions. They may be user prompts (the human's requests/goals)
+or tool results (output from bash, edit, write, read, etc.).
 Extract atomic, self-contained facts. Each fact must be understandable without context.
 
 ${interactions}
@@ -99,6 +109,8 @@ Return a JSON array of facts:
 Rules:
 - IGNORE trivial output: file listings, successful npm install, standard build output
 - IGNORE stack traces longer than 50 lines (summarize instead)
+- EXTRACT from user prompts: explicit preferences, decisions, goals, constraints the user states
+  Example user prompt "always use pnpm" → preference: "User requires pnpm as package manager"
 - PREFERENCES: "uses pnpm", "prefers functional style", "always writes tests"
 - DECISIONS: "chose hexagonal architecture", "decided to use PostgreSQL"
 - LESSONS: "test X fails with Node 22", "don't use feature Y because of bug Z"
