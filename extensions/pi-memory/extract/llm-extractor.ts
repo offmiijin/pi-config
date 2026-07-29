@@ -1,17 +1,16 @@
 /**
  * LlmExtractor — Extração via LLM que sugere páginas markdown.
  *
- * Roda fire-and-forget após turn_end de turnos "ricos" (bash/edit/write).
- * Acumula observações não extraídas em batch, chama LLM via OpenRouter,
- * recebe sugestões de páginas e persiste via PageStore.
+ * Disparado quando pendingObservations atinge batchSize (default: 50).
+ * Sem timer — extração só ocorre com contexto suficiente.
+ * SweepConsolidator processa leftover periodicamente.
  *
- * Prompt modificado para gerar páginas (title + body) em vez de fatos atômicos.
+ * Prompt forense: só extrai fatos com evidência textual nas observações.
  */
 
 import type { RawObservation, PageSuggestion, PageSuggestionResponse } from "../types";
 import type { PageStore } from "../storage/page-store";
 import type { IStorage } from "../storage/index";
-import { randomUUID } from "node:crypto";
 
 // ── Config ─────────────────────────────────────────────────────────────
 
@@ -21,7 +20,6 @@ export interface LlmExtractorConfig {
   baseUrl: string;
   timeoutMs: number;
   batchSize: number;
-  maxWaitMs: number;
   maxRetries: number;
   maxConsecutiveFailures: number;
   circuitCooldownMs: number;
@@ -33,8 +31,7 @@ const DEFAULTS: Partial<LlmExtractorConfig> = {
   model: "mistralai/mistral-nemo",
   baseUrl: "https://openrouter.ai/api/v1",
   timeoutMs: 5_000,
-  batchSize: 10,
-  maxWaitMs: 30_000,
+  batchSize: 50,
   maxRetries: 3,
   maxConsecutiveFailures: 5,
   circuitCooldownMs: 300_000,
@@ -45,6 +42,17 @@ const DEFAULTS: Partial<LlmExtractorConfig> = {
 // ── Prompt template ────────────────────────────────────────────────────
 
 function buildExtractionPrompt(observations: RawObservation[]): string {
+  // ── Dicas dinâmicas (cross-projeto, sem hardcoding) ──
+  const fileExtensions = new Set<string>();
+  const toolNames = new Set<string>();
+  for (const obs of observations) {
+    if (obs.tool_name) toolNames.add(obs.tool_name);
+    for (const fp of obs.file_paths) {
+      const ext = fp.match(/\.([a-zA-Z0-9]+)$/)?.[1];
+      if (ext) fileExtensions.add(ext);
+    }
+  }
+
   const interactions = observations
     .map((obs, i) => {
       const parts: string[] = [];
@@ -73,38 +81,52 @@ function buildExtractionPrompt(observations: RawObservation[]): string {
     })
     .join("\n\n");
 
-  return `You are extracting structured knowledge from a coding agent's interactions and organizing it into a wiki.
+  const hints = [];
+  if (fileExtensions.size > 0) {
+    hints.push(`File extensions found: ${[...fileExtensions].sort().join(", ")}`);
+  }
+  if (toolNames.size > 0) {
+    hints.push(`Tools used: ${[...toolNames].sort().join(", ")}`);
+  }
 
-Below are ${observations.length} interactions. They may be user prompts or tool results.
+  return `You are a forensic analyst reviewing a coding agent's interactions.
 
-Extract key information as WIKI PAGES. Each page should be a cohesive document covering one topic.
+Your task: extract ONLY facts that are EXPLICITLY stated in the interactions below.
+
+${hints.length > 0 ? `Context hints (derived from interactions):\n${hints.map((h) => `- ${h}`).join("\n")}\n` : ""}
+Below are ${observations.length} interactions.
+
+CRITICAL RULES — violations will be rejected:
+1. ONLY extract information that appears VERBATIM in the interactions.
+2. DO NOT invent technologies, frameworks, libraries, tools, or details.
+3. If a fact is implied but not explicitly stated, DO NOT include it.
+4. Do NOT guess the project type. If interactions show TypeScript files, say "TypeScript", not "Express.js" or "React".
+5. If you are unsure whether something was stated, OMIT the page.
+6. If the interactions contain NO extractable knowledge, return { "pages": [] }.
+7. Each page MUST cite specific interaction numbers as evidence in the body.
 
 Return a JSON object:
 {
   "pages": [
     {
       "title": "Descriptive page title (will be used as filename)",
-      "body": "Full markdown content. Use ## headings for sections. Be concise but complete.",
+      "body": "Full markdown content. Use ## headings for sections. Be concise but complete. Cite interaction numbers.",
       "type": "decision | preference | lesson | pattern | fact",
-      "scope": "project",     // "project" or "global" (default: project)
+      "scope": "project",
       "tags": ["tag1", "tag2"],
       "confidence": 0.0-1.0
     }
   ]
 }
 
-Rules:
-- IGNORE trivial output: file listings, successful npm install, standard build output, successful git commits
-- IGNORE stack traces longer than 50 lines (summarize the error instead)
-- DECISIONS: architecture choices, library selections, design patterns adopted
+Extraction guidelines:
+- DECISIONS: architecture choices, library selections, design patterns (MUST be explicitly chosen in interactions)
 - PREFERENCES: tool choices, coding style, conventions (scope: "global" if cross-project)
-- LESSONS: bugs found, debugging insights, "don't do X" knowledge
-- PATTERNS: recurring code structures, naming conventions, error handling patterns
-- FACTS: objective project characteristics, dependencies, deployment info
-- Each page title must be clear and specific. "Bug fix" is NOT acceptable.
-  "Auth timeout was 100ms instead of 5000ms" IS acceptable.
-- body can contain markdown: headings, lists, code blocks, etc.
-- confidence: 0.9+ for explicit statements, 0.5-0.7 for inferred. Max 1.0.
+- LESSONS: bugs found, debugging insights, error messages encountered (MUST include actual error text)
+- PATTERNS: recurring code structures, naming conventions (MUST be visible in the code shown)
+- FACTS: objective project characteristics, dependencies shown in package.json, deployment info stated
+- IGNORE: file listings, successful installs, standard build output, trivial grep results
+- confidence: 0.5 for single mention, 0.7 for multiple interactions confirming. Max 0.7.
 - Return ONLY the JSON object, no other text. Do NOT wrap in markdown code blocks.`;
 }
 
@@ -243,7 +265,6 @@ export class LlmExtractor {
   private readonly onExtracted?: (count: number) => void;
 
   private pendingObservations: RawObservation[] = [];
-  private batchTimer: ReturnType<typeof setTimeout> | null = null;
   private circuit: CircuitBreaker;
   private consecutiveFailures = 0;
 
@@ -268,7 +289,8 @@ export class LlmExtractor {
   // ── Public API ────────────────────────────────────────────────────
 
   /**
-   * Enfileira observações para extração no próximo batch.
+   * Enfileira observações para extração.
+   * Dispara flush imediato quando atinge batchSize (sem timer).
    * Ignora observações já enfileiradas (dedup por id).
    */
   enqueue(observations: RawObservation[]): void {
@@ -276,7 +298,13 @@ export class LlmExtractor {
     const newObs = observations.filter((o) => !pendingIds.has(o.id));
     if (newObs.length === 0) return;
     this.pendingObservations.push(...newObs);
-    this.scheduleBatch();
+
+    // Dispara extração imediata se acumulou batchSize ou mais
+    if (this.pendingObservations.length >= this.config.batchSize) {
+      const batch = this.pendingObservations.splice(0, this.config.batchSize);
+      // Fire-and-forget: não bloqueia o event loop
+      this.extractBatch(batch);
+    }
   }
 
   /**
@@ -293,16 +321,18 @@ export class LlmExtractor {
 
       if (suggestions.length > 0) {
         await this.persistSuggestions(suggestions);
-        this.markExtracted(observations);
-        // Remove observações processadas da fila pendente
-        const processedIds = new Set(observations.map((o) => o.id));
-        this.pendingObservations = this.pendingObservations.filter(
-          (o) => !processedIds.has(o.id),
-        );
-        this.circuit.recordSuccess();
-        this.consecutiveFailures = 0;
-        this.onExtracted?.(suggestions.length);
       }
+
+      // Sempre marca como extraídas quando LLM respondeu com sucesso,
+      // mesmo se parsing retornou vazio — evita loop infinito.
+      this.markExtracted(observations);
+      const processedIds = new Set(observations.map((o) => o.id));
+      this.pendingObservations = this.pendingObservations.filter(
+        (o) => !processedIds.has(o.id),
+      );
+      this.circuit.recordSuccess();
+      this.consecutiveFailures = 0;
+      this.onExtracted?.(suggestions.length);
 
       return suggestions;
     } catch (err) {
@@ -312,32 +342,16 @@ export class LlmExtractor {
     }
   }
 
-  /** Força flush de observações pendentes. */
-  async flush(): Promise<void> {
-    if (this.pendingObservations.length === 0) return;
-    const batch = this.pendingObservations.splice(0, this.config.batchSize);
-    await this.extractBatch(batch);
-  }
-
-  /** Cancela timer e reseta estado. */
+  /** Cancela estado pendente. */
   shutdown(): void {
-    if (this.batchTimer) {
-      clearTimeout(this.batchTimer);
-      this.batchTimer = null;
-    }
     this.pendingObservations = [];
   }
 
   // ── Private ──────────────────────────────────────────────────────
 
-  private scheduleBatch(): void {
-    if (this.batchTimer) return;
-
-    this.batchTimer = setTimeout(async () => {
-      this.batchTimer = null;
-      await this.flush();
-    }, this.config.maxWaitMs);
-  }
+  /**
+   * Chama LLM via API OpenAI-compatível.
+   */
 
   /**
    * Chama LLM via API OpenAI-compatível.
@@ -379,11 +393,13 @@ export class LlmExtractor {
 
   /**
    * Persiste sugestões de página via PageStore.
-   * Se confidence > 0.8: active. Senão: draft.
+   * LLM extractions têm confidence cap 0.7 e nunca são pinned.
    */
   private async persistSuggestions(suggestions: PageSuggestion[]): Promise<void> {
     for (const suggestion of suggestions) {
       try {
+        // Cap confidence: LLM extractions max 0.7. Apenas memory_write manual pode exceder.
+        const capped = Math.min(suggestion.confidence ?? 0.5, 0.7);
         this.pageStore.writePage({
           title: suggestion.title,
           body: suggestion.body,
@@ -391,8 +407,8 @@ export class LlmExtractor {
           scope: suggestion.scope ?? "project",
           projectId: suggestion.scope === "global" ? null : this.projectId,
           tags: suggestion.tags,
-          confidence: suggestion.confidence,
-          pinned: suggestion.confidence !== undefined && suggestion.confidence >= 0.8,
+          confidence: capped,
+          pinned: false,  // nunca auto-pin extrações do LLM
         });
       } catch {
         // Falha numa página não quebra o batch

@@ -12,8 +12,9 @@
  * Páginas "pinned" e já "superseded" são imunes a decay/pruning.
  */
 
-import type { RawObservation, Page } from "../types";
+import type { Page } from "../types";
 import type { IStorage } from "../storage/index";
+import type { PageStore } from "../storage/page-store";
 import type { LlmExtractor } from "../extract/llm-extractor";
 
 // ── Config ─────────────────────────────────────────────────────────────
@@ -21,10 +22,6 @@ import type { LlmExtractor } from "../extract/llm-extractor";
 export interface SweepConfig {
   /** Intervalo do sweep em ms. Default: 30 min */
   intervalMs: number;
-  /** Dispara sweep a cada N observações pendentes (threshold informativo). */
-  observationThreshold: number;
-  /** Tamanho mínimo do grupo para extrair. Default: 3 */
-  minGroupSize: number;
   /** Decay habilitado? */
   decayEnabled: boolean;
   /** Dias sem atualização (updated_at) para iniciar decay. Default: 7 */
@@ -41,8 +38,6 @@ export interface SweepConfig {
 
 const DEFAULT_SWEEP_CONFIG: SweepConfig = {
   intervalMs: 30 * 60 * 1000,
-  observationThreshold: 50,
-  minGroupSize: 3,
   decayEnabled: false,
   decayDays: 7,
   decayFactor: 0.9,
@@ -58,6 +53,7 @@ export class PageSweepConsolidator {
   private running = false;
   private readonly config: SweepConfig;
   private readonly storage: IStorage;
+  private readonly pageStore: PageStore | null;
   private readonly llmExtractor: LlmExtractor;
   private readonly projectId: string;
   private readonly onSweep?: () => void;
@@ -68,12 +64,14 @@ export class PageSweepConsolidator {
     projectId: string,
     overrides: Partial<SweepConfig> = {},
     onSweep?: () => void,
+    pageStore?: PageStore,
   ) {
     this.storage = storage;
     this.llmExtractor = llmExtractor;
     this.projectId = projectId;
     this.config = { ...DEFAULT_SWEEP_CONFIG, ...overrides };
     this.onSweep = onSweep;
+    this.pageStore = pageStore ?? null;
   }
 
   // ── Public API ──────────────────────────────────────────────────
@@ -101,15 +99,10 @@ export class PageSweepConsolidator {
     this.running = true;
 
     try {
-      // 1. Extração LLM de observações pendentes
+      // 1. Extração LLM de observações pendentes — envia todas de uma vez
       const pending = this.storage.getPendingObservations(this.projectId);
       if (pending.length > 0) {
-        const groups = this.groupByToolName(pending);
-        for (const [, observations] of groups) {
-          if (observations.length >= this.config.minGroupSize) {
-            this.llmExtractor.extractBatch(observations);
-          }
-        }
+        this.llmExtractor.extractBatch(pending);
       }
 
       // 2. Decay de confidence
@@ -135,22 +128,6 @@ export class PageSweepConsolidator {
 
   // ── Private ─────────────────────────────────────────────────────
 
-  private groupByToolName(
-    observations: RawObservation[],
-  ): Map<string, RawObservation[]> {
-    const groups = new Map<string, RawObservation[]>();
-    for (const obs of observations) {
-      const key = obs.tool_name ?? "unknown";
-      const group = groups.get(key);
-      if (group) {
-        group.push(obs);
-      } else {
-        groups.set(key, [obs]);
-      }
-    }
-    return groups;
-  }
-
   /** Reduz confidence de páginas não atualizadas há decayDays. */
   private applyDecay(): void {
     const pages = this.storage.getPagesByProject(this.projectId);
@@ -163,8 +140,23 @@ export class PageSweepConsolidator {
 
       if (page.updated_at < decayThreshold) {
         const newConfidence = Math.max(0, page.confidence * this.config.decayFactor);
-        const updated: Page = { ...page, confidence: newConfidence };
-        this.storage.updatePage(updated);
+
+        // Prefere PageStore (atualiza .md + SQLite) para evitar divergência wiki↔índice.
+        // Fallback para storage direto se PageStore não disponível.
+        if (this.pageStore) {
+          try {
+            this.pageStore.updatePageMetadata(page.project_id, page.path, {
+              confidence: newConfidence,
+            });
+          } catch {
+            // Fallback: atualiza só SQLite
+            const updated: Page = { ...page, confidence: newConfidence };
+            this.storage.updatePage(updated);
+          }
+        } else {
+          const updated: Page = { ...page, confidence: newConfidence };
+          this.storage.updatePage(updated);
+        }
       }
     }
   }
@@ -183,10 +175,21 @@ export class PageSweepConsolidator {
         page.confidence < this.config.pruningConfidenceThreshold &&
         page.updated_at < ageThreshold
       ) {
-        // Marca como superseded — preserva .md no disco,
-        // remove do índice ativo (FTS5 só indexa status='active')
-        const updated: Page = { ...page, status: "superseded" };
-        this.storage.updatePage(updated);
+        // Prefere PageStore (atualiza .md + SQLite) para evitar divergência wiki↔índice.
+        // Fallback para storage direto se PageStore não disponível.
+        if (this.pageStore) {
+          try {
+            this.pageStore.updatePageMetadata(page.project_id, page.path, {
+              status: "superseded",
+            });
+          } catch {
+            const updated: Page = { ...page, status: "superseded" };
+            this.storage.updatePage(updated);
+          }
+        } else {
+          const updated: Page = { ...page, status: "superseded" };
+          this.storage.updatePage(updated);
+        }
       }
     }
   }

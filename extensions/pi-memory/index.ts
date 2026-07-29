@@ -235,8 +235,7 @@ export default function (pi: ExtensionAPI) {
             apiKey,
             model: config.llm_extraction.model,
             timeoutMs: config.llm_extraction.timeout_ms,
-            batchSize: config.llm_extraction.sweep_observation_threshold,
-            maxWaitMs: config.llm_extraction.sweep_interval_ms,
+            batchSize: config.llm_extraction.batch_size,
           };
           llmExtractor = new LlmExtractor(
             pageStore,
@@ -255,7 +254,6 @@ export default function (pi: ExtensionAPI) {
             projectId,
             {
               intervalMs: config.llm_extraction.sweep_consolidator_interval_ms,
-              observationThreshold: config.llm_extraction.sweep_observation_threshold,
               decayEnabled: config.consolidation.decay_enabled,
               decayDays: config.consolidation.decay_days,
               decayFactor: config.consolidation.decay_factor,
@@ -266,6 +264,7 @@ export default function (pi: ExtensionAPI) {
             () => {
               stats.operations.consolidations_n2++;
             },
+            pageStore,
           );
           sweepConsolidator.schedule();
         }
@@ -365,9 +364,12 @@ export default function (pi: ExtensionAPI) {
     const toolResults: Array<{ toolName?: string }> =
       (event as Record<string, unknown>)["toolResults"] as Array<{ toolName?: string }> ?? [];
 
-    const richTools = new Set(["bash", "write", "edit"]);
+    const richTools = new Set(["bash", "read", "write", "edit", "ls", "grep", "find"]);
     const isRich = toolResults.some(
-      (tr) => tr.toolName && richTools.has(tr.toolName),
+      (tr) => tr.toolName && (
+        richTools.has(tr.toolName) ||
+        tr.toolName.startsWith("codegraph_")
+      ),
     );
 
     if (!isRich) return;

@@ -20,6 +20,7 @@ import { WikiWriter } from "../wiki/writer";
 import { GitLayer } from "../wiki/git-layer";
 import type { GitLayerConfig } from "../wiki/git-layer";
 import { slugifyPathByType, resolveUniquePath } from "../wiki/slugify";
+import { buildFrontmatter } from "../wiki/frontmatter";
 import type { Frontmatter } from "../wiki/frontmatter";
 import type { Page, PageType, PageScope, RetrievalResult } from "../types";
 import type { IStorage } from "./index";
@@ -187,6 +188,52 @@ export class PageStore {
    */
   searchPages(query: string, projectId: string | null, topK = 10): RetrievalResult[] {
     return this.storage.searchPagesFts(query, projectId, topK);
+  }
+
+  /**
+   * Atualiza metadados (confidence, status) de uma página existente.
+   *
+   * Diferente de writePage(), NÃO move a versão anterior para .superseded/
+   * e NÃO requer title/body — apenas reescreve o frontmatter in-place.
+   * Usado por SweepConsolidator (decay/pruning) para manter wiki ↔ SQLite
+   * consistentes sem gerar versionamento excessivo.
+   */
+  updatePageMetadata(
+    projectId: string,
+    pagePath: string,
+    updates: { confidence?: number; status?: string },
+  ): void {
+    const scope = projectId === "_global" ? "global" : "project";
+    const current = this.writer.readPage(scope, projectId, pagePath);
+    if (!current) return;
+
+    const newFm = { ...current.frontmatter };
+    if (updates.confidence !== undefined) {
+      newFm.confidence = updates.confidence;
+    }
+    if (updates.status !== undefined) {
+      newFm.status = updates.status as import("../wiki/frontmatter").PageStatus;
+    }
+    newFm.updated = new Date().toISOString();
+
+    const newContent = buildFrontmatter(newFm, current.body);
+    const fullPath = this.writer.updatePageInPlace(scope, projectId, pagePath, newContent);
+
+    // Atualiza SQLite
+    const mtime = fs.statSync(fullPath).mtimeMs;
+    const contentHash = createHash("sha256").update(newContent).digest("hex");
+    const existing = this.storage.getPage(projectId, pagePath);
+    if (existing) {
+      const updated: Page = {
+        ...existing,
+        confidence: updates.confidence ?? existing.confidence,
+        status: (updates.status as Page["status"]) ?? existing.status,
+        updated_at: Date.now(),
+        content_hash: contentHash,
+        mtime,
+      };
+      this.storage.updatePage(updated);
+    }
   }
 
   /**

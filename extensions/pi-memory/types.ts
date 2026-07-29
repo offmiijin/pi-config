@@ -57,10 +57,8 @@ export interface PiMemoryConfig {
     enabled: boolean;
     model: string; // ex: "gpt-4o-mini"
     timeout_ms: number;
-    /** A cada quantas observações não extraídas dispara batch LLM */
-    sweep_observation_threshold: number;
-    /** Tempo máximo de espera para disparar batch parcial (ms) */
-    sweep_interval_ms: number;
+    /** Tamanho do batch para disparar extração LLM (default: 50) */
+    batch_size: number;
     /** Intervalo do SweepConsolidator (decay/pruning) em ms */
     sweep_consolidator_interval_ms: number;
     /** API key (LLM_API_KEY env var) */
@@ -103,9 +101,7 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
     enabled: false,
     model: "mistralai/mistral-nemo",
     timeout_ms: 5_000,
-    sweep_observation_threshold: 100,
-    sweep_interval_ms: 30_000,
-    /** Intervalo do SweepConsolidator em ms (default: 30 min) */
+    batch_size: 50,
     sweep_consolidator_interval_ms: 1_800_000,
   },
   consolidation: {

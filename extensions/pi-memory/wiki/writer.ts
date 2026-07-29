@@ -235,6 +235,38 @@ export class WikiWriter {
   }
 
   /**
+   * Sobrescreve página existente atomicamente, sem mover para .superseded/.
+   * Usado para atualizações de metadados (confidence, status) que não
+   * justificam versionamento.
+   *
+   * Se o arquivo não existe, cria normalmente.
+   */
+  updatePageInPlace(
+    scope: "project" | "global",
+    projectId: string | null,
+    pagePath: string,
+    content: string,
+  ): string {
+    const fullPath = this.resolvePath(scope, projectId, pagePath);
+    const dir = path.dirname(fullPath);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const tmpPath = fullPath + ".tmp." + randomUUID().slice(0, 8);
+    try {
+      fs.writeFileSync(tmpPath, content, "utf-8");
+      fs.renameSync(tmpPath, fullPath);
+      this.fsyncDir(dir);
+    } catch (err) {
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignora */ }
+      throw new Error(
+        `Falha ao atualizar página ${pagePath}: ${(err as Error).message}`,
+      );
+    }
+
+    return fullPath;
+  }
+
+  /**
    * Retorna o diretório raiz do wiki.
    */
   getRootDir(): string {
