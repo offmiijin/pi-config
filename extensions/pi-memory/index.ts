@@ -238,6 +238,7 @@ export default function (pi: ExtensionAPI) {
             (count) => {
               stats.operations.extractions_n3 += count;
             },
+            storage,
           );
 
           // Inicializa sweep consolidator (N2) para decay/pruning de páginas

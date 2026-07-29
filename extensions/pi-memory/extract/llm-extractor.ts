@@ -10,6 +10,7 @@
 
 import type { RawObservation, PageSuggestion, PageSuggestionResponse } from "../types";
 import type { PageStore } from "../storage/page-store";
+import type { IStorage } from "../storage/index";
 import { randomUUID } from "node:crypto";
 
 // ── Config ─────────────────────────────────────────────────────────────
@@ -237,6 +238,7 @@ class CircuitBreaker {
 export class LlmExtractor {
   private readonly config: LlmExtractorConfig;
   private readonly pageStore: PageStore;
+  private readonly storage: IStorage | null;
   private readonly projectId: string;
   private readonly onExtracted?: (count: number) => void;
 
@@ -250,8 +252,10 @@ export class LlmExtractor {
     projectId: string,
     config: Partial<LlmExtractorConfig> = {},
     onExtracted?: (count: number) => void,
+    storage?: IStorage,
   ) {
     this.pageStore = pageStore;
+    this.storage = storage ?? null;
     this.projectId = projectId;
     this.config = { ...DEFAULTS, ...config } as LlmExtractorConfig;
     this.onExtracted = onExtracted;
@@ -391,7 +395,12 @@ export class LlmExtractor {
    * Marca observações como extraídas (para não reprocessar).
    */
   private markExtracted(observations: RawObservation[]): void {
-    // As observações são marcadas externamente pelo chamador
-    // (ex: SweepConsolidator ou turn_end handler)
+    if (!this.storage) return;
+    const ids = observations.map((o) => o.id);
+    try {
+      this.storage.markExtracted(ids);
+    } catch {
+      // Best-effort
+    }
   }
 }
