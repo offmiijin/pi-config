@@ -32,4 +32,6 @@ mcp-cache.json
 
 # Rust build artifacts (gen-seccomp)
 extensions/dev-sandbox/gen-seccomp/target/
-extensions/dev-sandbox/gen-seccomp-bin
+extensions/dev-sandbox/gen-seccomp-binmemory/
+models-store.json
+npm/
