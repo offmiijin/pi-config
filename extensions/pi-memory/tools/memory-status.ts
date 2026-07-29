@@ -1,20 +1,29 @@
 /**
  * Tool: memory_status
  *
- * Retorna estatísticas e estado do sistema de memória.
- * LLM usa para verificar o estado do sistema de memória.
+ * Estatísticas do sistema de memória (páginas wiki + observações).
+ * Adaptada para o novo modelo baseado em páginas markdown.
  */
 
 import { Type } from "typebox";
 import type { IStorage } from "../storage/index";
-import type { MemoryType, MemoryScope } from "../types";
+import type { GitLayer } from "../wiki/git-layer";
+import type { PageStore } from "../storage/page-store";
+import type { PageType, PageScope } from "../types";
 
-export function createMemoryStatusTool(storage: IStorage, projectId: string) {
+export interface StatusDeps {
+  storage: IStorage;
+  pageStore: PageStore | null;
+  gitLayer: GitLayer | null;
+}
+
+export function createMemoryStatusTool(deps: StatusDeps) {
   return {
     name: "memory_status",
     label: "Memory: Status",
     description:
-      "Show memory system statistics: total memories, observations, index status, and breakdown by type/scope.",
+      "Show persistent memory statistics: total pages, breakdown by type/scope, " +
+      "average confidence, pinned pages, pending observations, git status.",
 
     parameters: Type.Object({}),
 
@@ -23,79 +32,102 @@ export function createMemoryStatusTool(storage: IStorage, projectId: string) {
       _params: Record<string, never>,
       _signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      _ctx: unknown
+      _ctx: unknown,
     ) {
-      const totalMemories = storage.countMemories();
-      const totalObservations = storage.countObservations();
-      const pendingExtraction = storage.countPendingExtraction();
+      const lines: string[] = [];
+      const storage = deps.storage;
 
-      // Busca todas as memórias para breakdown
-      const memories = storage.getMemoriesByProject(projectId);
+      // ── Pages ─────────────────────────────────────────────────────
+      const totalPages = storage.countPages();
+      const allProjects = collectProjectIds(deps);
+      let totalByType: Record<string, number> = {};
+      let totalByScope: Record<string, number> = {};
+      let totalPinned = 0;
+      let totalConfidence = 0;
+      let pagesWithConfidence = 0;
 
-      // Contagem por tipo
-      const byType: Record<MemoryType, number> = {
-        preference: 0,
-        decision: 0,
-        lesson: 0,
-        fact: 0,
-        pattern: 0,
-      };
-      for (const m of memories) {
-        byType[m.type]++;
+      for (const pid of allProjects) {
+        const pages = storage.getPagesByProject(pid);
+        for (const page of pages) {
+          totalByType[page.type] = (totalByType[page.type] || 0) + 1;
+          totalByScope[page.scope] = (totalByScope[page.scope] || 0) + 1;
+          if (page.pinned) totalPinned++;
+          totalConfidence += page.confidence;
+          pagesWithConfidence++;
+        }
       }
 
-      // Contagem por scope
-      const byScope: Record<MemoryScope, number> = {
-        project: 0,
-        user: 0,
-        session: 0,
-        global: 0,
-      };
-      for (const m of memories) {
-        byScope[m.scope]++;
+      const avgConfidence = pagesWithConfidence > 0
+        ? (totalConfidence / pagesWithConfidence).toFixed(2)
+        : "N/A";
+
+      lines.push(`📄 **Pages**: ${totalPages}`);
+      lines.push(`   By type: ${formatBreakdown(totalByType)}`);
+      lines.push(`   By scope: ${formatBreakdown(totalByScope)}`);
+      lines.push(`   Avg confidence: ${avgConfidence}`);
+      lines.push(`   Pinned: ${totalPinned}`);
+
+      // ── Observations ──────────────────────────────────────────────
+      const totalObs = storage.countObservations();
+      const pendingExt = storage.countPendingExtraction();
+      lines.push(`📝 **Observations**: ${totalObs} (${pendingExt} pending extraction)`);
+
+      // ── Git status ────────────────────────────────────────────────
+      if (deps.gitLayer) {
+        const gitStatus = deps.gitLayer.status;
+        if (gitStatus.available) {
+          lines.push(`🔧 **Git**: ${gitStatus.branch}${gitStatus.dirty ? " (dirty)" : " (clean)"}`);
+        }
       }
 
-      // Confidence média
-      const avgConfidence =
-        memories.length > 0
-          ? memories.reduce((sum, m) => sum + m.confidence, 0) / memories.length
-          : 0;
-
-      // Pinned
-      const pinnedCount = memories.filter((m) => m.pinned).length;
-
-      // Superseded
-      const supersededCount = memories.filter((m) => m.superseded_by).length;
-      const activeCount = totalMemories - supersededCount;
-
-      const lines = [
-        "🧠 pi-memory",
-        `   Project: ${projectId}`,
-        "",
-        `   Memories: ${totalMemories} total (${activeCount} active, ${supersededCount} superseded)`,
-        `     By type:    preference: ${byType.preference} | decision: ${byType.decision} | lesson: ${byType.lesson} | fact: ${byType.fact} | pattern: ${byType.pattern}`,
-        `     By scope:   project: ${byScope.project} | user: ${byScope.user} | session: ${byScope.session} | global: ${byScope.global}`,
-        `     Avg confidence: ${avgConfidence.toFixed(2)}`,
-        `     Pinned: ${pinnedCount}`,
-        "",
-        `   Observations: ${totalObservations} total`,
-        `     Pending extraction: ${pendingExtraction}`,
-      ];
+      // ── Operations (desde o início da sessão) ──────────────────────
+      // Nota: operações agora são pages-based, mas mantemos compat
+      lines.push("💡 Use `memory_search` to find pages, `memory_restore_page` to undo changes.");
 
       return {
         content: [{ type: "text" as const, text: lines.join("\n") }],
         details: {
-          total_memories: totalMemories,
-          active_memories: activeCount,
-          superseded_memories: supersededCount,
-          total_observations: totalObservations,
-          pending_extraction: pendingExtraction,
-          by_type: byType,
-          by_scope: byScope,
-          avg_confidence: Math.round(avgConfidence * 100) / 100,
-          pinned_count: pinnedCount,
+          total_pages: totalPages,
+          by_type: totalByType,
+          by_scope: totalByScope,
+          avg_confidence: avgConfidence,
+          pinned_pages: totalPinned,
+          total_observations: totalObs,
+          pending_extraction: pendingExt,
         },
       };
     },
   };
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+function collectProjectIds(deps: StatusDeps): string[] {
+  const ids = new Set<string>();
+  ids.add("_global");
+  try {
+    // Tenta listar projetos do wiki
+    const wikiRoot = deps.pageStore?.["writer"]?.["rootDir"];
+    if (wikiRoot) {
+      const projectsDir = require("node:path").join(wikiRoot, "projects");
+      if (require("node:fs").existsSync(projectsDir)) {
+        const entries = require("node:fs").readdirSync(projectsDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && !entry.name.startsWith(".")) {
+            ids.add(entry.name);
+          }
+        }
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return [...ids];
+}
+
+function formatBreakdown(record: Record<string, number>): string {
+  return Object.entries(record)
+    .sort(([, a], [, b]) => b - a)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(", ") || "none";
 }

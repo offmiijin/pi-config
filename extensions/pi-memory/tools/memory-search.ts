@@ -1,31 +1,28 @@
 /**
  * Tool: memory_search
  *
- * Busca na memória persistente entre sessões.
- * LLM usa quando precisa de contexto sobre padrões, decisões ou preferências
- * que não foram injetados automaticamente.
+ * Busca na memória persistente (páginas wiki) entre sessões.
+ * LLM usa quando precisa de contexto sobre decisões, preferências,
+ * lições que não foram injetadas automaticamente.
  *
- * Fase 2.5: Busca híbrida (BM25 + Vector + RRF + Reranker) via HybridRetriever.
+ * Agora busca em pages (FTS5) em vez de memories (fatos atômicos).
  */
 
 import { Type } from "typebox";
-import type { RetrievalResult, MemoryType, MemoryScope } from "../types";
-
-export interface SearchProvider {
-  search: (query: string, projectId: string, topK?: number) => Promise<RetrievalResult[]>;
-}
+import type { PageStore } from "../storage/page-store";
+import type { PageType, PageScope } from "../types";
 
 export function createMemorySearchTool(
-  searchProvider: SearchProvider,
-  projectId: string
+  pageStore: PageStore,
+  projectId: string,
 ) {
   return {
     name: "memory_search",
     label: "Memory: Search",
     description:
-      "Search persistent memory across sessions. Use when you need " +
-      "context about project patterns, past decisions, or user preferences " +
-      "that wasn't automatically injected.",
+      "Search persistent memory (wiki pages) across sessions. " +
+      "Use when you need context about project patterns, past decisions, " +
+      "or user preferences that wasn't automatically injected.",
 
     parameters: Type.Object({
       query: Type.String({
@@ -34,23 +31,18 @@ export function createMemorySearchTool(
       type: Type.Optional(
         Type.Union(
           [
-            Type.Literal("preference"),
             Type.Literal("decision"),
+            Type.Literal("preference"),
             Type.Literal("lesson"),
-            Type.Literal("fact"),
             Type.Literal("pattern"),
+            Type.Literal("fact"),
           ],
-          { description: "Filter by memory type" }
+          { description: "Filter by page type" }
         )
       ),
       scope: Type.Optional(
         Type.Union(
-          [
-            Type.Literal("project"),
-            Type.Literal("user"),
-            Type.Literal("session"),
-            Type.Literal("global"),
-          ],
+          [Type.Literal("project"), Type.Literal("global")],
           { description: "Filter by scope (default: project)", default: "project" }
         )
       ),
@@ -58,18 +50,17 @@ export function createMemorySearchTool(
 
     async execute(
       _toolCallId: string,
-      params: { query: string; type?: MemoryType; scope?: MemoryScope },
+      params: { query: string; type?: PageType; scope?: PageScope },
       _signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      _ctx: unknown
+      _ctx: unknown,
     ) {
-      const scope = params.scope ?? "project";
       const topK = 10;
 
-      // Busca híbrida (BM25 + Vector + RRF + Reranker se disponível)
-      let results: RetrievalResult[];
+      // Busca páginas via PageStore (FTS5)
+      let results;
       try {
-        results = await searchProvider.search(params.query, projectId, topK);
+        results = pageStore.searchPages(params.query, null, topK);
       } catch {
         return {
           content: [{ type: "text" as const, text: "Memory search failed. System may not be initialized." }],
@@ -80,16 +71,18 @@ export function createMemorySearchTool(
       // Filtra por type e scope
       let filtered = results;
       if (params.type) {
-        filtered = filtered.filter((r) => r.memory.type === params.type);
+        filtered = filtered.filter((r) => r.page.type === params.type);
       }
-      filtered = filtered.filter((r) => r.memory.scope === scope);
+      if (params.scope) {
+        filtered = filtered.filter((r) => r.page.scope === params.scope);
+      }
 
       // Limita a topK final
       filtered = filtered.slice(0, topK);
 
       if (filtered.length === 0) {
         return {
-          content: [{ type: "text" as const, text: "No memories found." }],
+          content: [{ type: "text" as const, text: "No pages found." }],
           details: { results: [] },
         };
       }
@@ -97,7 +90,7 @@ export function createMemorySearchTool(
       const formatted = filtered
         .map(
           (r) =>
-            `- [${r.memory.type}][${r.memory.scope}][score:${r.score.toFixed(2)}] ${r.memory.text}`
+            `- [${r.page.type}][${r.page.scope}][score:${r.score.toFixed(2)}] **${r.page.title}** \`${r.page.path}\`\n  ${r.snippet.slice(0, 200)}`,
         )
         .join("\n");
 
@@ -105,13 +98,12 @@ export function createMemorySearchTool(
         content: [{ type: "text" as const, text: formatted }],
         details: {
           results: filtered.map((r) => ({
-            id: r.memory.id,
-            type: r.memory.type,
-            scope: r.memory.scope,
-            text: r.memory.text,
-            confidence: r.memory.confidence,
+            path: r.page.path,
+            title: r.page.title,
+            type: r.page.type,
+            scope: r.page.scope,
+            snippet: r.snippet,
             score: r.score,
-            strategy: r.strategy,
           })),
         },
       };

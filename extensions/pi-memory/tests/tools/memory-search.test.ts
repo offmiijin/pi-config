@@ -1,172 +1,90 @@
 /**
- * Testes da tool memory_search.
+ * Testes da tool memory_search (v2 — páginas wiki).
  */
-
-import { describe, it, expect, vi } from "vitest";
-import { createMemorySearchTool } from "../../tools/memory-search";
-import type { Memory, RetrievalResult } from "../../types";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { SqliteStore } from "../../storage/sqlite-store";
+import { PageStore } from "../../storage/page-store";
+import { createMemorySearchTool } from "../../tools/memory-search";
 
-// ── Helpers ────────────────────────────────────────────────────────────
-
-function makeMem(overrides: Partial<Memory> = {}): Memory {
-  const now = Date.now();
-  return {
-    id: randomUUID(),
-    text: "Usa pnpm em todos os projetos",
-    embedding: null,
-    type: "preference",
-    scope: "project",
-    tags: ["#pnpm"],
-    confidence: 0.8,
-    timestamp: now,
-    last_accessed: now,
-    access_count: 1,
-    source_ids: [],
-    superseded_by: null,
-    pinned: false,
-    project_id: "test-project",
-    content_hash: "abc",
-    ...overrides,
-  };
+function createSandbox() {
+  const tempDir = path.join(tmpdir(), "pi-search-" + randomUUID().slice(0, 8));
+  const dbPath = path.join(tempDir, "memory.db");
+  const wikiRoot = path.join(tempDir, "wiki");
+  fs.mkdirSync(wikiRoot, { recursive: true });
+  const store = new SqliteStore(dbPath);
+  store.open();
+  const pageStore = new PageStore(wikiRoot, store, { enabled: false });
+  return { tempDir, store, pageStore, wikiRoot };
 }
 
-function mockSearchProvider(results: RetrievalResult[]) {
-  return {
-    search: vi.fn(async (_query: string, _pid: string, _topK?: number) => results),
-  };
+function destroy(s: { tempDir: string; store: SqliteStore }): void {
+  try { s.store.close(); fs.rmSync(s.tempDir, { recursive: true, force: true }); } catch {}
 }
 
-// ── Suite ───────────────────────────────────────────────────────────────
+async function execute(
+  tool: ReturnType<typeof createMemorySearchTool>,
+  params: Record<string, unknown>,
+) {
+  return tool.execute("test", params, undefined, undefined, {} as never);
+}
 
-describe("memory_search tool", () => {
-  it("deve retornar resultados formatados", async () => {
-    const mem = makeMem({ text: "Usa pnpm", type: "preference", scope: "project" });
-    const provider = mockSearchProvider([
-      { memory: mem, score: 0.95, strategy: "bm25" },
-    ]);
-
-    const tool = createMemorySearchTool(provider, "test-project");
-    const result = await tool.execute(
-      "id",
-      { query: "package manager" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.content[0].text).toContain("[preference]");
-    expect(result.content[0].text).toContain("Usa pnpm");
-    expect(result.details.results).toHaveLength(1);
+describe("memory_search tool (v2)", () => {
+  it("deve retornar 'No pages found' quando vazio", async () => {
+    const sandbox = createSandbox();
+    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const result = await execute(tool, { query: "nonexistent" });
+    expect(result.content[0].text).toContain("No pages");
+    destroy(sandbox);
   });
 
-  it("deve retornar 'No memories found' quando vazio", async () => {
-    const provider = mockSearchProvider([]);
-    const tool = createMemorySearchTool(provider, "test-project");
+  it("deve encontrar páginas por termo", async () => {
+    const sandbox = createSandbox();
+    sandbox.pageStore.writePage({
+      title: "Hexagonal Architecture", body: "Hexagonal architecture pattern", type: "decision", scope: "project", projectId: "abc123",
+    });
+    sandbox.pageStore.writePage({
+      title: "Prefer pnpm", body: "Use pnpm", type: "preference", scope: "global", projectId: null,
+    });
 
-    const result = await tool.execute(
-      "id",
-      { query: "nada" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.content[0].text).toBe("No memories found.");
-    expect(result.details.results).toEqual([]);
+    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const result = await execute(tool, { query: "hexagonal" });
+    expect(result.content[0].text).toContain("Hexagonal");
+    destroy(sandbox);
   });
 
   it("deve filtrar por type", async () => {
-    const pref = makeMem({ text: "Pref", type: "preference" });
-    const fact = makeMem({ text: "Fact", type: "fact" });
-    const provider = mockSearchProvider([
-      { memory: pref, score: 1.0, strategy: "bm25" },
-      { memory: fact, score: 0.5, strategy: "bm25" },
-    ]);
+    const sandbox = createSandbox();
+    sandbox.pageStore.writePage({
+      title: "Decision", body: "Body", type: "decision", scope: "project", projectId: "abc123",
+    });
+    sandbox.pageStore.writePage({
+      title: "Lesson", body: "Body", type: "lesson", scope: "project", projectId: "abc123",
+    });
 
-    const tool = createMemorySearchTool(provider, "test-project");
-    const result = await tool.execute(
-      "id",
-      { query: "q", type: "preference" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.details.results).toHaveLength(1);
-    expect(result.details.results[0].type).toBe("preference");
+    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const result = await execute(tool, { query: "body", type: "decision" });
+    expect(result.content[0].text).toContain("Decision");
+    expect(result.content[0].text).not.toContain("Lesson");
+    destroy(sandbox);
   });
 
   it("deve filtrar por scope", async () => {
-    const proj = makeMem({ text: "Proj", scope: "project" });
-    const user = makeMem({ text: "User", scope: "user" });
-    const provider = mockSearchProvider([
-      { memory: proj, score: 1.0, strategy: "bm25" },
-      { memory: user, score: 0.5, strategy: "bm25" },
-    ]);
+    const sandbox = createSandbox();
+    sandbox.pageStore.writePage({
+      title: "Global Rule", body: "Body", type: "preference", scope: "global", projectId: null,
+    });
+    sandbox.pageStore.writePage({
+      title: "Project Rule", body: "Body", type: "preference", scope: "project", projectId: "abc123",
+    });
 
-    const tool = createMemorySearchTool(provider, "test-project");
-    const result = await tool.execute(
-      "id",
-      { query: "q", scope: "user" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.details.results).toHaveLength(1);
-    expect(result.details.results[0].scope).toBe("user");
-  });
-
-  it("deve filtrar por type e scope simultaneamente", async () => {
-    const match = makeMem({ text: "Match", type: "preference", scope: "project" });
-    const wrongType = makeMem({ text: "Wrong", type: "fact", scope: "project" });
-    const wrongScope = makeMem({ text: "Wrong", type: "preference", scope: "user" });
-    const provider = mockSearchProvider([
-      { memory: match, score: 1.0, strategy: "bm25" },
-      { memory: wrongType, score: 0.5, strategy: "bm25" },
-      { memory: wrongScope, score: 0.3, strategy: "bm25" },
-    ]);
-
-    const tool = createMemorySearchTool(provider, "test-project");
-    const result = await tool.execute(
-      "id",
-      { query: "q", type: "preference", scope: "project" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.details.results).toHaveLength(1);
-    expect(result.details.results[0].text).toBe("Match");
-  });
-
-  it("deve incluir score e metadata nos results", async () => {
-    const mem = makeMem({ text: "Test", confidence: 0.75 });
-    const provider = mockSearchProvider([
-      { memory: mem, score: 0.88, strategy: "bm25" },
-    ]);
-
-    const tool = createMemorySearchTool(provider, "test-project");
-    const result = await tool.execute(
-      "id",
-      { query: "q" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    const detail = result.details.results[0];
-    expect(detail.id).toBe(mem.id);
-    expect(detail.confidence).toBe(0.75);
-    expect(detail.score).toBe(0.88);
-  });
-
-  it("deve passar projectId ao retriever", async () => {
-    const provider = mockSearchProvider([]);
-    const tool = createMemorySearchTool(provider, "my-project");
-
-    await tool.execute("id", { query: "q" }, undefined, undefined, undefined);
-    expect(provider.search).toHaveBeenCalledWith("q", "my-project", 10);
+    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const result = await execute(tool, { query: "body", scope: "global" });
+    expect(result.content[0].text).toContain("Global Rule");
+    expect(result.content[0].text).not.toContain("Project Rule");
+    destroy(sandbox);
   });
 });

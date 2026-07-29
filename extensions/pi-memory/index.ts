@@ -25,10 +25,11 @@ import { VectorRetriever } from "./retrieve/vector";
 import { HybridRetriever } from "./retrieve/index";
 import { CacheStableInjector } from "./inject/snapshot";
 import { createMemorySearchTool } from "./tools/memory-search";
-import type { SearchProvider } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
-import { PageStore } from "./storage/page-store";
 import { createMemoryStatusTool } from "./tools/memory-status";
+import { createMemoryRestoreTool } from "./tools/memory-restore";
+import { GitLayer } from "./wiki/git-layer";
+import { PageStore } from "./storage/page-store";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -443,21 +444,25 @@ export default function (pi: ExtensionAPI) {
   // Se storage ainda não foi inicializado (antes de session_start),
   // a tool falhará graciosamente (retorna erro).
   // Lazy closure: acessa retriever em runtime (não no load do módulo).
-  const searchProvider: SearchProvider = {
-    search: (query: string, pid: string, topK?: number) => {
-      if (hybridRetriever) return hybridRetriever.search(query, topK ?? 10);
-      if (retriever) return Promise.resolve(retriever.search(query, pid, topK ?? 10));
-      return Promise.resolve([] as RetrievalResult[]);
-    },
-  };
+  // Inicializa PageStore + GitLayer
+  const wikiRoot = path.join(config.data_dir, "wiki");
+  const pageStore = storage ? new PageStore(wikiRoot, storage, {
+    enabled: true,
+    commitPerPage: false,
+    batchIntervalMs: 300_000,
+  }) : null;
+  const gitLayer = pageStore ? ((storage) ? new GitLayer(wikiRoot, {
+    enabled: true,
+    commitPerPage: false,
+    batchIntervalMs: 300_000,
+  }) : null) : null;
 
   pi.registerTool({
-    ...createMemorySearchTool(searchProvider, projectId),
+    ...createMemorySearchTool(
+      pageStore ?? (null as unknown as PageStore),
+      projectId,
+    ),
   });
-
-  // Inicializa PageStore (coordena WikiWriter + SQLite)
-  const wikiRoot = path.join(config.data_dir, "wiki");
-  const pageStore = storage ? new PageStore(wikiRoot, storage) : null;
 
   pi.registerTool({
     ...createMemoryWriteTool(
@@ -467,28 +472,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    ...createMemoryStatusTool(
-      // Wrapper lazy para storage
-      {
-        countMemories() {
-          if (!storage) return 0;
-          return storage.countMemories();
-        },
-        countObservations() {
-          if (!storage) return 0;
-          return storage.countObservations();
-        },
-        countPendingExtraction() {
-          if (!storage) return 0;
-          return storage.countPendingExtraction();
-        },
-        getMemoriesByProject(pid: string) {
-          if (!storage) return [];
-          return storage.getMemoriesByProject(pid);
-        },
-      } as IStorage,
-      projectId
-    ),
+    ...createMemoryRestoreTool({
+      pageStore: pageStore ?? (null as unknown as PageStore),
+      wikiRoot,
+      gitLayer,
+      projectId,
+    }),
+  });
+
+  pi.registerTool({
+    ...createMemoryStatusTool({
+      storage: storage ?? (null as unknown as IStorage),
+      pageStore,
+      gitLayer,
+    }),
   });
 
   // ── Command: /memory ──────────────────────────────────────────────
