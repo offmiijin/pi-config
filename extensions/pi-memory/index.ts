@@ -14,14 +14,14 @@ import { UnifiedStore } from "./storage/unified-store";
 import type { IStorage } from "./storage/index";
 import { ObservationBuffer } from "./capture/buffer";
 import { createCaptureHooks } from "./capture/hooks";
-import { RegexExtractor } from "./extract/regex-extractor";
+
 import { LlmExtractor } from "./extract/llm-extractor";
 import type { LlmExtractorConfig } from "./extract/llm-extractor";
 import { SweepConsolidator } from "./consolidate/sweep";
 import { Bm25Retriever } from "./retrieve/bm25";
 import { EmbeddingService } from "./utils/embedding";
 import { VectorRetriever } from "./retrieve/vector";
-import { RerankerService } from "./retrieve/reranker";
+
 import { HybridRetriever } from "./retrieve/index";
 import { CacheStableInjector } from "./inject/snapshot";
 import { createMemorySearchTool } from "./tools/memory-search";
@@ -39,12 +39,10 @@ let stats: MemoryStats;
 let storage: IStorage | null = null;
 let buffer: ObservationBuffer | null = null;
 let retriever: Bm25Retriever | null = null;
-let regexExtractor: RegexExtractor | null = null;
 let llmExtractor: LlmExtractor | null = null;
 let sweepConsolidator: SweepConsolidator | null = null;
 let embeddingService: EmbeddingService | null = null;
 let vectorRetriever: VectorRetriever | null = null;
-let rerankerService: RerankerService | null = null;
 let hybridRetriever: HybridRetriever | null = null;
 let cacheStableInjector: CacheStableInjector | null = null;
 let sessionId: string | null = null;
@@ -61,7 +59,6 @@ function resetStats(): MemoryStats {
     pinned_count: 0,
     operations: {
       captures: 0,
-      extractions_n2: 0,
       extractions_n3: 0,
       consolidations_n2: 0,
       retrievals: 0,
@@ -184,28 +181,9 @@ export default function (pi: ExtensionAPI) {
         });
       }
 
-      // Inicializa reranker (Fase 2.5) — background, não bloqueia
-      if (config.retrieval.reranker.local.enabled || config.retrieval.reranker.api.enabled) {
-        const rerankerApiKey = process.env.RERANKER_API_KEY || "";
-
-        rerankerService = new RerankerService({
-          model: "Xenova/ms-marco-MiniLM-L-6-v2",
-          apiModel: config.retrieval.reranker.api.model,
-          apiKey: rerankerApiKey || undefined,
-          preferApi: config.retrieval.reranker.api.enabled && !config.retrieval.reranker.local.enabled,
-        });
-        rerankerService.initialize().catch(() => {
-          rerankerService = null;
-        });
-      }
-
-      // Inicializa HybridRetriever (Fase 2.5) — quando hybrid, vector ou reranker habilitado
+      // Inicializa HybridRetriever — quando hybrid ou vector habilitado
       const vectorEnabled = config.retrieval.vector.local.enabled || config.retrieval.vector.api.enabled;
-      const rerankerEnabled = config.retrieval.reranker.local.enabled || config.retrieval.reranker.api.enabled;
-      const needsHybrid =
-        config.retrieval.hybrid_enabled ||
-        vectorEnabled ||
-        rerankerEnabled;
+      const needsHybrid = config.retrieval.hybrid_enabled || vectorEnabled;
 
       if (needsHybrid && retriever) {
         hybridRetriever = new HybridRetriever(
@@ -213,11 +191,7 @@ export default function (pi: ExtensionAPI) {
           storage,
           projectId,
           vectorRetriever,
-          rerankerService,
-          {
-            vectorEnabled,
-            rerankerEnabled,
-          }
+          { vectorEnabled }
         );
       }
 
@@ -240,11 +214,6 @@ export default function (pi: ExtensionAPI) {
           confidenceThreshold: config.injection_confidence_threshold,
         }
       );
-
-      // Inicializa extrator N2 (regex) se configurado
-      if (config.extraction_level !== "none") {
-        regexExtractor = new RegexExtractor();
-      }
 
       // Inicializa extrator N3 (LLM) se configurado
       const llmEnabled =
@@ -327,13 +296,7 @@ export default function (pi: ExtensionAPI) {
       buffer,
       projectId,
       sessionId,
-      regexExtractor: regexExtractor ?? undefined,
-      storage: storage ?? undefined,
-      onN2Extraction: (count) => {
-        stats.operations.extractions_n2 += count;
-      },
       observationTtlMs: config.observation_ttl_ms,
-      dedupEnabled: config.consolidation.dedup_enabled,
     });
 
     hooks.onToolResult(
@@ -356,10 +319,7 @@ export default function (pi: ExtensionAPI) {
         buffer,
         projectId,
         sessionId,
-        regexExtractor: regexExtractor ?? undefined,
-        storage: storage ?? undefined,
         observationTtlMs: config.observation_ttl_ms,
-        dedupEnabled: config.consolidation.dedup_enabled,
       });
       hooks.onBeforeAgentStart(
         event as Parameters<typeof hooks.onBeforeAgentStart>[0],
@@ -443,11 +403,7 @@ export default function (pi: ExtensionAPI) {
     // Fecha storage
     if (storage) {
       try {
-        storage.syncToJson();
-      } catch {
-        // Cold sync é best-effort
-      }
-      storage.close();
+        storage.close();
       storage = null;
     }
 
@@ -464,10 +420,8 @@ export default function (pi: ExtensionAPI) {
     }
 
     retriever = null;
-    regexExtractor = null;
     vectorRetriever = null;
     embeddingService = null;
-    rerankerService = null;
     hybridRetriever = null;
     cacheStableInjector = null;
     sessionId = null;
@@ -869,7 +823,6 @@ export default function (pi: ExtensionAPI) {
             // Coleta chaves existentes de outros serviços
             const otherKeys: Array<{ label: string; varName: string }> = [];
             if (process.env.VECTOR_API_KEY) otherKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
-            if (process.env.RERANKER_API_KEY) otherKeys.push({ label: "Reranker API key", varName: "RERANKER_API_KEY" });
 
             if (otherKeys.length > 0) {
               const reuseOpts = [

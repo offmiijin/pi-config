@@ -138,7 +138,7 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
   max_injected_memories: 5,
   max_injection_bytes: 4 * 1024, // 4KB
   injection_confidence_threshold: 0.6,
-  extraction_level: "regex",
+  extraction_level: "llm",
   llm_extraction: {
     enabled: false,
     model: "mistralai/mistral-nemo",

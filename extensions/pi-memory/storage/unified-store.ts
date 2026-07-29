@@ -1,8 +1,7 @@
 /**
- * UnifiedStore — Implementação de IStorage combinando SqliteStore (warm) + JsonStore (cold).
+ * UnifiedStore — Implementação de IStorage sobre SqliteStore.
  *
  * SQLite é a fonte primária de verdade.
- * JSON é sincronizado sob demanda para backup/auditoria.
  *
  * Dual DB: project-scoped (project/session) no DB do projeto,
  *           global-scoped (user/global) no DB global compartilhado.
@@ -13,7 +12,6 @@ import * as path from "node:path";
 import type { Memory, RawObservation, MemoryScope } from "../types";
 import type { IStorage } from "./index";
 import { SqliteStore } from "./sqlite-store";
-import { JsonStore } from "./json-store";
 
 /** Scopes que são armazenados no DB global (cross-project). */
 const GLOBAL_SCOPES: Set<MemoryScope> = new Set(["user", "global"]);
@@ -21,9 +19,8 @@ const GLOBAL_SCOPES: Set<MemoryScope> = new Set(["user", "global"]);
 export class UnifiedStore implements IStorage {
   private projectDb: SqliteStore;
   private globalDb: SqliteStore;
-  private json: JsonStore;
 
-  constructor(dbPath: string | ":memory:", dataDir: string) {
+  constructor(dbPath: string | ":memory:", _dataDir: string) {
     // Garante que o diretório pai do DB existe antes de abrir
     if (dbPath !== ":memory:") {
       const dbDir = path.dirname(dbPath);
@@ -36,7 +33,6 @@ export class UnifiedStore implements IStorage {
         ? ":memory:"
         : path.join(path.dirname(dbPath), "global.db")
     );
-    this.json = new JsonStore(dataDir);
   }
 
   // ── Helpers ────────────────────────────────────────────────────
@@ -186,18 +182,4 @@ export class UnifiedStore implements IStorage {
     return this.projectDb.countPendingExtraction();
   }
 
-  // ── Cold sync ────────────────────────────────────────────────────
-
-  syncToJson(): void {
-    const projectMemories = this.projectDb.getAllMemories();
-    const globalMemories = this.globalDb.getAllMemories();
-    this.json.writeMemories([...projectMemories, ...globalMemories]);
-
-    const observations = this.projectDb.getObservations("", 1_000_000);
-    this.json.writeObservations(observations);
-  }
-
-  loadFromJson(): Memory[] {
-    return this.json.readMemories();
-  }
 }

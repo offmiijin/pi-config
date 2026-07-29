@@ -47,7 +47,4 @@ export interface IStorage {
   countObservations(): number;
   countPendingExtraction(): number;
 
-  // ── Cold sync ────────────────────────────────────────────────────
-  syncToJson(): void;
-  loadFromJson(): Memory[];
 }

@@ -6,11 +6,9 @@
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { RawObservation, Memory } from "../types";
-import type { IStorage } from "../storage/index";
+import type { RawObservation } from "../types";
 import { ObservationBuffer } from "./buffer";
-import { RegexExtractor } from "../extract/regex-extractor";
-import { contentHash, compositeKey, consolidateN1 } from "../consolidate/dedup";
+import { contentHash } from "../consolidate/dedup";
 import { randomUUID } from "node:crypto";
 
 // ── Constantes ─────────────────────────────────────────────────────────
@@ -216,29 +214,19 @@ export interface CaptureHooksOptions {
   buffer: ObservationBuffer;
   projectId: string;
   sessionId: string;
-  /** Extrator N2 opcional. Se não informado, N2 é skipado. */
-  regexExtractor?: RegexExtractor;
-  /** Storage para persistir memórias extraídas. Obrigatório se regexExtractor informado. */
-  storage?: IStorage;
-  /** Callback para reportar contagem de extrações N2 (stats). */
-  onN2Extraction?: (count: number) => void;
   /** TTL de observações em ms. Default: 7 dias. */
   observationTtlMs?: number;
-  /** Dedup habilitado? Default true. */
-  dedupEnabled?: boolean;
 }
 
 /**
  * Cria handlers de captura vinculados a um buffer.
  */
 export function createCaptureHooks(opts: CaptureHooksOptions): CaptureHooks {
-  const { buffer, projectId, sessionId, regexExtractor, storage, onN2Extraction } = opts;
+  const { buffer, projectId, sessionId } = opts;
   const observationTtlMs = opts.observationTtlMs ?? 7 * 24 * 60 * 60 * 1000;
-  const dedupEnabled = opts.dedupEnabled ?? true;
   return {
     /**
      * Captura tool_result: toda tool call completada vira uma RawObservation.
-     * Se regexExtractor + storage disponíveis, roda N2 inline.
      */
     onToolResult(event, _ctx) {
       const now = Date.now();
@@ -267,78 +255,6 @@ export function createCaptureHooks(opts: CaptureHooksOptions): CaptureHooks {
         ttl: now + observationTtlMs,
         extracted: false,
       };
-
-      // ── N2: Regex extraction (inline, <1ms) ──
-      if (regexExtractor && storage) {
-        try {
-          const facts = regexExtractor.extract(obs);
-          if (facts.length > 0) {
-            obs.extracted = true;
-            onN2Extraction?.(facts.length);
-
-            // Converte cada ExtractedFact em Memory e persiste via pipeline N1
-            for (const fact of facts) {
-              const memory: Memory = {
-                id: randomUUID(),
-                text: fact.text,
-                embedding: null,
-                type: fact.type,
-                scope: fact.scope,
-                tags: fact.tags,
-                confidence: fact.confidence,
-                timestamp: now,
-                last_accessed: now,
-                access_count: 1,
-                source_ids: fact.source_observation_ids,
-                superseded_by: null,
-                pinned: false,
-                project_id: projectId,
-                content_hash: contentHash(fact.text),
-              };
-
-              // Pipeline N1: dedup → last-fact-wins
-              const result = consolidateN1({
-                memory,
-                getByHash: (pid, hash) => storage.getMemoryByHash(pid, hash),
-                getByKey: (key) =>
-                  storage
-                    .getMemoriesByProject(projectId)
-                    .find(
-                      (m) =>
-                        !m.superseded_by &&
-                        compositeKey(m.type, m.scope, m.tags) === key
-                    ) ?? null,
-              });
-
-              switch (result.action) {
-                case "create":
-                  storage.insertMemory(result.memory);
-                  break;
-                case "reinforce":
-                case "update":
-                  storage.updateMemory(result.memory);
-                  break;
-                case "supersede":
-                  if (result.supersededId) {
-                    const oldMem = storage
-                      .getMemoriesByProject(projectId)
-                      .find((m) => m.id === result.supersededId);
-                    if (oldMem) {
-                      storage.updateMemory({
-                        ...oldMem,
-                        superseded_by: result.memory.id,
-                      });
-                    }
-                  }
-                  storage.insertMemory(result.memory);
-                  break;
-              }
-            }
-          }
-        } catch {
-          // N2 extraction nunca deve quebrar o agente
-        }
-      }
 
       buffer.enqueue(obs);
     },
