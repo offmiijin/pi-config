@@ -16,6 +16,7 @@ import { createCaptureHooks } from "./capture/hooks";
 
 import { LlmExtractor } from "./extract/llm-extractor";
 import type { LlmExtractorConfig } from "./extract/llm-extractor";
+import { PageSweepConsolidator } from "./consolidate/sweep";
 import { Bm25Retriever } from "./retrieve/bm25";
 import { EmbeddingService } from "./utils/embedding";
 import { VectorRetriever } from "./retrieve/vector";
@@ -40,6 +41,7 @@ let storage: IStorage | null = null;
 let buffer: ObservationBuffer | null = null;
 let retriever: Bm25Retriever | null = null;
 let llmExtractor: LlmExtractor | null = null;
+let sweepConsolidator: PageSweepConsolidator | null = null;
 let embeddingService: EmbeddingService | null = null;
 let vectorRetriever: VectorRetriever | null = null;
 let hybridRetriever: HybridRetriever | null = null;
@@ -237,6 +239,27 @@ export default function (pi: ExtensionAPI) {
               stats.operations.extractions_n3 += count;
             },
           );
+
+          // Inicializa sweep consolidator (N2) para decay/pruning de páginas
+          sweepConsolidator = new PageSweepConsolidator(
+            storage,
+            llmExtractor,
+            projectId,
+            {
+              intervalMs: config.llm_extraction.sweep_consolidator_interval_ms,
+              observationThreshold: config.llm_extraction.sweep_observation_threshold,
+              decayEnabled: config.consolidation.decay_enabled,
+              decayDays: config.consolidation.decay_days,
+              decayFactor: config.consolidation.decay_factor,
+              pruningEnabled: config.consolidation.pruning_enabled,
+              pruningConfidenceThreshold: config.consolidation.pruning_confidence_threshold,
+              pruningAgeDays: config.consolidation.pruning_age_days,
+            },
+            () => {
+              stats.operations.consolidations_n2++;
+            },
+          );
+          sweepConsolidator.schedule();
         }
       }
 
@@ -302,10 +325,12 @@ export default function (pi: ExtensionAPI) {
       stats.operations.captures++;
     }
 
-    // TTL cleanup best-effort
-    try {
-      storage.cleanupExpired(Date.now());
-    } catch { /* best-effort */ }
+    // TTL cleanup best-effort (só se sweep não estiver ativo)
+    if (!sweepConsolidator) {
+      try {
+        storage.cleanupExpired(Date.now());
+      } catch { /* best-effort */ }
+    }
 
     // INJECT: bloco de memória via cache snapshot
     const prompt = (event as { prompt: string }).prompt ?? "";
@@ -372,6 +397,11 @@ export default function (pi: ExtensionAPI) {
     if (llmExtractor) {
       llmExtractor.shutdown();
       llmExtractor = null;
+    }
+
+    if (sweepConsolidator) {
+      sweepConsolidator.stop();
+      sweepConsolidator = null;
     }
 
     retriever = null;

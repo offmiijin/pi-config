@@ -154,6 +154,7 @@ const SQL = {
     FROM pages p
     JOIN pages_fts ON p.rowid = pages_fts.rowid
     WHERE pages_fts MATCH $query
+      AND p.status = 'active'
       AND ($project_id IS NULL OR p.project_id = $project_id OR p.project_id = '_global')
     ORDER BY fts_score
     LIMIT $limit
