@@ -72,16 +72,21 @@ function buildExtractionPrompt(observations: RawObservation[]): string {
 
   return `You are a forensic analyst reviewing a coding agent's interactions to build a project knowledge base.
 
-Below are ${observations.length} interactions from a coding session. Extract structured knowledge about the project being worked on.
+Below are ${observations.length} interactions from a coding session analyzing a project. Your job: extract structured knowledge about the project into wiki pages.
 
-CRITICAL RULES:
-1. Facts MUST be grounded in evidence from the interactions below. Cite interaction numbers.
-2. DO NOT invent technologies, frameworks, or libraries not shown in the interactions.
-3. Distinguish the PROJECT from the ANALYSIS SESSION:
-   - PROJECT facts: language, framework, dependencies, architecture, domain concepts, code patterns, bugs
-   - SESSION metadata (file extensions found, tools used to analyze) should NOT be extracted as pages
-4. Synthesize from evidence: if composer.json shows "laravel/laravel" and directory has "app/Models", extract "Laravel project".
-5. If you are unsure, OMIT the page. Empty response = { "pages": [] }.
+RULES:
+1. Ground every fact in evidence from the interactions. Cite "(interação #N)" for each claim.
+2. Only include technologies/libraries/frameworks actually present in the interactions (composer.json, imports, file paths, code).
+3. Synthesize understanding: if composer.json says "laravel/laravel" and structure shows app/Models, app/Http/Controllers → extract "Laravel project with MVC structure".
+4. Focus on the PROJECT, not the analysis session. Ignore tool names and file extensions unless they describe the project itself.
+5. If the interactions contain meaningful project information, EXTRACT it. Empty responses waste opportunities.
+
+Examples of GOOD extraction:
+- fact: "Laravel 5.8.38 with PHP 7.1.3" (from composer.json requiring laravel/laravel 5.8.*, php ^7.1.3)
+- fact: "Domain: rastreamento de transportadoras" (Models: Empresa, Transportadora, Objetos, Rastreios; Controllers: Api/)
+- fact: "Database: MySQL, migrations for empresas/usuarios/transportadoras/objetos/rastreios tables"
+- pattern: "Repository/Service pattern with AbstractService base class and CurlInterface binding in AppServiceProvider"
+- fact: "Queue/Jobs: AtualizaOrderAtonJob, ImportaPedidosTinyJob, AuditarCtesPedidosJob"
 
 Return a JSON object:
 {
@@ -97,23 +102,14 @@ Return a JSON object:
   ]
 }
 
-Body format requirements:
-- ALWAYS start with "## HH:MM Extraction title" (use current time if unknown, e.g. "## 17:44 Project structure").
-- Below the header, use bullet points (-) for each piece of information.
-- Each bullet should be detailed and self-contained — future readers may only see this page.
-- NO word limit. Write as much as needed to fully document each finding.
-- Cite evidence: "(interação #N)" at the end of each bullet.
+Body format:
+- Start with "## HH:MM Extraction title" (e.g. "## 17:44 Project structure and stack").
+- Use bullet points (-). Each bullet = one detailed, self-contained finding.
+- No word limit. Write as much as needed for future readers.
+- Cite evidence: "(interação #N)" at end of each bullet.
 
-Extraction guide:
-- DECISIONS: architecture choices, library selections (e.g. "chose Laravel as framework")
-- PREFERENCES: coding style, conventions visible in code (scope: "global" if cross-project)
-- LESSONS: bugs found, errors encountered, debugging insights
-- PATTERNS: recurring code structures, naming conventions visible across files
-- FACTS: dependencies (composer.json, package.json), PHP version, project structure, domain concepts
-- IGNORE: file listings without content, successful install logs, trivial grep/ls results
-- IGNORE: meta-information about the analysis session itself (tools used, file extensions scanned)
-- confidence: 0.5-0.7. Multiple interactions confirming same fact = higher.
-- Return ONLY the JSON object, no other text.`;
+Confidence: 0.5 for single mention, 0.7 for confirmed across multiple interactions.
+Return ONLY the JSON object.`;
 }
 
 // ── Response parser ────────────────────────────────────────────────────
@@ -300,10 +296,18 @@ export class LlmExtractor {
     if (observations.length === 0) return [];
     if (this.circuit.isOpen) return [];
 
+    console.warn(
+      `[pi-memory] Extraindo batch de ${observations.length} observações...`,
+    );
+
     try {
       const prompt = buildExtractionPrompt(observations);
       const response = await this.callLlm(prompt);
       const suggestions = parseLlmResponse(response);
+
+      console.warn(
+        `[pi-memory] LLM retornou ${suggestions.length} páginas`,
+      );
 
       if (suggestions.length > 0) {
         await this.persistSuggestions(suggestions);
@@ -386,7 +390,7 @@ export class LlmExtractor {
       try {
         // Cap confidence: LLM extractions max 0.7. Apenas memory_write manual pode exceder.
         const capped = Math.min(suggestion.confidence ?? 0.5, 0.7);
-        this.pageStore.writePage({
+        const result = this.pageStore.writePage({
           title: suggestion.title,
           body: suggestion.body,
           type: suggestion.type,
@@ -396,8 +400,15 @@ export class LlmExtractor {
           confidence: capped,
           pinned: false,  // nunca auto-pin extrações do LLM
         });
-      } catch {
-        // Falha numa página não quebra o batch
+        console.warn(
+          `[pi-memory] Página salva: ${result.path} (${result.fullPath})`,
+        );
+      } catch (err) {
+        // Loga mas não quebra o batch
+        console.warn(
+          `[pi-memory] Falha ao persistir página "${suggestion.title}":`,
+          (err as Error).message,
+        );
       }
     }
   }
