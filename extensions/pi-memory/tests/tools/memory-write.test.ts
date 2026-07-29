@@ -1,232 +1,236 @@
 /**
- * Testes da tool memory_write.
+ * Testes da tool memory_write (v2 — páginas markdown).
  */
-
-import { describe, it, expect, vi } from "vitest";
-import { createMemoryWriteTool } from "../../tools/memory-write";
-import type { IStorage } from "../../storage/index";
-import type { Memory, RawObservation } from "../../types";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { createMemoryWriteTool } from "../../tools/memory-write";
+import { SqliteStore } from "../../storage/sqlite-store";
+import { PageStore } from "../../storage/page-store";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-function createMockStorage(memories: Memory[] = []): IStorage {
-  return {
-    open: vi.fn(),
-    close: vi.fn(),
-    insertMemory: vi.fn(),
-    getMemory: vi.fn((id: string) => memories.find((m) => m.id === id) ?? null),
-    getMemoriesByProject: vi.fn((_projectId: string) => [...memories]),
-    getMemoryByHash: vi.fn((_projectId: string, hash: string) =>
-      memories.find((m) => m.content_hash === hash && !m.superseded_by) ?? null
-    ),
-    updateMemory: vi.fn((mem: Memory) => {
-      const idx = memories.findIndex((m) => m.id === mem.id);
-      if (idx >= 0) memories[idx] = mem;
-    }),
-    deleteMemory: vi.fn(),
-    insertObservation: vi.fn(),
-    insertObservationsBatch: vi.fn(),
-    getObservations: vi.fn(() => []),
-    getPendingObservations: vi.fn(() => []),
-    markExtracted: vi.fn(),
-    cleanupExpired: vi.fn(() => 0),
-    searchFts: vi.fn(() => []),
-    countMemories: vi.fn(() => memories.length),
-    countObservations: vi.fn(() => 0),
-    countPendingExtraction: vi.fn(() => 0),
-    syncToJson: vi.fn(),
-    loadFromJson: vi.fn(() => []),
-  };
+function createSandbox(): { tempDir: string; store: SqliteStore; pageStore: PageStore } {
+  const tempDir = path.join(tmpdir(), "pi-memory-write-" + randomUUID().slice(0, 8));
+  const dbPath = path.join(tempDir, "memory.db");
+  const wikiRoot = path.join(tempDir, "wiki");
+  fs.mkdirSync(wikiRoot, { recursive: true });
+
+  const store = new SqliteStore(dbPath);
+  store.open();
+  const pageStore = new PageStore(wikiRoot, store);
+
+  return { tempDir, store, pageStore };
 }
 
-// ── Suite ───────────────────────────────────────────────────────────────
+function destroySandbox(sandbox: { tempDir: string; store: SqliteStore }): void {
+  try {
+    sandbox.store.close();
+    fs.rmSync(sandbox.tempDir, { recursive: true, force: true });
+  } catch { /* best-effort */ }
+}
 
-describe("memory_write tool", () => {
-  it("deve criar nova memória", async () => {
-    const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
+// ── Contexto de execução mock ──────────────────────────────────────────
 
-    const result = await tool.execute(
-      "id",
-      {
-        text: "Payment API usa hexagonal architecture",
-        type: "decision",
-        tags: ["#architecture"],
-        scope: "project",
-      },
-      undefined,
-      undefined,
-      undefined
-    );
+const mockCtx = {} as unknown as Parameters<
+  ReturnType<typeof createMemoryWriteTool>["execute"]
+>[4];
 
-    expect(result.details.action).toBe("create");
-    expect(result.details.id).toBeDefined();
-    expect(storage.insertMemory).toHaveBeenCalled();
+async function executeTool(
+  tool: ReturnType<typeof createMemoryWriteTool>,
+  params: Record<string, unknown>,
+) {
+  return tool.execute("test-call-id", params, undefined, undefined, mockCtx);
+}
+
+// ── Suite ──────────────────────────────────────────────────────────────
+
+describe("memory_write tool (v2)", () => {
+  describe("com PageStore real", () => {
+    it("deve criar página markdown no disco e no índice", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+
+      try {
+        const result = await executeTool(tool, {
+          title: "Hexagonal Architecture",
+          body: "The payment API follows hexagonal architecture.",
+          type: "decision",
+          scope: "project",
+        });
+
+        expect(result.content[0].text).toContain("Page saved");
+        expect(result.details?.path).toContain("decisions/hexagonal-architecture.md");
+
+        // Verifica que página está no SQLite
+        const pages = sandbox.store.getPagesByProject("abc123");
+        expect(pages).toHaveLength(1);
+        expect(pages[0].title).toBe("Hexagonal Architecture");
+
+        // Verifica que arquivo .md existe no disco
+        const fullPath = sandbox.pageStore["writer"].resolvePath(
+          "project", "abc123", "decisions/hexagonal-architecture.md"
+        );
+        expect(fs.existsSync(fullPath)).toBe(true);
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
+
+    it("deve criar página global em _global/", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+
+      try {
+        await executeTool(tool, {
+          title: "Prefer pnpm",
+          body: "Use pnpm in all projects.",
+          type: "preference",
+          scope: "global",
+        });
+
+        const pages = sandbox.store.getPagesByProject("_global");
+        expect(pages).toHaveLength(1);
+        expect(pages[0].title).toBe("Prefer pnpm");
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
+
+    it("deve aceitar path explícito", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+
+      try {
+        await executeTool(tool, {
+          path: "gotchas/custom-path",
+          title: "Custom Path",
+          body: "Body",
+          type: "lesson",
+          scope: "project",
+        });
+
+        const pages = sandbox.store.getPagesByProject("abc123");
+        expect(pages).toHaveLength(1);
+        expect(pages[0].path).toBe("gotchas/custom-path.md");
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
+
+    it("deve resolver conflito de path com sufixo numérico", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+
+      try {
+        // Primeira escrita
+        await executeTool(tool, {
+          title: "Same Title",
+          body: "Version 1",
+          type: "decision",
+          scope: "project",
+        });
+
+        // Segunda (path gerado igual → conflito resolvido com -2)
+        const result2 = await executeTool(tool, {
+          title: "Same Title",
+          body: "Version 2",
+          type: "decision",
+          scope: "project",
+        });
+
+        expect(result2.details?.path).toContain("-2");
+
+        const pages = sandbox.store.getPagesByProject("abc123");
+        expect(pages).toHaveLength(2);
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
+
+    it("deve aceitar parâmetros antigos (text) com backward compat", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+
+      try {
+        const result = await executeTool(tool, {
+          text: "This is from old API parameter",
+          type: "fact",
+          scope: "project",
+        });
+
+        expect(result.content[0].text).toContain("Page saved");
+        const pages = sandbox.store.getPagesByProject("abc123");
+        expect(pages).toHaveLength(1);
+        expect(pages[0].title).toContain("This is from old API");
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
+
+    it("deve retornar erro se body vazio", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+
+      try {
+        const result = await executeTool(tool, {
+          title: "Empty",
+          body: "",
+          type: "decision",
+          scope: "project",
+        });
+
+        expect(result.content[0].text).toContain("Error");
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
+
+    it("deve aceitar tags e pinned", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+
+      try {
+        await executeTool(tool, {
+          title: "Tagged Page",
+          body: "Content",
+          type: "lesson",
+          scope: "project",
+          tags: ["debug", "oauth"],
+          pinned: true,
+        });
+
+        const pages = sandbox.store.getPagesByProject("abc123");
+        expect(pages).toHaveLength(1);
+        expect(pages[0].tags).toContain("debug");
+        expect(pages[0].pinned).toBe(true);
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
   });
 
-  it("deve reforçar memória existente com mesmo hash", async () => {
-    const existing: Memory = {
-      id: "existing-1",
-      text: "Usa pnpm",
-      type: "preference",
-      scope: "project",
-      tags: [],
-      confidence: 0.5,
-      timestamp: Date.now(),
-      last_accessed: Date.now(),
-      access_count: 1,
-      source_ids: [],
-      superseded_by: null,
-      pinned: false,
-      project_id: "test-project",
-      content_hash: "",
-      embedding: null,
-    };
-    existing.content_hash = require("node:crypto")
-      .createHash("sha256")
-      .update(
-        "Usa pnpm"
-          .toLowerCase()
-          .trim()
-      )
-      .digest("hex");
+  describe("scope migration", () => {
+    it("deve migrar scope 'user' para 'project'", async () => {
+      const sandbox = createSandbox();
+      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
 
-    const storage = createMockStorage([existing]);
-    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
+      try {
+        await executeTool(tool, {
+          title: "Test",
+          body: "Body",
+          type: "decision",
+          scope: "user",
+        });
 
-    const result = await tool.execute(
-      "id",
-      { text: "Usa pnpm", type: "preference" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.details.action).toBe("reinforce");
-    expect(result.content[0].text).toContain("reinforced");
-  });
-
-  it("deve fazer supersede quando há contradição", async () => {
-    const existing: Memory = {
-      id: "existing-old",
-      text: "usa npm",
-      type: "preference",
-      scope: "project",
-      tags: [],
-      confidence: 0.5,
-      timestamp: Date.now(),
-      last_accessed: Date.now(),
-      access_count: 1,
-      source_ids: [],
-      superseded_by: null,
-      pinned: false,
-      project_id: "test-project",
-      content_hash: "abc",
-      embedding: null,
-    };
-
-    const storage = createMockStorage([existing]);
-    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
-
-    const result = await tool.execute(
-      "id",
-      {
-        text: "agora prefere pnpm em vez de npm",
-        type: "preference",
-      },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.details.action).toBe("supersede");
-    expect(result.details.superseded_id).toBe("existing-old");
-  });
-
-  it("deve atualizar existente quando sem contradição", async () => {
-    const existing: Memory = {
-      id: "existing",
-      text: "usa pnpm",
-      type: "preference",
-      scope: "project",
-      tags: [],
-      confidence: 0.5,
-      timestamp: Date.now(),
-      last_accessed: Date.now(),
-      access_count: 2,
-      source_ids: [],
-      superseded_by: null,
-      pinned: false,
-      project_id: "test-project",
-      content_hash: "old-hash",
-      embedding: null,
-    };
-
-    const storage = createMockStorage([existing]);
-    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
-
-    const result = await tool.execute(
-      "id",
-      {
-        text: "usa pnpm em todos os projetos",
-        type: "preference",
-      },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    expect(result.details.action).toBe("update");
-    expect(result.details.id).toBe("existing");
-  });
-
-  it("deve usar scope=project como default", async () => {
-    const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
-
-    await tool.execute(
-      "id",
-      { text: "Test", type: "fact" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    const insertCall = (storage.insertMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(insertCall.scope).toBe("project");
-  });
-
-  it("deve gerar content_hash automaticamente", async () => {
-    const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", () => "session-1");
-
-    await tool.execute(
-      "id",
-      { text: "Test", type: "fact" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    const insertCall = (storage.insertMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(insertCall.content_hash).toBeDefined();
-    expect(insertCall.content_hash).toHaveLength(64);
-  });
-
-  it("deve armazenar session_id nos source_ids", async () => {
-    const storage = createMockStorage();
-    const tool = createMemoryWriteTool(storage, "test-project", () => "session-xyz");
-
-    await tool.execute(
-      "id",
-      { text: "Test", type: "fact" },
-      undefined,
-      undefined,
-      undefined
-    );
-
-    const insertCall = (storage.insertMemory as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(insertCall.source_ids).toContain("session-xyz");
+        const pages = sandbox.store.getPagesByProject("abc123");
+        expect(pages).toHaveLength(1);
+        expect(pages[0].scope).toBe("project");
+      } finally {
+        destroySandbox(sandbox);
+      }
+    });
   });
 });

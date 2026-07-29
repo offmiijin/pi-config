@@ -27,6 +27,7 @@ import { CacheStableInjector } from "./inject/snapshot";
 import { createMemorySearchTool } from "./tools/memory-search";
 import type { SearchProvider } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
+import { PageStore } from "./storage/page-store";
 import { createMemoryStatusTool } from "./tools/memory-status";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -455,44 +456,14 @@ export default function (pi: ExtensionAPI) {
     ...createMemorySearchTool(searchProvider, projectId),
   });
 
+  // Inicializa PageStore (coordena WikiWriter + SQLite)
+  const wikiRoot = path.join(config.data_dir, "wiki");
+  const pageStore = storage ? new PageStore(wikiRoot, storage) : null;
+
   pi.registerTool({
     ...createMemoryWriteTool(
-      // Wrapper lazy para storage
-      {
-        getMemoryByHash(pid: string, hash: string) {
-          if (!storage) throw new Error("Memory system not initialized.");
-          return storage.getMemoryByHash(pid, hash);
-        },
-        getMemoriesByProject(pid: string) {
-          if (!storage) throw new Error("Memory system not initialized.");
-          return storage.getMemoriesByProject(pid);
-        },
-        updateMemory(mem: Parameters<IStorage["updateMemory"]>[0]) {
-          if (!storage) throw new Error("Memory system not initialized.");
-          return storage.updateMemory(mem);
-        },
-        insertMemory(mem: Parameters<IStorage["insertMemory"]>[0]) {
-          if (!storage) throw new Error("Memory system not initialized.");
-          return storage.insertMemory(mem);
-        },
-      } as IStorage,
+      pageStore ?? (null as unknown as PageStore),
       projectId,
-      () => sessionId ?? "unknown",
-      // Callback pós-write: gera embedding, atualiza índice, invalida cache
-      async (memory) => {
-        // Invalida cache snapshot (Fase 2.6)
-        if (cacheStableInjector) cacheStableInjector.invalidate();
-
-        if (!embeddingService?.isReady || !vectorRetriever || !storage) return;
-        try {
-          const emb = await embeddingService.embed(memory.text);
-          storage.updateEmbedding(memory.id, emb);
-          vectorRetriever.upsert({ ...memory, embedding: emb });
-        } catch {
-          // Embedding falhou — sistema continua sem vector para esta memória
-        }
-      },
-      config.consolidation.dedup_enabled
     ),
   });
 
