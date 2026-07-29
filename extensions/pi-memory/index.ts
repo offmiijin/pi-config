@@ -489,7 +489,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Command: /memory ──────────────────────────────────────────────
   pi.registerCommand("memory", {
-    description: "Configure pi-memory: vector/llm, decay, pruning, clear. TUI only.",
+    description: "Configure pi-memory: vector, llm, decay, pruning, clear data. TUI only.",
     getArgumentCompletions: () => null,
     handler: async (_args, ctx) => {
       // helper: recarrega config do disco para o modulo (global apenas)
@@ -545,7 +545,7 @@ export default function (pi: ExtensionAPI) {
         return "off";
       };
 
-      const memCount = storage?.countMemories() ?? 0;
+      const pageCount = storage?.countPages() ?? 0;
       const obsCount = storage?.countObservations() ?? 0;
       const pendingExt = storage?.countPendingExtraction() ?? 0;
 
@@ -565,17 +565,17 @@ export default function (pi: ExtensionAPI) {
 
         const items: SettingItem[] = [
           { id: "vector",  label: "Vector search",     currentValue: vMode, values: [vMode] },
-          { id: "llm",     label: "LLM extraction N3", currentValue: modeLabel("llm"), values: [modeLabel("llm")] },
+          { id: "llm",     label: "LLM extraction",   currentValue: modeLabel("llm"), values: [modeLabel("llm")] },
           { id: "pruning", label: "Pruning", currentValue: config.consolidation.pruning_enabled ? "on" : "off", values: ["on", "off"] },
           { id: "decay",   label: "Decay",              currentValue: config.consolidation.decay_enabled ? "on" : "off", values: ["on", "off"] },
           { id: "decay_days", label: "Decay (days)",    currentValue: String(config.consolidation.decay_days), values: ["3", "7", "14", "30"] },
           { id: "prune_threshold", label: "Pruning threshold", currentValue: String(config.consolidation.pruning_confidence_threshold), values: ["0.05", "0.1", "0.2", "0.5"] },
           { id: "prune_age", label: "Pruning age (days)", currentValue: String(config.consolidation.pruning_age_days), values: ["7", "30", "60", "90"] },
-          { id: "clear",    label: "Clear all memories",     currentValue: "clear", values: ["clear"] },
+          { id: "clear",    label: "Clear all data",     currentValue: "clear", values: ["clear"] },
         ];
 
         await ctx.ui.custom((tui, theme, _kb, done) => {
-          const header = "pi-memory (" + memCount + " mem, " + obsCount + " obs, " + pendingExt + " pending)";
+          const header = "pi-memory (" + pageCount + " pages, " + obsCount + " obs, " + pendingExt + " pending)";
           const container = new Container();
           container.addChild(new (class {
             render(_width: number) { return [theme.fg("accent", theme.bold(header)), ""]; }
@@ -816,8 +816,8 @@ export default function (pi: ExtensionAPI) {
         // Clear: confirmacao + delecao
         if (configTarget === "clear") {
           const confirmed = await ctx.ui.confirm(
-            "Clear all memories?",
-            "This deletes ALL memories and observations for this project. Irreversible."
+            "Clear all data?",
+            "This deletes ALL pages and observations for this project. The wiki markdown files on disk are NOT affected. Irreversible."
           );
           if (!confirmed) {
             ctx.ui.notify("Clear cancelled.", "info");
@@ -838,9 +838,9 @@ export default function (pi: ExtensionAPI) {
               ctx.ui.notify("Clear failed: " + (e as Error).message, "error");
             }
             if (memDel > 0 || obsDel > 0) {
-              ctx.ui.notify("Cleared: " + memDel + " memories, " + obsDel + " observations deleted.", "success");
+              ctx.ui.notify("Cleared: " + memDel + " pages, " + obsDel + " observations removed from index.", "success");
             } else {
-              ctx.ui.notify("No memories found for project " + pid + ".", "warning");
+              ctx.ui.notify("No pages found for project " + pid + ".", "warning");
             }
           }
         }

@@ -1,21 +1,22 @@
 {
-  "extraction_level": "regex",
-  "llm_extraction": {
-    "enabled": false,
-    "model": "mistralai/mistral-nemo"
-  },
   "retrieval": {
     "vector": {
-      "local": { "enabled": false },
-      "api": { "enabled": false, "model": "openai/text-embedding-3-small" }
-    },
-    "reranker": {
-      "local": { "enabled": false },
-      "api": { "enabled": false, "model": "cohere/rerank-4-pro" }
+      "local": {
+        "enabled": false
+      },
+      "api": {
+        "enabled": true,
+        "model": "openai/text-embedding-3-small"
+      }
     }
   },
+  "extraction_level": "llm",
+  "llm_extraction": {
+    "model": "mistralai/mistral-nemo",
+    "enabled": true
+  },
   "consolidation": {
-    "decay_enabled": false,
+    "decay_enabled": true,
     "pruning_enabled": false
   }
 }
