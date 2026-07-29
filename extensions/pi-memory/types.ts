@@ -204,6 +204,21 @@ export interface PageSearchResult {
   strategy: "fts5" | "vector" | "hybrid";
 }
 
+// ── PageSuggestion (output do LLM extract) ────────────────────────────
+
+export interface PageSuggestion {
+  title: string;
+  body: string;           // markdown
+  type: PageType;
+  scope?: PageScope;      // default: project
+  tags?: string[];
+  confidence?: number;    // 0-1
+}
+
+export interface PageSuggestionResponse {
+  pages: PageSuggestion[];
+}
+
 // ── Memory Gateway (ADR-006) ─────────────────────────────────────────
 
 export type GatewayDecision = "KNOWN" | "PRIOR" | "NONE";

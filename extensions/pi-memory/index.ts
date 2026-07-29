@@ -231,17 +231,16 @@ export default function (pi: ExtensionAPI) {
       if (llmEnabled) {
         const apiKey = process.env.LLM_API_KEY || "";
 
-        if (apiKey) {
+        if (apiKey && pageStore) {
           const llmConfig: Partial<LlmExtractorConfig> = {
             apiKey,
             model: config.llm_extraction.model,
             timeoutMs: config.llm_extraction.timeout_ms,
             batchSize: config.llm_extraction.sweep_observation_threshold,
             maxWaitMs: config.llm_extraction.sweep_interval_ms,
-            dedupEnabled: config.consolidation.dedup_enabled,
           };
           llmExtractor = new LlmExtractor(
-            storage,
+            pageStore,
             projectId,
             llmConfig,
             (count) => {
