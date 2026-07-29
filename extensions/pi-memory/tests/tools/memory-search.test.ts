@@ -35,7 +35,7 @@ async function execute(
 describe("memory_search tool (v2)", () => {
   it("deve retornar 'No pages found' quando vazio", async () => {
     const sandbox = createSandbox();
-    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const tool = createMemorySearchTool(() => sandbox.pageStore, "abc123");
     const result = await execute(tool, { query: "nonexistent" });
     expect(result.content[0].text).toContain("No pages");
     destroy(sandbox);
@@ -50,7 +50,7 @@ describe("memory_search tool (v2)", () => {
       title: "Prefer pnpm", body: "Use pnpm", type: "preference", scope: "global", projectId: null,
     });
 
-    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const tool = createMemorySearchTool(() => sandbox.pageStore, "abc123");
     const result = await execute(tool, { query: "hexagonal" });
     expect(result.content[0].text).toContain("Hexagonal");
     destroy(sandbox);
@@ -65,7 +65,7 @@ describe("memory_search tool (v2)", () => {
       title: "Lesson", body: "Body", type: "lesson", scope: "project", projectId: "abc123",
     });
 
-    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const tool = createMemorySearchTool(() => sandbox.pageStore, "abc123");
     const result = await execute(tool, { query: "body", type: "decision" });
     expect(result.content[0].text).toContain("Decision");
     expect(result.content[0].text).not.toContain("Lesson");
@@ -81,7 +81,7 @@ describe("memory_search tool (v2)", () => {
       title: "Project Rule", body: "Body", type: "preference", scope: "project", projectId: "abc123",
     });
 
-    const tool = createMemorySearchTool(sandbox.pageStore, "abc123");
+    const tool = createMemorySearchTool(() => sandbox.pageStore, "abc123");
     const result = await execute(tool, { query: "body", scope: "global" });
     expect(result.content[0].text).toContain("Global Rule");
     expect(result.content[0].text).not.toContain("Project Rule");

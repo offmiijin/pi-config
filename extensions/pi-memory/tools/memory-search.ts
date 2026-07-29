@@ -13,7 +13,7 @@ import type { PageStore } from "../storage/page-store";
 import type { PageType, PageScope } from "../types";
 
 export function createMemorySearchTool(
-  pageStore: PageStore,
+  getPageStore: () => PageStore,
   projectId: string,
 ) {
   return {
@@ -60,7 +60,8 @@ export function createMemorySearchTool(
       // Busca páginas via PageStore (FTS5)
       let results;
       try {
-        results = pageStore.searchPages(params.query, null, topK);
+        const ps = getPageStore();
+        results = ps.searchPages(params.query, null, topK);
       } catch {
         return {
           content: [{ type: "text" as const, text: "Memory search failed. System may not be initialized." }],

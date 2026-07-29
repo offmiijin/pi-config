@@ -51,7 +51,7 @@ describe("memory_write tool (v2)", () => {
   describe("com PageStore real", () => {
     it("deve criar página markdown no disco e no índice", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         const result = await executeTool(tool, {
@@ -81,7 +81,7 @@ describe("memory_write tool (v2)", () => {
 
     it("deve criar página global em _global/", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         await executeTool(tool, {
@@ -101,7 +101,7 @@ describe("memory_write tool (v2)", () => {
 
     it("deve aceitar path explícito", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         await executeTool(tool, {
@@ -122,7 +122,7 @@ describe("memory_write tool (v2)", () => {
 
     it("deve resolver conflito de path com sufixo numérico", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         // Primeira escrita
@@ -152,7 +152,7 @@ describe("memory_write tool (v2)", () => {
 
     it("deve aceitar parâmetros antigos (text) com backward compat", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         const result = await executeTool(tool, {
@@ -172,7 +172,7 @@ describe("memory_write tool (v2)", () => {
 
     it("deve retornar erro se body vazio", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         const result = await executeTool(tool, {
@@ -190,7 +190,7 @@ describe("memory_write tool (v2)", () => {
 
     it("deve aceitar tags e pinned", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         await executeTool(tool, {
@@ -215,7 +215,7 @@ describe("memory_write tool (v2)", () => {
   describe("scope migration", () => {
     it("deve migrar scope 'user' para 'project'", async () => {
       const sandbox = createSandbox();
-      const tool = createMemoryWriteTool(sandbox.pageStore, "abc123");
+      const tool = createMemoryWriteTool(() => sandbox.pageStore, "abc123");
 
       try {
         await executeTool(tool, {

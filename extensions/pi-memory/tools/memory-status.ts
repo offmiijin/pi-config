@@ -3,13 +3,15 @@
  *
  * Estatísticas do sistema de memória (páginas wiki + observações).
  * Adaptada para o novo modelo baseado em páginas markdown.
+ *
+ * Recebe uma factory function para lazy init — resolve o storage
+ * no momento da chamada, não no momento do registro da tool.
  */
 
 import { Type } from "typebox";
 import type { IStorage } from "../storage/index";
 import type { GitLayer } from "../wiki/git-layer";
 import type { PageStore } from "../storage/page-store";
-import type { PageType, PageScope } from "../types";
 
 export interface StatusDeps {
   storage: IStorage;
@@ -17,7 +19,7 @@ export interface StatusDeps {
   gitLayer: GitLayer | null;
 }
 
-export function createMemoryStatusTool(deps: StatusDeps) {
+export function createMemoryStatusTool(getDeps: () => StatusDeps) {
   return {
     name: "memory_status",
     label: "Memory: Status",
@@ -34,12 +36,21 @@ export function createMemoryStatusTool(deps: StatusDeps) {
       _onUpdate: unknown,
       _ctx: unknown,
     ) {
-      const lines: string[] = [];
+      const deps = getDeps();
       const storage = deps.storage;
+
+      if (!storage || typeof storage.countPages !== "function") {
+        return {
+          content: [{ type: "text" as const, text: "Memory system not initialized yet." }],
+          details: { initialized: false },
+        };
+      }
+
+      const lines: string[] = [];
 
       // ── Pages ─────────────────────────────────────────────────────
       const totalPages = storage.countPages();
-      const allProjects = collectProjectIds(deps);
+      const allProjects = collectProjectIds(deps.pageStore);
       let totalByType: Record<string, number> = {};
       let totalByScope: Record<string, number> = {};
       let totalPinned = 0;
@@ -80,8 +91,6 @@ export function createMemoryStatusTool(deps: StatusDeps) {
         }
       }
 
-      // ── Operations (desde o início da sessão) ──────────────────────
-      // Nota: operações agora são pages-based, mas mantemos compat
       lines.push("💡 Use `memory_search` to find pages, `memory_restore_page` to undo changes.");
 
       return {
@@ -102,16 +111,17 @@ export function createMemoryStatusTool(deps: StatusDeps) {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-function collectProjectIds(deps: StatusDeps): string[] {
+function collectProjectIds(pageStore: PageStore | null): string[] {
   const ids = new Set<string>();
   ids.add("_global");
   try {
-    // Tenta listar projetos do wiki
-    const wikiRoot = deps.pageStore?.["writer"]?.["rootDir"];
-    if (wikiRoot) {
-      const projectsDir = require("node:path").join(wikiRoot, "projects");
-      if (require("node:fs").existsSync(projectsDir)) {
-        const entries = require("node:fs").readdirSync(projectsDir, { withFileTypes: true });
+    const rootDir = (pageStore as any)?.["writer"]?.["rootDir"];
+    if (rootDir) {
+      const { join } = require("node:path");
+      const { existsSync, readdirSync } = require("node:fs");
+      const projectsDir = join(rootDir, "projects");
+      if (existsSync(projectsDir)) {
+        const entries = readdirSync(projectsDir, { withFileTypes: true });
         for (const entry of entries) {
           if (entry.isDirectory() && !entry.name.startsWith(".")) {
             ids.add(entry.name);

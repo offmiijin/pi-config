@@ -28,7 +28,7 @@ export interface SupersededVersion {
 
 // ── Tool factory ───────────────────────────────────────────────────────
 
-export function createMemoryRestoreTool(deps: RestoreDeps) {
+export function createMemoryRestoreTool(getDeps: () => RestoreDeps) {
   return {
     name: "memory_restore_page",
     label: "Memory: Restore Page",
@@ -78,6 +78,7 @@ export function createMemoryRestoreTool(deps: RestoreDeps) {
       _onUpdate: unknown,
       _ctx: unknown,
     ) {
+      const deps = getDeps();
       const scope = (params.scope as "project" | "global") ?? "project";
       const projectId = scope === "global" ? "_global" : deps.projectId;
       const source = params.source ?? "superseded";

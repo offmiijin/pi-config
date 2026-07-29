@@ -46,6 +46,8 @@ let embeddingService: EmbeddingService | null = null;
 let vectorRetriever: VectorRetriever | null = null;
 let hybridRetriever: HybridRetriever | null = null;
 let cacheStableInjector: CacheStableInjector | null = null;
+let pageStore: PageStore | null = null;
+let gitLayer: GitLayer | null = null;
 let sessionId: string | null = null;
 
 function resetStats(): MemoryStats {
@@ -123,6 +125,20 @@ export default function (pi: ExtensionAPI) {
       // Inicializa storage
       storage = new SqliteStore(dbPath);
       storage.open();
+
+      // Inicializa PageStore + GitLayer
+      const wikiRoot = path.join(config.data_dir, "wiki");
+      pageStore = new PageStore(wikiRoot, storage, {
+        enabled: true,
+        commitPerPage: false,
+        batchIntervalMs: 300_000,
+      });
+      gitLayer = new GitLayer(wikiRoot, {
+        enabled: true,
+        commitPerPage: false,
+        batchIntervalMs: 300_000,
+      });
+      gitLayer.init();
 
       // Inicializa buffer
       buffer = new ObservationBuffer(
@@ -432,6 +448,8 @@ export default function (pi: ExtensionAPI) {
     vectorRetriever = null;
     embeddingService = null;
     hybridRetriever = null;
+    pageStore = null;
+    gitLayer = null;
     cacheStableInjector = null;
     sessionId = null;
   });
@@ -439,52 +457,39 @@ export default function (pi: ExtensionAPI) {
   // ── Tools ─────────────────────────────────────────────────────────
   const projectId = hashProjectId(pi.projectDir ?? "default");
 
-  // Tools recebem storage/retriever via closure.
-  // Se storage ainda não foi inicializado (antes de session_start),
-  // a tool falhará graciosamente (retorna erro).
-  // Lazy closure: acessa retriever em runtime (não no load do módulo).
-  // Inicializa PageStore + GitLayer
-  const wikiRoot = path.join(config.data_dir, "wiki");
-  const pageStore = storage ? new PageStore(wikiRoot, storage, {
-    enabled: true,
-    commitPerPage: false,
-    batchIntervalMs: 300_000,
-  }) : null;
-  const gitLayer = pageStore ? ((storage) ? new GitLayer(wikiRoot, {
-    enabled: true,
-    commitPerPage: false,
-    batchIntervalMs: 300_000,
-  }) : null) : null;
+  // Tools recebem lazy getters — resolvem pageStore/storage no momento
+  // da chamada, não no momento do registro (que ocorre antes de
+  // session_start inicializar esses objetos).
 
   pi.registerTool({
     ...createMemorySearchTool(
-      pageStore ?? (null as unknown as PageStore),
+      () => pageStore ?? (null as unknown as PageStore),
       projectId,
     ),
   });
 
   pi.registerTool({
     ...createMemoryWriteTool(
-      pageStore ?? (null as unknown as PageStore),
+      () => pageStore ?? (null as unknown as PageStore),
       projectId,
     ),
   });
 
   pi.registerTool({
-    ...createMemoryRestoreTool({
+    ...createMemoryRestoreTool(() => ({
       pageStore: pageStore ?? (null as unknown as PageStore),
       wikiRoot,
       gitLayer,
       projectId,
-    }),
+    })),
   });
 
   pi.registerTool({
-    ...createMemoryStatusTool({
+    ...createMemoryStatusTool(() => ({
       storage: storage ?? (null as unknown as IStorage),
       pageStore,
       gitLayer,
-    }),
+    })),
   });
 
   // ── Command: /memory ──────────────────────────────────────────────

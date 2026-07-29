@@ -31,7 +31,7 @@ function migrateScope(oldScope: string): PageScope {
 // ── Tool factory ───────────────────────────────────────────────────────
 
 export function createMemoryWriteTool(
-  pageStore: PageStore,
+  getPageStore: () => PageStore,
   projectId: string,
 ) {
   return {
@@ -136,7 +136,7 @@ export function createMemoryWriteTool(
           supersedes: params.supersedes,
         };
 
-        const result = pageStore.writePage(writeParams);
+        const result = getPageStore().writePage(writeParams);
 
         return {
           content: [
