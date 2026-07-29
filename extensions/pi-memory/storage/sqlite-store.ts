@@ -102,6 +102,10 @@ const SQL = {
 
   deleteAllPages: `DELETE FROM pages WHERE project_id = $project_id`,
 
+  deleteAllPageEmbeddings: `DELETE FROM page_embeddings WHERE page_id IN (SELECT id FROM pages WHERE project_id = $project_id)`,
+
+  deletePageEmbeddings: `DELETE FROM page_embeddings WHERE page_id IN (SELECT id FROM pages WHERE project_id = $project_id AND path = $path)`,
+
   insertObservation: `
     INSERT INTO observations (id, session_id, project_id, timestamp, type,
       tool_name, input_json, outcome, content_preview, error_preview,
@@ -188,6 +192,7 @@ export class SqliteStore implements IStorage {
   }
 
   deleteAllPages(projectId: string): number {
+    this.db.prepare(SQL.deleteAllPageEmbeddings).run({ $project_id: projectId });
     const result = this.db.prepare(SQL.deleteAllPages).run({ $project_id: projectId });
     return result.changes;
   }
@@ -240,6 +245,7 @@ export class SqliteStore implements IStorage {
   }
 
   deletePage(projectId: string, path: string): void {
+    this.db.prepare(SQL.deletePageEmbeddings).run({ $project_id: projectId, $path: path });
     this.db.prepare(SQL.deletePage).run({ $project_id: projectId, $path: path });
   }
 
