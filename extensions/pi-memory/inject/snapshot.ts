@@ -80,11 +80,19 @@ export class CacheStableInjector {
     query: string
   ) => Promise<RetrievalResult[]>;
 
+  /**
+   * Função de fallback: retorna top páginas por confidence (sem query).
+   * Chamada quando searchFn retorna vazio ou prompt é trivial.
+   */
+  private readonly fallbackFn: () => Promise<RetrievalResult[]>;
+
   constructor(
     searchFn: (query: string) => Promise<RetrievalResult[]>,
+    fallbackFn: () => Promise<RetrievalResult[]>,
     config: Partial<CacheStableConfig> = {}
   ) {
     this.searchFn = searchFn;
+    this.fallbackFn = fallbackFn;
     this.config = { ...DEFAULTS, ...config };
   }
 
@@ -195,23 +203,36 @@ export class CacheStableInjector {
   private async buildMemoryBlock(prompt: string): Promise<string> {
     const sections: Section[] = [];
 
-    // ── Persistent Memory (busca híbrida) ──
+    // ── Persistent Memory (busca híbrida + fallback) ──
+    let results: RetrievalResult[] = [];
     if (prompt) {
       try {
-        const results = await this.searchFn(prompt);
-        const memBlock = this.formatPersistentMemory(
-          results,
-          this.config.persistentMemCapBytes
-        );
-        if (memBlock) {
-          sections.push({
-            header: "## Persistent Memory",
-            body: memBlock,
-            priority: 0,
-          });
-        }
+        results = await this.searchFn(prompt);
       } catch {
-        // Search falhou, pula seção Persistent Memory
+        // Best-effort
+      }
+    }
+
+    // Fallback: se busca principal veio vazia, usa top páginas por confidence
+    if (results.length === 0) {
+      try {
+        results = await this.fallbackFn();
+      } catch {
+        // Best-effort
+      }
+    }
+
+    if (results.length > 0) {
+      const memBlock = this.formatPersistentMemory(
+        results,
+        this.config.persistentMemCapBytes
+      );
+      if (memBlock) {
+        sections.push({
+          header: "## Persistent Memory",
+          body: memBlock,
+          priority: 0,
+        });
       }
     }
 
@@ -275,17 +296,12 @@ export class CacheStableInjector {
 
     const header = ""; // header is added by buildMemoryBlock
     const maxBullets = this.config.maxBullets;
-    const maxBulletLen = 200;
 
     // Formata bullets
     const bullets: string[] = [];
     for (let i = 0; i < Math.min(relevant.length, maxBullets); i++) {
       const page = relevant[i].page;
-      const text =
-        page.body.length > maxBulletLen
-          ? page.body.slice(0, maxBulletLen - 1) + "…"
-          : page.body;
-      bullets.push(`- [${page.type}] ${text}`);
+      bullets.push(`- [${page.type}] ${page.title}`);
     }
 
     // Middle-truncation
@@ -303,6 +319,14 @@ export class CacheStableInjector {
     }
 
     return bullets.length > 0 ? body : "";
+  }
+
+  /**
+   * Extrai resumo do body markdown para exibição no bullet.
+   * Usa apenas o título da página como resumo.
+   */
+  private pageSummary(_body: string, _maxLen: number): string {
+    return "";
   }
 
   /**

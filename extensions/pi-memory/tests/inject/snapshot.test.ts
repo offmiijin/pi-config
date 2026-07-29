@@ -40,13 +40,17 @@ function makeSearchFn(results: RetrievalResult[] = []) {
   return vi.fn(async (_query: string) => results);
 }
 
+function makeFallbackFn(results: RetrievalResult[] = []) {
+  return vi.fn(async () => results);
+}
+
 // ── Suite ───────────────────────────────────────────────────────────────
 
 describe("CacheStableInjector", () => {
   it("deve reconstruir no primeiro getMemoryBlock (cache vazio)", async () => {
     const page = makePage({ body: "usa pnpm", type: "preference" });
     const searchFn = makeSearchFn([makeResult(page)]);
-    const injector = new CacheStableInjector(searchFn);
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn());
 
     const block = await injector.getMemoryBlock("qual package manager?");
     expect(block).toContain("[preference]");
@@ -56,7 +60,7 @@ describe("CacheStableInjector", () => {
   it("deve reusar cache em chamadas consecutivas", async () => {
     const page = makePage({ body: "docker compose", type: "fact" });
     const searchFn = makeSearchFn([makeResult(page)]);
-    const injector = new CacheStableInjector(searchFn);
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn());
 
     const block1 = await injector.getMemoryBlock("query 1");
     const block2 = await injector.getMemoryBlock("query 2");
@@ -68,7 +72,7 @@ describe("CacheStableInjector", () => {
   it("deve reconstruir após invalidate explícito", async () => {
     const page = makePage({ body: "deploy via docker", type: "decision" });
     const searchFn = makeSearchFn([makeResult(page)]);
-    const injector = new CacheStableInjector(searchFn);
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn());
 
     await injector.getMemoryBlock("como fazer deploy?");
     expect(searchFn).toHaveBeenCalledTimes(1);
@@ -80,7 +84,7 @@ describe("CacheStableInjector", () => {
 
   it("deve ignorar prompt trivial (continue, ok)", async () => {
     const searchFn = makeSearchFn([]);
-    const injector = new CacheStableInjector(searchFn);
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn());
 
     // Primeiro: prompt não trivial → busca
     await injector.getMemoryBlock("como fazer deploy do payment-api?");
@@ -93,41 +97,42 @@ describe("CacheStableInjector", () => {
   });
 
   it("deve filtrar resultados abaixo do confidence threshold", async () => {
-    const low = makePage({ body: "low confidence", confidence: 0.3 });
-    const high = makePage({ body: "high confidence", confidence: 0.9 });
+    const low = makePage({ title: "Low confidence page", body: "...", confidence: 0.3 });
+    const high = makePage({ title: "High confidence page", body: "...", confidence: 0.9 });
     const searchFn = makeSearchFn([
       makeResult(low, 1.0),
       makeResult(high, 0.5),
     ]);
-    const injector = new CacheStableInjector(searchFn, { confidenceThreshold: 0.5 });
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn(), { confidenceThreshold: 0.5 });
 
     const block = await injector.getMemoryBlock("como fazer deploy?");
-    expect(block).toContain("high confidence");
-    expect(block).not.toContain("low confidence");
+    expect(block).toContain("High confidence page");
+    expect(block).not.toContain("Low confidence page");
   });
 
   it("deve retornar string vazia quando nenhum resultado atinge threshold", async () => {
     const page = makePage({ body: "low", confidence: 0.2 });
     const searchFn = makeSearchFn([makeResult(page)]);
-    const injector = new CacheStableInjector(searchFn, { confidenceThreshold: 0.5 });
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn(), { confidenceThreshold: 0.5 });
 
     const block = await injector.getMemoryBlock("query");
     expect(block).toBe("");
   });
 
-  it("deve formatar bullets com tipo e body truncado", async () => {
-    const page = makePage({ body: "Usa pnpm em todos os projetos", type: "preference" });
+  it("deve formatar bullets com tipo e título", async () => {
+    const page = makePage({ body: "Usa pnpm em todos os projetos", type: "preference", title: "Prefere pnpm" });
     const searchFn = makeSearchFn([makeResult(page)]);
-    const injector = new CacheStableInjector(searchFn);
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn());
 
     const block = await injector.getMemoryBlock("pnpm?");
     expect(block).toContain("- [preference]");
-    expect(block).toContain("Usa pnpm");
+    expect(block).toContain("Prefere pnpm");
+    expect(block).not.toContain("Usa pnpm"); // body não deve aparecer
   });
 
   it("deve expor métricas de cache", async () => {
     const searchFn = makeSearchFn([]);
-    const injector = new CacheStableInjector(searchFn);
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn());
 
     expect(injector.isCacheActive).toBe(false);
 
@@ -139,7 +144,7 @@ describe("CacheStableInjector", () => {
   it("deve permitir seções customizadas (setSection/removeSection)", async () => {
     const page = makePage({ body: "deploy info", type: "fact" });
     const searchFn = makeSearchFn([makeResult(page)]);
-    const injector = new CacheStableInjector(searchFn);
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn());
 
     injector.setSection("## Scratchpad", "notas rápidas", -1);
     const block = await injector.getMemoryBlock("deploy?");
@@ -159,7 +164,7 @@ describe("CacheStableInjector", () => {
     }
 
     const searchFn = makeSearchFn(results);
-    const injector = new CacheStableInjector(searchFn, { maxBullets: 3 });
+    const injector = new CacheStableInjector(searchFn, makeFallbackFn(), { maxBullets: 3 });
 
     const block = await injector.getMemoryBlock("query");
     const bullets = block.split("\n").filter((l) => l.startsWith("- "));

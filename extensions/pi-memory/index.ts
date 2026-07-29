@@ -209,6 +209,10 @@ export default function (pi: ExtensionAPI) {
       // ── CacheStableInjector ──
       cacheStableInjector = new CacheStableInjector(
         searchFn,
+        () => {
+          if (!storage) return Promise.resolve([]);
+          return Promise.resolve(storage.searchTopPages(projectId, config.retrieval.default_top_k));
+        },
         {
           debug: false,
           maxBullets: config.max_injected_memories,

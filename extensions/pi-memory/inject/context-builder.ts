@@ -9,7 +9,6 @@ import type { RetrievalResult } from "../types";
 
 const MAX_BLOCK_BYTES = 4096; // 4KB
 const MAX_MEMORIES = 5;
-const MAX_BULLET_LENGTH = 200;
 
 // ── buildMemoryBlock ──────────────────────────────────────────────────
 
@@ -26,8 +25,7 @@ export function buildMemoryBlock(
   for (const r of results) {
     if (count >= MAX_MEMORIES) break;
 
-    const preview = truncateText(r.page.body, MAX_BULLET_LENGTH);
-    const bullet = `- [${r.page.type}] ${preview}\n`;
+    const bullet = `- [${r.page.type}] ${r.page.title}\n`;
 
     if (Buffer.byteLength(body + bullet) > maxBytes) break;
 
@@ -70,8 +68,3 @@ export function createInjectHandler(options: InjectHandlerOptions) {
 }
 
 // ── Private ───────────────────────────────────────────────────────────
-
-function truncateText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen - 3) + "…";
-}

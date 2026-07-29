@@ -80,6 +80,9 @@ export function createMemoryWriteTool(
       supersedes: Type.Optional(
         Type.String({ description: "Path of the page this replaces (ex: 'decisions/old-arch.md')" })
       ),
+      confidence: Type.Optional(
+        Type.Number({ description: "Confidence level 0.0-1.0 (default: 0.5). >= 0.6 for auto-injection.", default: 0.5 })
+      ),
       // Backward compat: parâmetro text da v1
       text: Type.Optional(Type.String({
         description: "[DEPRECATED] Use body + title instead. Converted automatically.",
@@ -98,6 +101,7 @@ export function createMemoryWriteTool(
         tags?: string[];
         pinned?: boolean;
         supersedes?: string;
+        confidence?: number;
       },
       _signal: AbortSignal | undefined,
       _onUpdate: unknown,
@@ -132,6 +136,7 @@ export function createMemoryWriteTool(
           scope,
           projectId: scope === "global" ? null : projectId,
           tags: params.tags,
+          confidence: params.confidence,
           pinned: params.pinned,
           supersedes: params.supersedes,
         };

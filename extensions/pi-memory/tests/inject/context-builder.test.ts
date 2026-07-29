@@ -47,7 +47,7 @@ describe("buildMemoryBlock", () => {
   });
 
   it("deve formatar página como bullet", () => {
-    const page = makePage({ body: "Usa pnpm", type: "preference" });
+    const page = makePage({ title: "Usa pnpm", type: "preference" });
     const block = buildMemoryBlock([makeResult(page)]);
     expect(block).toContain("## Persistent Memory");
     expect(block).toContain("- [preference] Usa pnpm");
@@ -85,7 +85,7 @@ describe("buildMemoryBlock", () => {
 
 describe("createInjectHandler", () => {
   it("deve injetar bloco no system prompt", async () => {
-    const page = makePage({ body: "Usa docker compose", type: "fact" });
+    const page = makePage({ title: "Usa docker compose", body: "docker compose info", type: "fact" });
     const searchFn = vi.fn(async () => [makeResult(page)]);
     const handler = createInjectHandler({ search: searchFn });
 

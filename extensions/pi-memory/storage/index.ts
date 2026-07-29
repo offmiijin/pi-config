@@ -25,6 +25,7 @@ export interface IStorage {
   deletePage(projectId: string, path: string): void;
   deleteAllPages(projectId: string): number;
   deleteAllObservations(projectId: string): number;
+  searchTopPages(projectId: string, limit?: number): RetrievalResult[];
   getPage(projectId: string, path: string): Page | null;
   getPageById(id: string): Page | null;
   getPagesByProject(projectId: string): Page[];

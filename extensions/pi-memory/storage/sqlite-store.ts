@@ -104,6 +104,8 @@ const SQL = {
 
   deleteAllPageEmbeddings: `DELETE FROM page_embeddings WHERE page_id IN (SELECT id FROM pages WHERE project_id = $project_id)`,
 
+  searchTopPages: `SELECT * FROM pages WHERE project_id = $project_id AND status = 'active' ORDER BY confidence DESC LIMIT $limit`,
+
   deletePageEmbeddings: `DELETE FROM page_embeddings WHERE page_id IN (SELECT id FROM pages WHERE project_id = $project_id AND path = $path)`,
 
   insertObservation: `
@@ -262,6 +264,19 @@ export class SqliteStore implements IStorage {
       $project_id: projectId,
     }) as Record<string, unknown>[];
     return rows.map((r) => this.rowToPage(r));
+  }
+
+  searchTopPages(projectId: string, limit = 10): RetrievalResult[] {
+    const rows = this.db.prepare(SQL.searchTopPages).all({
+      $project_id: projectId,
+      $limit: limit,
+    }) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      page: this.rowToPage(r),
+      snippet: ((r["body"] as string) || "").slice(0, 300),
+      score: (r["confidence"] as number) / 100,
+      strategy: "fts5" as const,
+    }));
   }
 
   pageExists(projectId: string, path: string): boolean {
