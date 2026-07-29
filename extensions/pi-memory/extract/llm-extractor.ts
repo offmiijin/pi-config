@@ -33,6 +33,14 @@ export interface LlmExtractorConfig {
   maxRetries: number;
   /** Pipeline N1 dedup habilitado? Default: true */
   dedupEnabled: boolean;
+  /** Máximo de falhas consecutivas antes de abrir circuit breaker. Default: 5 */
+  maxConsecutiveFailures: number;
+  /** Tempo de cooldown do circuit breaker em ms. Default: 300000 (5 min) */
+  circuitCooldownMs: number;
+  /** Backoff base em ms para retry. Default: 30000 */
+  baseBackoffMs: number;
+  /** Backoff máximo em ms. Default: 300000 (5 min) */
+  maxBackoffMs: number;
 }
 
 const DEFAULTS: Partial<LlmExtractorConfig> = {
@@ -43,6 +51,10 @@ const DEFAULTS: Partial<LlmExtractorConfig> = {
   maxWaitMs: 30_000,
   maxRetries: 3,
   dedupEnabled: true,
+  maxConsecutiveFailures: 5,
+  circuitCooldownMs: 300_000,
+  baseBackoffMs: 30_000,
+  maxBackoffMs: 300_000,
 };
 
 // ── Prompt template ────────────────────────────────────────────────────
@@ -52,16 +64,25 @@ function buildExtractionPrompt(observations: RawObservation[]): string {
     .map((obs, i) => {
       const parts: string[] = [];
       parts.push(`### Interaction ${i + 1}`);
-      parts.push(`Tool: ${obs.tool_name ?? "unknown"}`);
-      parts.push(`Outcome: ${obs.outcome}`);
-      if (obs.content_preview) {
-        parts.push(`Output: ${obs.content_preview.slice(0, 500)}`);
-      }
-      if (obs.error_preview) {
-        parts.push(`Error: ${obs.error_preview.slice(0, 300)}`);
-      }
-      if (obs.file_paths.length > 0) {
-        parts.push(`Files: ${obs.file_paths.join(", ")}`);
+
+      if (obs.type === "user_prompt") {
+        parts.push(`Type: User prompt`);
+        if (obs.content_preview) {
+          parts.push(`Content: ${obs.content_preview.slice(0, 500)}`);
+        }
+      } else {
+        parts.push(`Type: Tool result`);
+        parts.push(`Tool: ${obs.tool_name ?? "unknown"}`);
+        parts.push(`Outcome: ${obs.outcome}`);
+        if (obs.content_preview) {
+          parts.push(`Output: ${obs.content_preview.slice(0, 500)}`);
+        }
+        if (obs.error_preview) {
+          parts.push(`Error: ${obs.error_preview.slice(0, 300)}`);
+        }
+        if (obs.file_paths.length > 0) {
+          parts.push(`Files: ${obs.file_paths.join(", ")}`);
+        }
       }
       return parts.join("\n");
     })
@@ -69,7 +90,8 @@ function buildExtractionPrompt(observations: RawObservation[]): string {
 
   return `You are extracting structured knowledge from a coding agent's interactions.
 
-Below are ${observations.length} interactions between a coding agent and its tools.
+Below are ${observations.length} interactions. They may be user prompts (the human's requests/goals)
+or tool results (output from bash, edit, write, read, etc.).
 Extract atomic, self-contained facts. Each fact must be understandable without context.
 
 ${interactions}
@@ -87,6 +109,8 @@ Return a JSON array of facts:
 Rules:
 - IGNORE trivial output: file listings, successful npm install, standard build output
 - IGNORE stack traces longer than 50 lines (summarize instead)
+- EXTRACT from user prompts: explicit preferences, decisions, goals, constraints the user states
+  Example user prompt "always use pnpm" → preference: "User requires pnpm as package manager"
 - PREFERENCES: "uses pnpm", "prefers functional style", "always writes tests"
 - DECISIONS: "chose hexagonal architecture", "decided to use PostgreSQL"
 - LESSONS: "test X fails with Node 22", "don't use feature Y because of bug Z"
@@ -187,6 +211,14 @@ export class LlmExtractor {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
   private retryCounts = new Map<string, number>();
+  /** IDs de observações já em voo (pendingObs + sendo processadas) — Fix #1 dedup */
+  private inFlightIds = new Set<string>();
+  /** Contador de falhas consecutivas para circuit breaker — Fix #3 */
+  private consecutiveFailures = 0;
+  /** Timestamp até o qual o circuit breaker está aberto (0 = fechado) */
+  private circuitOpenUntil = 0;
+  /** Backoff atual em ms, ajustado exponencialmente — Fix #4 */
+  private currentBackoffMs: number;
   private readonly config: LlmExtractorConfig;
   private readonly storage: IStorage;
   private readonly projectId: string;
@@ -201,6 +233,11 @@ export class LlmExtractor {
     this.storage = storage;
     this.projectId = projectId;
     this.config = { ...DEFAULTS, ...overrides } as LlmExtractorConfig;
+    // Se usuário não especificou baseBackoffMs explicitamente, herda do maxWaitMs
+    if (overrides.baseBackoffMs === undefined) {
+      this.config.baseBackoffMs = this.config.maxWaitMs;
+    }
+    this.currentBackoffMs = this.config.maxWaitMs;
     this.onExtraction = onExtraction;
   }
 
@@ -213,15 +250,25 @@ export class LlmExtractor {
    */
   enqueue(observations: RawObservation[]): void {
     if (!this.config.apiKey) return;
+    if (this.isCircuitOpen()) return;
 
     const candidates = this.filterCandidates(observations);
     if (candidates.length === 0) return;
-    this.pendingObs.push(...candidates);
+
+    // Fix #1: dedup — filtra observações cujos IDs já estão em voo
+    const novel = candidates.filter((o) => !this.inFlightIds.has(o.id));
+    if (novel.length === 0) return;
+
+    for (const obs of novel) {
+      this.inFlightIds.add(obs.id);
+    }
+    this.pendingObs.push(...novel);
 
     if (this.pendingObs.length >= this.config.batchSize) {
       this.extract();
     } else if (!this.timer) {
-      this.timer = setTimeout(() => this.extract(), this.config.maxWaitMs);
+      // Fix #4: usa backoff dinâmico em vez de maxWaitMs fixo
+      this.timer = setTimeout(() => this.extract(), this.currentBackoffMs);
       if (this.timer.unref) this.timer.unref();
     }
   }
@@ -235,15 +282,29 @@ export class LlmExtractor {
   extractBatch(observations: RawObservation[]): void {
     if (!this.config.apiKey) return;
     if (observations.length === 0) return;
-    // Trava de concorrência: se já tem extração rodando, não empilha outra
-    if (this.busy) return;
-    this.extract(observations);
+    if (this.isCircuitOpen()) return;
+    // Fix #5: se ocupado, enfileira via enqueue (com dedup) em vez de descartar
+    if (this.busy) {
+      this.enqueue(observations);
+      return;
+    }
+    // Fix #2: limita forced batch ao batchSize para evitar prompt enorme
+    const capped = observations.slice(0, this.config.batchSize);
+    const rest = observations.slice(this.config.batchSize);
+    // Fix #1: registra IDs do batch capado como em voo (extract não faz isso)
+    for (const obs of capped) {
+      this.inFlightIds.add(obs.id);
+    }
+    if (rest.length > 0) {
+      this.enqueue(rest);
+    }
+    this.extract(capped);
   }
 
   /** Para timer e dispara extração do que estiver pendente. */
   shutdown(): void {
     this.clearTimer();
-    if (this.pendingObs.length > 0) {
+    if (this.pendingObs.length > 0 && !this.isCircuitOpen()) {
       this.extract();
     }
   }
@@ -270,6 +331,11 @@ export class LlmExtractor {
    * Executa extração LLM para um batch de observações.
    * Se `forcedBatch` for fornecido, extrai diretamente dele (bypass enqueue).
    * Caso contrário, consome do `pendingObs` interno.
+   *
+   * Fix #2: forcedBatch já chega capado em batchSize (extractBatch faz o slice).
+   * Fix #3: circuit breaker — erros fatais (401/403) abrem circuito imediatamente;
+   *         erros recuperáveis incrementam contador e disparam cooldown após N falhas.
+   * Fix #4: backoff exponencial entre lotes consecutivos com falha.
    */
   private async extract(forcedBatch?: RawObservation[]): Promise<void> {
     const isForced = forcedBatch !== undefined;
@@ -279,7 +345,6 @@ export class LlmExtractor {
 
     if (batch.length === 0) return;
 
-    // Verifica busy e seta (ambos modos)
     if (this.busy) return;
     this.busy = true;
     if (!isForced) {
@@ -294,7 +359,6 @@ export class LlmExtractor {
       if (facts.length > 0) {
         const now = Date.now();
         for (const fact of facts) {
-          // Preenche source_observation_ids se vazio
           if (fact.source_observation_ids.length === 0) {
             fact.source_observation_ids = batch.map((o) => o.id);
           }
@@ -362,30 +426,106 @@ export class LlmExtractor {
       // Marca observações como extraídas
       this.storage.markExtracted(batch.map((o) => o.id));
       this.retryCounts.clear();
-    } catch {
-      // Retry logic: re-enfileira observações com retry count < max
+
+      // Fix #3 + #4: sucesso reseta circuit breaker e backoff
+      this.recordSuccess();
+
+      // Fix #1: remove IDs do rastreamento de voo
       for (const obs of batch) {
-        const retries = this.retryCounts.get(obs.id) ?? 0;
-        if (retries < this.config.maxRetries) {
-          this.retryCounts.set(obs.id, retries + 1);
-          this.pendingObs.push(obs);
-        } else {
-          // Desiste: marca como extraída para não bloquear sweep futuro
-          try {
-            this.storage.markExtracted([obs.id]);
-          } catch {
-            // best-effort
-          }
+        this.inFlightIds.delete(obs.id);
+      }
+    } catch (err) {
+      // Fix #3: classifica erro para circuit breaker
+      const fatal = this.isFatalError(err);
+
+      if (fatal) {
+        // Erro não-recuperável (401, 403): abre circuito imediatamente, sem retry
+        this.openCircuit(2 * this.config.circuitCooldownMs);
+        // Marca como extraídas para não travar sweep futuro
+        try {
+          this.storage.markExtracted(batch.map((o) => o.id));
+        } catch { /* best-effort */ }
+        for (const obs of batch) {
+          this.inFlightIds.delete(obs.id);
           this.retryCounts.delete(obs.id);
+        }
+      } else {
+        // Erro recuperável: incrementa contador e aplica backoff
+        this.recordFailure();
+
+        for (const obs of batch) {
+          const retries = this.retryCounts.get(obs.id) ?? 0;
+          if (retries < this.config.maxRetries) {
+            this.retryCounts.set(obs.id, retries + 1);
+            this.pendingObs.push(obs);
+            // Mantém em inFlightIds (já estava)
+          } else {
+            // Desiste: marca como extraída para não bloquear sweep futuro
+            try {
+              this.storage.markExtracted([obs.id]);
+            } catch {
+              // best-effort
+            }
+            this.retryCounts.delete(obs.id);
+            this.inFlightIds.delete(obs.id);
+          }
         }
       }
     } finally {
       this.busy = false;
-      // Timer de re-agendamento só no modo enqueue
+      // Fix #4: re-agendamento com backoff dinâmico (apenas modo enqueue)
       if (!isForced && this.pendingObs.length > 0 && !this.timer) {
-        this.timer = setTimeout(() => this.extract(), this.config.maxWaitMs);
+        const delay = this.isCircuitOpen()
+          ? this.config.circuitCooldownMs
+          : this.currentBackoffMs;
+        this.timer = setTimeout(() => this.extract(), delay);
         if (this.timer.unref) this.timer.unref();
       }
+    }
+  }
+
+  // ── Circuit breaker & backoff (Fix #3 + #4) ────────────────────
+
+  /** Verifica se o circuit breaker está aberto (chamadas bloqueadas). */
+  private isCircuitOpen(): boolean {
+    return this.circuitOpenUntil > Date.now();
+  }
+
+  /** Abre o circuit breaker pela duração especificada. */
+  private openCircuit(durationMs: number): void {
+    this.circuitOpenUntil = Date.now() + durationMs;
+  }
+
+  /**
+   * Classifica se o erro é fatal (não-recuperável).
+   * Erros 401/403 → API key inválida ou sem permissão → não adianta retry.
+   */
+  private isFatalError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /\b40[13]\b/.test(msg);
+  }
+
+  /** Reseta contador de falhas e backoff após sucesso. */
+  private recordSuccess(): void {
+    this.consecutiveFailures = 0;
+    this.currentBackoffMs = this.config.baseBackoffMs;
+    this.circuitOpenUntil = 0;
+  }
+
+  /**
+   * Incrementa contador de falhas e calcula backoff exponencial.
+   * Após maxConsecutiveFailures, abre circuit breaker.
+   */
+  private recordFailure(): void {
+    this.consecutiveFailures++;
+    // Backoff exponencial: base * 2^(failures-1), cap no maxBackoffMs
+    this.currentBackoffMs = Math.min(
+      this.config.baseBackoffMs * Math.pow(2, this.consecutiveFailures - 1),
+      this.config.maxBackoffMs,
+    );
+    // Circuit breaker: N falhas consecutivas → cooldown
+    if (this.consecutiveFailures >= this.config.maxConsecutiveFailures) {
+      this.openCircuit(this.config.circuitCooldownMs);
     }
   }
 

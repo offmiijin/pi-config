@@ -25,6 +25,7 @@ import { RerankerService } from "./retrieve/reranker";
 import { HybridRetriever } from "./retrieve/index";
 import { CacheStableInjector } from "./inject/snapshot";
 import { createMemorySearchTool } from "./tools/memory-search";
+import type { SearchProvider } from "./tools/memory-search";
 import { createMemoryWriteTool } from "./tools/memory-write";
 import { createMemoryStatusTool } from "./tools/memory-status";
 import * as path from "node:path";
@@ -478,20 +479,14 @@ export default function (pi: ExtensionAPI) {
   // Tools recebem storage/retriever via closure.
   // Se storage ainda não foi inicializado (antes de session_start),
   // a tool falhará graciosamente (retorna erro).
-  // Memory search: HybridRetriever → Bm25Retriever → fallback vazio
-  const searchProvider = hybridRetriever
-    ? {
-        search: (query: string, _pid: string, topK?: number) =>
-          hybridRetriever!.search(query, topK ?? 10),
-      }
-    : retriever
-      ? {
-          search: (query: string, pid: string, topK?: number) =>
-            Promise.resolve(retriever!.search(query, pid, topK)),
-        }
-      : {
-          search: async () => [] as RetrievalResult[],
-        };
+  // Lazy closure: acessa retriever em runtime (não no load do módulo).
+  const searchProvider: SearchProvider = {
+    search: (query: string, pid: string, topK?: number) => {
+      if (hybridRetriever) return hybridRetriever.search(query, topK ?? 10);
+      if (retriever) return Promise.resolve(retriever.search(query, pid, topK ?? 10));
+      return Promise.resolve([] as RetrievalResult[]);
+    },
+  };
 
   pi.registerTool({
     ...createMemorySearchTool(searchProvider, projectId),
