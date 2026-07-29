@@ -121,10 +121,6 @@ export interface PiMemoryConfig {
       api: { enabled: boolean; model: string };
     };
     hybrid_enabled: boolean;
-    reranker: {
-      local: { enabled: boolean };
-      api: { enabled: boolean; model: string };
-    };
     default_top_k: number;
   };
 }
@@ -164,10 +160,6 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
       api: { enabled: false, model: "openai/text-embedding-3-small" },
     },
     hybrid_enabled: false,
-    reranker: {
-      local: { enabled: false },
-      api: { enabled: false, model: "cohere/rerank-4-pro" },
-    },
     default_top_k: 10,
   },
 };
@@ -197,7 +189,6 @@ export interface MemoryStats {
   pinned_count: number;
   operations: {
     captures: number;
-    extractions_n2: number;
     extractions_n3: number;
     consolidations_n2: number;
     retrievals: number;

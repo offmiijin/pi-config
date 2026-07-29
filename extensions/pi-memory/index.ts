@@ -513,7 +513,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Command: /memory ──────────────────────────────────────────────
   pi.registerCommand("memory", {
-    description: "Configure pi-memory: vector/llm/reranker mode, decay, pruning, clear. TUI only.",
+    description: "Configure pi-memory: vector/llm, decay, pruning, clear. TUI only.",
     getArgumentCompletions: () => null,
     handler: async (_args, ctx) => {
       // helper: recarrega config do disco para o modulo (global apenas)
@@ -563,13 +563,6 @@ export default function (pi: ExtensionAPI) {
           if (v.api.enabled) return "api";
           return "off";
         }
-        if (feat === "reranker") {
-          const r = config.retrieval.reranker;
-          if (r.local.enabled && r.api.enabled) return "local + api";
-          if (r.local.enabled) return "local";
-          if (r.api.enabled) return "api";
-          return "off";
-        }
         if (feat === "llm") {
           return config.llm_extraction.enabled ? "api" : "off";
         }
@@ -593,12 +586,10 @@ export default function (pi: ExtensionAPI) {
         type SettingItem = import("@earendil-works/pi-tui").SettingItem;
 
         const vMode = modeLabel("vector");
-        const rMode = modeLabel("reranker");
 
         const items: SettingItem[] = [
           { id: "vector",  label: "Vector search",     currentValue: vMode, values: [vMode] },
           { id: "llm",     label: "LLM extraction N3", currentValue: modeLabel("llm"), values: [modeLabel("llm")] },
-          { id: "reranker", label: "Reranker",          currentValue: rMode, values: [rMode] },
           { id: "pruning", label: "Pruning", currentValue: config.consolidation.pruning_enabled ? "on" : "off", values: ["on", "off"] },
           { id: "decay",   label: "Decay",              currentValue: config.consolidation.decay_enabled ? "on" : "off", values: ["on", "off"] },
           { id: "decay_days", label: "Decay (days)",    currentValue: String(config.consolidation.decay_days), values: ["3", "7", "14", "30"] },
@@ -620,7 +611,7 @@ export default function (pi: ExtensionAPI) {
             Math.min(items.length + 3, 18),
             getSettingsListTheme(),
             (id, newValue) => {
-              if (id === "vector" || id === "reranker" || id === "llm") {
+              if (id === "vector" || id === "llm") {
                 configTarget = id;
                 done(undefined);
                 return;
@@ -662,14 +653,13 @@ export default function (pi: ExtensionAPI) {
         });
 
         // Configuracao externa (apos fechar SettingsList)
-        if (configTarget === "vector" || configTarget === "reranker") {
-          const isVec = configTarget === "vector";
-          const curLocal = isVec ? config.retrieval.vector.local.enabled : config.retrieval.reranker.local.enabled;
-          const curApi   = isVec ? config.retrieval.vector.api.enabled   : config.retrieval.reranker.api.enabled;
+        if (configTarget === "vector") {
+          const curLocal = config.retrieval.vector.local.enabled;
+          const curApi   = config.retrieval.vector.api.enabled;
           const curMode  = curLocal && curApi ? "local + api" : curLocal ? "local" : curApi ? "api" : "off";
 
           const mode = await ctx.ui.select(
-            configTarget + " mode",
+            "Vector mode",
             ["off", "local", "api", "local + api"],
             curMode
           );
@@ -678,119 +668,51 @@ export default function (pi: ExtensionAPI) {
             const wantLocal = mode === "local" || mode === "local + api";
             const wantApi   = mode === "api" || mode === "local + api";
 
-            // Define env var name for this service
-            const envVarName = isVec ? "VECTOR_API_KEY" : "RERANKER_API_KEY";
-
-            // Se quer API, sempre oferece input de chave (com default da atual)
-            // ou reuso de chave de outro serviço
-            let hasKey = !!process.env[envVarName];
+            let hasKey = !!process.env.VECTOR_API_KEY;
             let cancelled = false;
 
             if (wantApi) {
-              // Coleta chaves existentes de outros serviços
-              const existingKeys: Array<{ label: string; varName: string }> = [];
-              if (process.env.LLM_API_KEY) existingKeys.push({ label: "LLM API key", varName: "LLM_API_KEY" });
-              if (isVec && process.env.RERANKER_API_KEY) existingKeys.push({ label: "Reranker API key", varName: "RERANKER_API_KEY" });
-              if (!isVec && process.env.VECTOR_API_KEY) existingKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
+              const otherKeys: Array<{ label: string; varName: string }> = [];
+              if (process.env.LLM_API_KEY) otherKeys.push({ label: "LLM API key", varName: "LLM_API_KEY" });
 
-              // Filtra a própria chave (não oferece reuso dela mesma)
-              const otherKeys = existingKeys.filter((k) => k.varName !== envVarName);
-
-              // Monta opções: input direto OU reuso de outro serviço
               if (otherKeys.length > 0) {
-                const curVal = process.env[envVarName];
+                const curVal = process.env.VECTOR_API_KEY;
                 const reuseOpts = [
                   curVal ? "Enter different key" : "Enter new key",
                   ...otherKeys.map((k) => `Reuse ${k.label}`),
                 ];
-                const reuseChoice = await ctx.ui.select(
-                  "API key for " + configTarget,
-                  reuseOpts,
-                  reuseOpts[0]
-                );
+                const reuseChoice = await ctx.ui.select("API key for vector", reuseOpts, reuseOpts[0]);
 
                 if (reuseChoice && reuseChoice.startsWith("Reuse")) {
                   const chosen = otherKeys.find((k) => `Reuse ${k.label}` === reuseChoice);
-                  if (chosen) {
-                    saveEnvKey(envVarName, process.env[chosen.varName]!);
-                    hasKey = true;
-                  }
+                  if (chosen) { saveEnvKey("VECTOR_API_KEY", process.env[chosen.varName]!); hasKey = true; }
                 } else if (curVal) {
-                  // Já tem chave — pode ter escolhido "Enter different key"
-                  // Mostra input com a atual como default
-                  const result = await ctx.ui.input(
-                    "API key for " + configTarget,
-                    "Leave as-is to keep current key, or enter a new one.",
-                    curVal
-                  );
-                  if (result !== null && result !== undefined) {
-                    const trimmed = result.trim();
-                    if (trimmed) {
-                      saveEnvKey(envVarName, trimmed);
-                    }
-                    hasKey = true;
-                  } else {
-                    cancelled = true;
-                  }
+                  const result = await ctx.ui.input("API key for vector", "Leave as-is to keep current key, or enter a new one.", curVal);
+                  if (result !== null && result !== undefined) { const t = result.trim(); if (t) { saveEnvKey("VECTOR_API_KEY", t); } hasKey = true; } else { cancelled = true; }
                 } else {
-                  // Não tem chave — mostra input vazio
-                  const result = await ctx.ui.input(
-                    "API key for " + configTarget,
-                    "Required for API mode. Will be saved to extensions/pi-memory/.env",
-                    ""
-                  );
-                  if (result && result.trim()) {
-                    saveEnvKey(envVarName, result.trim());
-                    hasKey = true;
-                  } else {
-                    cancelled = true;
-                  }
+                  const result = await ctx.ui.input("API key for vector", "Required for API mode.", "");
+                  if (result && result.trim()) { saveEnvKey("VECTOR_API_KEY", result.trim()); hasKey = true; } else { cancelled = true; }
                 }
               } else {
-                // Nenhuma outra chave disponível — input direto
-                const curVal = process.env[envVarName];
+                const curVal = process.env.VECTOR_API_KEY;
                 if (curVal) {
-                  const result = await ctx.ui.input(
-                    "API key for " + configTarget,
-                    "Leave as-is to keep current key, or enter a new one.",
-                    curVal
-                  );
-                  if (result !== null && result !== undefined) {
-                    const trimmed = result.trim();
-                    if (trimmed) {
-                      saveEnvKey(envVarName, trimmed);
-                    }
-                    hasKey = true;
-                  } else {
-                    cancelled = true;
-                  }
+                  const result = await ctx.ui.input("API key for vector", "Leave as-is to keep current key, or enter a new one.", curVal);
+                  if (result !== null && result !== undefined) { const t = result.trim(); if (t) { saveEnvKey("VECTOR_API_KEY", t); } hasKey = true; } else { cancelled = true; }
                 } else {
-                  const result = await ctx.ui.input(
-                    "API key for " + configTarget,
-                    "Required for API mode. Will be saved to extensions/pi-memory/.env",
-                    ""
-                  );
-                  if (result && result.trim()) {
-                    saveEnvKey(envVarName, result.trim());
-                    hasKey = true;
-                  } else {
-                    cancelled = true;
-                  }
+                  const result = await ctx.ui.input("API key for vector", "Required for API mode.", "");
+                  if (result && result.trim()) { saveEnvKey("VECTOR_API_KEY", result.trim()); hasKey = true; } else { cancelled = true; }
                 }
               }
             }
 
             if (cancelled && !wantLocal) {
-              ctx.ui.notify(configTarget + " API mode requires a key. Nothing changed.", "error");
+              ctx.ui.notify("Vector API mode requires a key. Nothing changed.", "error");
             } else {
               const doLocal = wantLocal;
               const doApi   = wantApi && hasKey;
-              const patch = isVec
-                ? { retrieval: { vector: { local: { enabled: doLocal }, api: { enabled: doApi, model: config.retrieval.vector.api.model } } } }
-                : { retrieval: { reranker: { local: { enabled: doLocal }, api: { enabled: doApi, model: config.retrieval.reranker.api.model } } } };
-              saveConfigToDisk(patch as Partial<PiMemoryConfig>);
+              saveConfigToDisk({ retrieval: { vector: { local: { enabled: doLocal }, api: { enabled: doApi, model: config.retrieval.vector.api.model } } } } as Partial<PiMemoryConfig>);
               const savedMode = doLocal && doApi ? "local + api" : doLocal ? "local" : doApi ? "api" : "off";
-              ctx.ui.notify(configTarget + ": " + savedMode + ". Run /reload to apply.", "success");
+              ctx.ui.notify("Vector: " + savedMode + ". Run /reload to apply.", "success");
             }
           }
         }

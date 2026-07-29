@@ -135,42 +135,4 @@ function migrateRetrievalConfig(config: PiMemoryConfig): void {
     delete r["vector_model"];
   }
 
-  // Reranker
-  const oldRerEnabled = r["reranker_enabled"] as boolean | undefined;
-  const oldRerLocal = r["reranker_local"] as boolean | undefined;
-  const oldRerApi = r["reranker_api"] as boolean | undefined;
-  const oldRerModel = r["reranker_model"] as string | undefined;
-
-  if (oldRerLocal !== undefined || oldRerApi !== undefined || oldRerEnabled !== undefined) {
-    const rer = r["reranker"] as Record<string, unknown> | undefined;
-    if (!rer || typeof rer !== "object") {
-      r["reranker"] = { local: { enabled: false }, api: { enabled: false, model: "cohere/rerank-4-pro" } };
-    }
-    const rerObj = r["reranker"] as Record<string, unknown>;
-    const local = rerObj["local"] as Record<string, unknown> | undefined;
-    const api = rerObj["api"] as Record<string, unknown> | undefined;
-
-    if (oldRerLocal !== undefined && local && typeof local["enabled"] === "undefined") {
-      local["enabled"] = oldRerLocal;
-    }
-    if (oldRerApi !== undefined && api && typeof api["enabled"] === "undefined") {
-      api["enabled"] = oldRerApi;
-    }
-    if (oldRerModel !== undefined && api && typeof api["model"] === "undefined") {
-      api["model"] = oldRerModel;
-    }
-    if (oldRerEnabled !== undefined && local && api) {
-      if (typeof local["enabled"] !== "boolean" && typeof api["enabled"] !== "boolean") {
-        const localVal = oldRerEnabled && !oldRerApi;
-        const apiVal = oldRerEnabled && oldRerApi;
-        local["enabled"] = localVal;
-        api["enabled"] = apiVal;
-      }
-    }
-
-    delete r["reranker_enabled"];
-    delete r["reranker_local"];
-    delete r["reranker_api"];
-    delete r["reranker_model"];
-  }
 }
