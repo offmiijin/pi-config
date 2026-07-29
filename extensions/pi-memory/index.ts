@@ -403,6 +403,9 @@ export default function (pi: ExtensionAPI) {
     if (storage) {
       try {
         storage.close();
+      } catch {
+        // Best-effort
+      }
       storage = null;
     }
 
