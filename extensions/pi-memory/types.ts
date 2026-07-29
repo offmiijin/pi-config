@@ -46,17 +46,6 @@ export interface RawObservation {
   extracted: boolean; // N2 extraiu fatos?
 }
 
-// ── ExtractedFact ──────────────────────────────────────────────────────
-
-export interface ExtractedFact {
-  text: string;
-  type: MemoryType;
-  scope: MemoryScope;
-  tags: string[];
-  confidence: number;
-  source_observation_ids: string[];
-}
-
 // ── Config ─────────────────────────────────────────────────────────────
 
 export interface PiMemoryConfig {

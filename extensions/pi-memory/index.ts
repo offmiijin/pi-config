@@ -3,8 +3,7 @@
  *
  * Pipeline: CAPTURE → EXTRACT → STORE → CONSOLIDATE → RETRIEVE → INJECT
  *
- * Fase 1 (MVP): Captura, Storage SQLite+JSON, Consolidação N1 (dedup),
- *               Retrieval BM25, Injeção simples, Tools.
+ * Markdown wiki como fonte da verdade, SQLite como índice derivado.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";

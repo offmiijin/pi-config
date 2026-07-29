@@ -8,7 +8,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { RawObservation } from "../types";
 import { ObservationBuffer } from "./buffer";
-import { contentHash } from "../consolidate/dedup";
 import { randomUUID } from "node:crypto";
 
 // ── Constantes ─────────────────────────────────────────────────────────

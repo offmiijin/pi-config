@@ -1,7 +1,6 @@
 /**
- * IStorage — Interface unificada das camadas de storage.
- *
- * Abstrai as operações de warm (SQLite) e cold (JSON).
+ * IStorage — Interface do storage SQLite.
+ * SQLite é o índice derivado do wiki markdown.
  * Todas as operações são síncronas.
  */
 
