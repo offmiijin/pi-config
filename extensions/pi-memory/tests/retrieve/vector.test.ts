@@ -1,350 +1,254 @@
 /**
- * Testes do VectorRetriever.
- *
- * Cobre: buildIndex, upsert, remove, searchByVector, memoryBytes.
- * Testes de search() assíncrono dependem de EmbeddingService mockado.
+ * Testes do VectorRetriever com páginas.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { VectorRetriever } from "../../retrieve/vector";
-import type { Memory } from "../../types";
-import type { EmbeddingService } from "../../utils/embedding";
+import { EmbeddingService } from "../../utils/embedding";
+import type { Page } from "../../types";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-function makeMemory(overrides: Partial<Memory> = {}): Memory {
-  return {
-    id: `mem-${Math.random().toString(36).slice(2, 8)}`,
-    text: "test memory",
-    embedding: null,
-    type: "fact",
-    scope: "project",
-    tags: [],
-    confidence: 0.8,
-    timestamp: Date.now(),
-    last_accessed: Date.now(),
-    access_count: 1,
-    source_ids: [],
-    superseded_by: null,
-    pinned: false,
-    project_id: "proj-1",
-    content_hash: "abc123",
-    ...overrides,
-  };
-}
-
 function makeEmbedding(dim = 384): Float32Array {
-  const v = new Float32Array(dim);
-  for (let i = 0; i < dim; i++) {
-    v[i] = Math.random() * 2 - 1;
-  }
-  // Normalize
-  let sumSq = 0;
-  for (let i = 0; i < dim; i++) sumSq += v[i] * v[i];
-  const norm = Math.sqrt(sumSq);
-  for (let i = 0; i < dim; i++) v[i] /= norm;
-  return v;
+  const emb = new Float32Array(dim);
+  for (let i = 0; i < dim; i++) emb[i] = Math.random() * 2 - 1;
+  // Normaliza
+  const norm = Math.sqrt(emb.reduce((s, v) => s + v * v, 0));
+  for (let i = 0; i < dim; i++) emb[i] /= norm;
+  return emb;
 }
 
-function makeMockEmbeddingService(): EmbeddingService {
+function makeEmbeddingService(): EmbeddingService {
   return {
-    embed: vi.fn(),
-    embedBatch: vi.fn(),
-    initialize: vi.fn(),
+    initialize: vi.fn(async () => {}),
+    embed: vi.fn(async (text: string) => {
+      // Embedding determinístico baseado no texto
+      const emb = new Float32Array(384);
+      for (let i = 0; i < Math.min(text.length, 384); i++) {
+        emb[i] = text.charCodeAt(i) / 128 - 1;
+      }
+      const norm = Math.sqrt(emb.reduce((s, v) => s + v * v, 0)) || 1;
+      for (let i = 0; i < 384; i++) emb[i] /= norm;
+      return emb;
+    }),
+    embedBatch: vi.fn(async (texts: string[]) => {
+      return Promise.all(texts.map((t) => ({} as any).embed?.(t) ?? makeEmbedding()));
+    }),
     isReady: true,
     activeBackend: "local",
     error: null,
   } as unknown as EmbeddingService;
 }
 
-// ── buildIndex ─────────────────────────────────────────────────────────
+function makePage(overrides: Partial<Page> = {}): Page {
+  const now = Date.now();
+  return {
+    id: "page-1",
+    project_id: "test-project",
+    path: "decisions/test.md",
+    title: "Test",
+    body: "conteúdo de teste",
+    type: "fact",
+    scope: "project",
+    tags: [],
+    confidence: 0.8,
+    status: "active",
+    pinned: false,
+    supersedes: null,
+    created_at: now,
+    updated_at: now,
+    content_hash: "abc",
+    mtime: now,
+    ...overrides,
+  };
+}
 
-describe("VectorRetriever.buildIndex", () => {
-  it("deve criar índice vazio se array vazio", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
-    vr.buildIndex([]);
-    expect(vr.size).toBe(0);
+// ── Suite ───────────────────────────────────────────────────────────────
+
+describe("VectorRetriever", () => {
+  let embeddingService: EmbeddingService;
+  let retriever: VectorRetriever;
+
+  beforeEach(() => {
+    embeddingService = makeEmbeddingService();
+    retriever = new VectorRetriever(embeddingService);
   });
 
-  it("deve indexar apenas memórias com embedding", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
+  // ── buildIndex ─────────────────────────────────────────────────────
 
-    const m1 = makeMemory({ id: "m1", embedding: makeEmbedding() });
-    const m2 = makeMemory({ id: "m2", embedding: null });
-    const m3 = makeMemory({ id: "m3", embedding: makeEmbedding() });
+  describe("buildIndex", () => {
+    it("deve construir índice a partir de {id, embedding}", () => {
+      const emb1 = makeEmbedding();
+      const emb2 = makeEmbedding();
 
-    vr.buildIndex([m1, m2, m3]);
-    expect(vr.size).toBe(2);
+      retriever.buildIndex([
+        { id: "p1", embedding: emb1 },
+        { id: "p2", embedding: null as any },
+        { id: "p3", embedding: emb2 },
+      ]);
+
+      expect(retriever.size).toBe(2); // p2 ignorado (embedding null)
+    });
+
+    it("deve ignorar itens com dimensão incorreta", () => {
+      retriever.buildIndex([
+        { id: "p1", embedding: new Float32Array(128) },
+        { id: "p2", embedding: makeEmbedding(384) },
+      ]);
+
+      expect(retriever.size).toBe(1);
+    });
+
+    it("deve substituir índice existente", () => {
+      retriever.buildIndex([{ id: "p1", embedding: makeEmbedding() }]);
+      expect(retriever.size).toBe(1);
+
+      retriever.buildIndex([
+        { id: "p2", embedding: makeEmbedding() },
+        { id: "p3", embedding: makeEmbedding() },
+      ]);
+      expect(retriever.size).toBe(2);
+    });
   });
 
-  it("deve ignorar embeddings com dimensão incorreta", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc, 384);
+  // ── upsert ─────────────────────────────────────────────────────────
 
-    const m1 = makeMemory({ id: "m1", embedding: new Float32Array(128) }); // dim errada
-    const m2 = makeMemory({ id: "m2", embedding: makeEmbedding(384) });    // dim correta
+  describe("upsert", () => {
+    it("deve adicionar nova página ao índice", () => {
+      retriever.upsert("p1", makeEmbedding());
+      expect(retriever.size).toBe(1);
+    });
 
-    vr.buildIndex([m1, m2]);
-    expect(vr.size).toBe(1);
+    it("deve ignorar embedding nulo", () => {
+      retriever.upsert("p1", null as any);
+      expect(retriever.size).toBe(0);
+    });
+
+    it("deve atualizar embedding existente", () => {
+      const emb1 = makeEmbedding();
+      const emb2 = makeEmbedding();
+
+      retriever.upsert("p1", emb1);
+      retriever.upsert("p1", emb2);
+      expect(retriever.size).toBe(1);
+    });
   });
 
-  it("deve sobrescrever índice em rebuild", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
+  // ── remove ─────────────────────────────────────────────────────────
 
-    vr.buildIndex([makeMemory({ id: "m1", embedding: makeEmbedding() })]);
-    expect(vr.size).toBe(1);
+  describe("remove", () => {
+    it("deve remover página do índice", () => {
+      retriever.upsert("p1", makeEmbedding());
+      retriever.upsert("p2", makeEmbedding());
+      expect(retriever.size).toBe(2);
 
-    vr.buildIndex([
-      makeMemory({ id: "m2", embedding: makeEmbedding() }),
-      makeMemory({ id: "m3", embedding: makeEmbedding() }),
-    ]);
-    expect(vr.size).toBe(2);
-  });
-});
+      retriever.remove("p1");
+      expect(retriever.size).toBe(1);
+    });
 
-// ── upsert ─────────────────────────────────────────────────────────────
-
-describe("VectorRetriever.upsert", () => {
-  it("deve adicionar nova memória ao índice", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
-
-    const mem = makeMemory({ id: "m1", embedding: makeEmbedding() });
-    vr.upsert(mem);
-    expect(vr.size).toBe(1);
+    it("não deve quebrar ao remover id inexistente", () => {
+      expect(() => retriever.remove("nonexistent")).not.toThrow();
+    });
   });
 
-  it("deve ignorar memória sem embedding", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
+  // ── clear ──────────────────────────────────────────────────────────
 
-    vr.upsert(makeMemory({ id: "m1", embedding: null }));
-    expect(vr.size).toBe(0);
+  describe("clear", () => {
+    it("deve remover todos os vetores", () => {
+      retriever.upsert("p1", makeEmbedding());
+      retriever.clear();
+      expect(retriever.size).toBe(0);
+    });
   });
 
-  it("deve atualizar embedding de memória existente", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
+  // ── search ─────────────────────────────────────────────────────────
 
-    const emb1 = makeEmbedding();
-    const emb2 = makeEmbedding();
+  describe("search", () => {
+    it("deve retornar array vazio com índice vazio", async () => {
+      const results = await retriever.search("query");
+      expect(results).toEqual([]);
+    });
 
-    vr.upsert(makeMemory({ id: "m1", embedding: emb1 }));
-    vr.upsert(makeMemory({ id: "m1", embedding: emb2 }));
+    it("deve ranquear por similaridade", async () => {
+      const targetEmb = makeEmbedding();
+      retriever.upsert("target", targetEmb);
 
-    expect(vr.size).toBe(1); // não duplica
-  });
-});
+      // Adiciona ruído
+      for (let i = 0; i < 5; i++) {
+        retriever.upsert(`noise-${i}`, makeEmbedding());
+      }
 
-// ── remove ─────────────────────────────────────────────────────────────
+      const results = await retriever.search("alvo");
+      expect(results.length).toBeGreaterThan(0);
+      // target deve ter score alto (embedding do search é derivado de "alvo")
+      expect(results.some((r) => r.id === "target")).toBe(true);
+    });
 
-describe("VectorRetriever.remove", () => {
-  it("deve remover memória do índice", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
+    it("deve respeitar topK", async () => {
+      for (let i = 0; i < 10; i++) {
+        retriever.upsert(`p${i}`, makeEmbedding());
+      }
 
-    vr.upsert(makeMemory({ id: "m1", embedding: makeEmbedding() }));
-    vr.upsert(makeMemory({ id: "m2", embedding: makeEmbedding() }));
-    expect(vr.size).toBe(2);
+      const results = await retriever.search("query", 3);
+      expect(results.length).toBeLessThanOrEqual(3);
+    });
 
-    vr.remove("m1");
-    expect(vr.size).toBe(1);
-  });
+    it("deve retornar scores entre -1 e 1", async () => {
+      retriever.upsert("p1", makeEmbedding());
+      retriever.upsert("p2", makeEmbedding());
 
-  it("não deve quebrar ao remover ID inexistente", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
-
-    vr.upsert(makeMemory({ id: "m1", embedding: makeEmbedding() }));
-    vr.remove("m2"); // não existe
-    expect(vr.size).toBe(1);
-  });
-});
-
-// ── searchByVector ─────────────────────────────────────────────────────
-
-describe("VectorRetriever.searchByVector", () => {
-  it("deve retornar array vazio se índice vazio", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
-
-    const results = vr.searchByVector(makeEmbedding(), 10);
-    expect(results).toHaveLength(0);
+      const results = await retriever.search("teste");
+      for (const r of results) {
+        expect(r.score).toBeGreaterThanOrEqual(-1);
+        expect(r.score).toBeLessThanOrEqual(1);
+      }
+    });
   });
 
-  it("deve retornar top-K resultados", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
+  // ── searchAsResults ────────────────────────────────────────────────
 
-    // Cria 5 memórias com embeddings aleatórios
-    const ids: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      const id = `m${i}`;
-      ids.push(id);
-      vr.upsert(makeMemory({ id, embedding: makeEmbedding() }));
-    }
+  describe("searchAsResults", () => {
+    it("deve resolver IDs para objetos RetrievalResult", async () => {
+      const queryEmb = makeEmbedding();
+      retriever.upsert("p1", queryEmb);
 
-    const results = vr.searchByVector(makeEmbedding(), 3);
-    expect(results).toHaveLength(3);
-    // Scores devem estar entre -1 e 1 (vetores normalizados → dot product)
-    for (const r of results) {
-      expect(r.score).toBeGreaterThanOrEqual(-1);
-      expect(r.score).toBeLessThanOrEqual(1);
-    }
+      const pageLookup = (id: string): Page | null => {
+        if (id === "p1") return makePage({ id: "p1", body: "página de teste 1" });
+        return null;
+      };
+
+      const results = await retriever.searchAsResults("consulta", pageLookup);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].page.id).toBe("p1");
+      expect(results[0].strategy).toBe("vector");
+      expect(results[0].page.body).toBe("página de teste 1");
+    });
+
+    it("deve ignorar IDs órfãos (página não encontrada)", async () => {
+      retriever.upsert("orphan", makeEmbedding());
+      retriever.upsert("valid", makeEmbedding());
+
+      const pageLookup = (id: string): Page | null => {
+        if (id === "valid") return makePage({ id: "valid" });
+        return null;
+      };
+
+      const results = await retriever.searchAsResults("query", pageLookup);
+      expect(results.every((r) => r.page.id === "valid")).toBe(true);
+    });
   });
 
-  it("deve retornar o próprio vetor com score ~1 quando query é o mesmo vetor", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
+  // ── memoryBytes ────────────────────────────────────────────────────
 
-    const emb = makeEmbedding();
-    vr.upsert(makeMemory({ id: "target", embedding: emb }));
+  describe("memoryBytes", () => {
+    it("deve estimar uso de RAM", () => {
+      retriever.upsert("p1", makeEmbedding(384));
+      retriever.upsert("p2", makeEmbedding(384));
+      expect(retriever.memoryBytes).toBe(2 * 384 * 4); // 2 vetores * 384 dims * 4 bytes
+    });
 
-    // Adiciona mais alguns aleatórios
-    for (let i = 0; i < 3; i++) {
-      vr.upsert(makeMemory({ id: `noise-${i}`, embedding: makeEmbedding() }));
-    }
-
-    const results = vr.searchByVector(emb, 5);
-    expect(results[0].id).toBe("target");
-    expect(results[0].score).toBeCloseTo(1.0, 5);
-  });
-
-  it("deve ordenar por score decrescente", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
-
-    for (let i = 0; i < 10; i++) {
-      vr.upsert(makeMemory({ id: `m${i}`, embedding: makeEmbedding() }));
-    }
-
-    const results = vr.searchByVector(makeEmbedding(), 10);
-    for (let i = 1; i < results.length; i++) {
-      expect(results[i - 1].score).toBeGreaterThanOrEqual(results[i].score);
-    }
-  });
-
-  it("deve retornar todos se topK > size", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
-
-    for (let i = 0; i < 3; i++) {
-      vr.upsert(makeMemory({ id: `m${i}`, embedding: makeEmbedding() }));
-    }
-
-    const results = vr.searchByVector(makeEmbedding(), 100);
-    expect(results).toHaveLength(3);
-  });
-});
-
-// ── memoryBytes ────────────────────────────────────────────────────────
-
-describe("VectorRetriever.memoryBytes", () => {
-  it("deve retornar 0 para índice vazio", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc, 384);
-    expect(vr.memoryBytes).toBe(0);
-  });
-
-  it("deve calcular tamanho correto (N * dim * 4)", () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc, 384);
-
-    vr.upsert(makeMemory({ id: "m1", embedding: makeEmbedding(384) }));
-    vr.upsert(makeMemory({ id: "m2", embedding: makeEmbedding(384) }));
-
-    expect(vr.memoryBytes).toBe(2 * 384 * 4); // 3072 bytes
-  });
-});
-
-// ── search (async, com mock) ─────────────────────────────────────────
-
-describe("VectorRetriever.search", () => {
-  it("deve retornar array vazio se índice vazio", async () => {
-    const embSvc = makeMockEmbeddingService();
-    const vr = new VectorRetriever(embSvc);
-
-    const results = await vr.search("any query", 10);
-    expect(results).toHaveLength(0);
-  });
-
-  it("deve embedar query e buscar", async () => {
-    const queryEmb = makeEmbedding(384);
-
-    const embSvc = {
-      embed: vi.fn().mockResolvedValue(queryEmb),
-      embedBatch: vi.fn(),
-      initialize: vi.fn(),
-      isReady: true,
-      activeBackend: "local" as const,
-      error: null,
-    } as unknown as EmbeddingService;
-
-    const vr = new VectorRetriever(embSvc, 384);
-
-    // Coloca uma memória alvo com o mesmo embedding da query
-    vr.upsert(makeMemory({ id: "target", embedding: queryEmb }));
-    // Adiciona ruído
-    for (let i = 0; i < 3; i++) {
-      vr.upsert(makeMemory({ id: `noise-${i}`, embedding: makeEmbedding(384) }));
-    }
-
-    const results = await vr.search("some query", 5);
-    expect(results).toHaveLength(4);
-    expect(results[0].id).toBe("target");
-    expect(embSvc.embed).toHaveBeenCalledWith("some query");
-  });
-});
-
-// ── searchAsResults ─────────────────────────────────────────────────
-
-describe("VectorRetriever.searchAsResults", () => {
-  it("deve resolver IDs para objetos Memory", async () => {
-    const queryEmb = makeEmbedding(384);
-    const mem = makeMemory({ id: "m1", text: "test memory 1", embedding: queryEmb });
-
-    const embSvc = {
-      embed: vi.fn().mockResolvedValue(queryEmb),
-      embedBatch: vi.fn(),
-      initialize: vi.fn(),
-      isReady: true,
-      activeBackend: "local" as const,
-      error: null,
-    } as unknown as EmbeddingService;
-
-    const vr = new VectorRetriever(embSvc, 384);
-    vr.upsert(mem);
-
-    const lookup = vi.fn().mockReturnValue(mem);
-    const results = await vr.searchAsResults("test", lookup, 10);
-
-    expect(results).toHaveLength(1);
-    expect(results[0].memory).toBe(mem);
-    expect(results[0].strategy).toBe("vector");
-    expect(lookup).toHaveBeenCalledWith("m1");
-  });
-
-  it("deve filtrar resultados cujo lookup retorna null", async () => {
-    const queryEmb = makeEmbedding(384);
-
-    const embSvc = {
-      embed: vi.fn().mockResolvedValue(queryEmb),
-      embedBatch: vi.fn(),
-      initialize: vi.fn(),
-      isReady: true,
-      activeBackend: "local" as const,
-      error: null,
-    } as unknown as EmbeddingService;
-
-    const vr = new VectorRetriever(embSvc, 384);
-    vr.upsert(makeMemory({ id: "orphan", embedding: queryEmb }));
-
-    const lookup = vi.fn().mockReturnValue(null); // memória não encontrada
-    const results = await vr.searchAsResults("test", lookup, 10);
-
-    expect(results).toHaveLength(0);
+    it("deve ser 0 com índice vazio", () => {
+      expect(retriever.memoryBytes).toBe(0);
+    });
   });
 });

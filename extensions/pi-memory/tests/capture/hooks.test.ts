@@ -16,12 +16,6 @@ function createMockStorage(): IStorage {
   return {
     open: vi.fn(),
     close: vi.fn(),
-    insertMemory: vi.fn(),
-    getMemory: vi.fn(() => null),
-    getMemoriesByProject: vi.fn(() => []),
-    getMemoryByHash: vi.fn(() => null),
-    updateMemory: vi.fn(),
-    deleteMemory: vi.fn(),
     insertObservation: vi.fn((obs: RawObservation) => {
       observations.push(obs);
     }),
@@ -32,12 +26,24 @@ function createMockStorage(): IStorage {
     getPendingObservations: vi.fn(() => []),
     markExtracted: vi.fn(),
     cleanupExpired: vi.fn(() => 0),
-    searchFts: vi.fn(() => []),
-    countMemories: vi.fn(() => 0),
+    insertPage: vi.fn(),
+    updatePage: vi.fn(),
+    deletePage: vi.fn(),
+    deleteAllPages: vi.fn(() => 0),
+    deleteAllObservations: vi.fn(() => 0),
+    getPage: vi.fn(() => null),
+    getPageById: vi.fn(() => null),
+    getPagesByProject: vi.fn(() => []),
+    pageExists: vi.fn(() => false),
+    searchPagesFts: vi.fn(() => []),
+    getPagesWithEmbeddings: vi.fn(() => []),
+    getPagesWithEmbeddingData: vi.fn(() => []),
+    getPagesWithoutEmbedding: vi.fn(() => []),
+    updatePageEmbedding: vi.fn(),
+    countPages: vi.fn(() => 0),
     countObservations: vi.fn(() => observations.length),
     countPendingExtraction: vi.fn(() => 0),
-
-  };
+  } as unknown as IStorage;
 }
 
 function createMockCtx(): Parameters<CaptureHooks["onToolResult"]>[1] {

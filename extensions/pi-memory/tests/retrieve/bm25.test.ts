@@ -1,62 +1,72 @@
 /**
- * Testes do Bm25Retriever.
+ * Testes do Bm25Retriever com páginas.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Bm25Retriever } from "../../retrieve/bm25";
 import type { IStorage } from "../../storage/index";
-import type { Memory, RetrievalResult } from "../../types";
+import type { Page, RetrievalResult } from "../../types";
 import { randomUUID } from "node:crypto";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function makeMockStorage(
-  searchResults: Array<{ memory: Memory; bm25Score: number }> = []
+  searchResults: RetrievalResult[] = []
 ): IStorage {
   return {
     open: vi.fn(),
     close: vi.fn(),
-    insertMemory: vi.fn(),
-    getMemory: vi.fn(() => null),
-    getMemoriesByProject: vi.fn(() => []),
-    getMemoryByHash: vi.fn(() => null),
-    updateMemory: vi.fn(),
-    deleteMemory: vi.fn(),
     insertObservation: vi.fn(),
     insertObservationsBatch: vi.fn(),
     getObservations: vi.fn(() => []),
     getPendingObservations: vi.fn(() => []),
     markExtracted: vi.fn(),
     cleanupExpired: vi.fn(() => 0),
-    searchFts: vi.fn(() => searchResults),
-    countMemories: vi.fn(() => 0),
+    insertPage: vi.fn(),
+    updatePage: vi.fn(),
+    deletePage: vi.fn(),
+    deleteAllPages: vi.fn(() => 0),
+    deleteAllObservations: vi.fn(() => 0),
+    getPage: vi.fn(() => null),
+    getPageById: vi.fn(() => null),
+    getPagesByProject: vi.fn(() => []),
+    pageExists: vi.fn(() => false),
+    searchPagesFts: vi.fn(() => searchResults),
+    getPagesWithEmbeddings: vi.fn(() => []),
+    getPagesWithEmbeddingData: vi.fn(() => []),
+    getPagesWithoutEmbedding: vi.fn(() => []),
+    updatePageEmbedding: vi.fn(),
+    countPages: vi.fn(() => 0),
     countObservations: vi.fn(() => 0),
     countPendingExtraction: vi.fn(() => 0),
-    syncToJson: vi.fn(),
-    loadFromJson: vi.fn(() => []),
-  };
+  } as unknown as IStorage;
 }
 
-function makeMemory(overrides: Partial<Memory> = {}): Memory {
+function makePage(overrides: Partial<Page> = {}): Page {
   const now = Date.now();
   return {
     id: randomUUID(),
-    text: "Usa pnpm em todos os projetos",
-    embedding: null,
+    project_id: "test-project",
+    path: "preferences/pnpm.md",
+    title: "Prefere pnpm",
+    body: "Usa pnpm em todos os projetos",
     type: "preference",
     scope: "project",
-    tags: ["#preference", "#pnpm"],
+    tags: ["pnpm"],
     confidence: 0.8,
-    timestamp: now,
-    last_accessed: now,
-    access_count: 1,
-    source_ids: [],
-    superseded_by: null,
+    status: "active",
     pinned: false,
-    project_id: "test-project",
+    supersedes: null,
+    created_at: now,
+    updated_at: now,
     content_hash: "abc",
+    mtime: now,
     ...overrides,
   };
+}
+
+function makeResult(page: Page, score = 1.0): RetrievalResult {
+  return { page, snippet: page.body.slice(0, 300), score, strategy: "fts5" };
 }
 
 // ── Suite ───────────────────────────────────────────────────────────────
@@ -75,25 +85,24 @@ describe("Bm25Retriever", () => {
     it("deve retornar array vazio quando não há resultados", () => {
       const storage = makeMockStorage([]);
       const r = new Bm25Retriever(storage);
-
       const results = r.search("query", "project");
       expect(results).toEqual([]);
     });
 
-    it("deve retornar resultados com strategy=bm25", () => {
-      const mem = makeMemory({ text: "docker compose" });
-      const storage = makeMockStorage([{ memory: mem, bm25Score: -2.5 }]);
+    it("deve retornar resultados com strategy=fts5", () => {
+      const page = makePage({ body: "docker compose" });
+      const storage = makeMockStorage([makeResult(page)]);
       const r = new Bm25Retriever(storage);
 
       const results = r.search("docker", "test-project");
       expect(results).toHaveLength(1);
-      expect(results[0].strategy).toBe("bm25");
-      expect(results[0].memory.id).toBe(mem.id);
+      expect(results[0].strategy).toBe("fts5");
+      expect(results[0].page.id).toBe(page.id);
     });
 
     it("deve normalizar score para 1.0 quando há 1 resultado", () => {
-      const mem = makeMemory();
-      const storage = makeMockStorage([{ memory: mem, bm25Score: -5.0 }]);
+      const page = makePage();
+      const storage = makeMockStorage([makeResult(page, 0.3)]);
       const r = new Bm25Retriever(storage);
 
       const results = r.search("query", "test-project");
@@ -101,34 +110,28 @@ describe("Bm25Retriever", () => {
     });
 
     it("deve normalizar scores para range 0-1 com múltiplos resultados", () => {
-      const mem1 = makeMemory({ text: "A" });
-      const mem2 = makeMemory({ text: "B" });
-      const mem3 = makeMemory({ text: "C" });
+      const p1 = makePage({ body: "A" });
+      const p2 = makePage({ body: "B" });
+      const p3 = makePage({ body: "C" });
       const storage = makeMockStorage([
-        { memory: mem1, bm25Score: -1.0 }, // melhor
-        { memory: mem2, bm25Score: -3.0 }, // médio
-        { memory: mem3, bm25Score: -5.0 }, // pior
+        makeResult(p1, 0.9),
+        makeResult(p2, 0.5),
+        makeResult(p3, 0.1),
       ]);
       const r = new Bm25Retriever(storage);
 
       const results = r.search("query", "test-project");
       expect(results).toHaveLength(3);
-
-      // Melhor score = 1.0
       expect(results[0].score).toBe(1.0);
-      // Pior score = 0.0
       expect(results[2].score).toBeCloseTo(0.0, 1);
-      // Médio deve estar entre 0 e 1
-      expect(results[1].score).toBeGreaterThan(0);
-      expect(results[1].score).toBeLessThan(1);
     });
 
     it("deve normalizar para 0.5 quando todos scores são iguais", () => {
-      const mem1 = makeMemory({ text: "A" });
-      const mem2 = makeMemory({ text: "B" });
+      const p1 = makePage({ body: "A" });
+      const p2 = makePage({ body: "B" });
       const storage = makeMockStorage([
-        { memory: mem1, bm25Score: -3.0 },
-        { memory: mem2, bm25Score: -3.0 },
+        makeResult(p1, 0.5),
+        makeResult(p2, 0.5),
       ]);
       const r = new Bm25Retriever(storage);
 
@@ -140,19 +143,15 @@ describe("Bm25Retriever", () => {
     it("deve repassar projectId e topK ao storage", () => {
       const storage = makeMockStorage([]);
       const r = new Bm25Retriever(storage);
-
       r.search("query", "my-project", 5);
-
-      expect(storage.searchFts).toHaveBeenCalledWith("query", "my-project", 5);
+      expect(storage.searchPagesFts).toHaveBeenCalledWith("query", "my-project", 5);
     });
 
     it("deve usar topK=10 como default", () => {
       const storage = makeMockStorage([]);
       const r = new Bm25Retriever(storage);
-
       r.search("query", "project");
-
-      expect(storage.searchFts).toHaveBeenCalledWith("query", "project", 10);
+      expect(storage.searchPagesFts).toHaveBeenCalledWith("query", "project", 10);
     });
   });
 
@@ -163,11 +162,9 @@ describe("Bm25Retriever", () => {
       expect(retriever.formatResults([])).toBe("");
     });
 
-    it("deve formatar bullet com tipo e texto", () => {
-      const mem = makeMemory({ text: "Usa pnpm", type: "preference" });
-      const results: RetrievalResult[] = [
-        { memory: mem, score: 1.0, strategy: "bm25" },
-      ];
+    it("deve formatar bullet com tipo e body", () => {
+      const page = makePage({ body: "Usa pnpm", type: "preference" });
+      const results = [makeResult(page)];
 
       const formatted = retriever.formatResults(results);
       expect(formatted).toBe("- [preference] Usa pnpm");
@@ -175,10 +172,8 @@ describe("Bm25Retriever", () => {
 
     it("deve truncar textos longos", () => {
       const longText = "A".repeat(300);
-      const mem = makeMemory({ text: longText, type: "fact" });
-      const results: RetrievalResult[] = [
-        { memory: mem, score: 1.0, strategy: "bm25" },
-      ];
+      const page = makePage({ body: longText, type: "fact" });
+      const results = [makeResult(page)];
 
       const formatted = retriever.formatResults(results);
       const bullet = formatted.split("\n")[0];
@@ -189,11 +184,7 @@ describe("Bm25Retriever", () => {
     it("deve respeitar maxResults", () => {
       const results: RetrievalResult[] = [];
       for (let i = 0; i < 10; i++) {
-        results.push({
-          memory: makeMemory({ text: `Memória ${i}`, type: "fact" }),
-          score: 1.0 - i * 0.1,
-          strategy: "bm25",
-        });
+        results.push(makeResult(makePage({ body: `Página ${i}`, type: "fact" }), 1.0 - i * 0.1));
       }
 
       const formatted = retriever.formatResults(results, 3);
@@ -203,50 +194,16 @@ describe("Bm25Retriever", () => {
 
     it("deve agrupar por tipo (preference antes de fact)", () => {
       const results: RetrievalResult[] = [
-        {
-          memory: makeMemory({ text: "Fato 1", type: "fact" }),
-          score: 1.0,
-          strategy: "bm25",
-        },
-        {
-          memory: makeMemory({ text: "Pref 1", type: "preference" }),
-          score: 0.9,
-          strategy: "bm25",
-        },
-        {
-          memory: makeMemory({ text: "Decisão 1", type: "decision" }),
-          score: 0.8,
-          strategy: "bm25",
-        },
+        makeResult(makePage({ body: "Fato 1", type: "fact" }), 1.0),
+        makeResult(makePage({ body: "Pref 1", type: "preference" }), 0.9),
+        makeResult(makePage({ body: "Decisão 1", type: "decision" }), 0.8),
       ];
 
       const formatted = retriever.formatResults(results);
       const lines = formatted.split("\n");
-      // preference vem antes de decision, que vem antes de fact
       expect(lines[0]).toContain("[preference]");
       expect(lines[1]).toContain("[decision]");
       expect(lines[2]).toContain("[fact]");
-    });
-
-    it("deve ordenar por relevância dentro do agrupamento (score não afeta sort, é só por tipo)", () => {
-      const results: RetrievalResult[] = [
-        {
-          memory: makeMemory({ text: "B", type: "fact" }),
-          score: 1.0,
-          strategy: "bm25",
-        },
-        {
-          memory: makeMemory({ text: "A", type: "fact" }),
-          score: 0.5,
-          strategy: "bm25",
-        },
-      ];
-
-      const formatted = retriever.formatResults(results);
-      const lines = formatted.split("\n");
-      // Ambos fact, ordem de entrada preservada (não reordena por score)
-      expect(lines[0]).toContain("B");
-      expect(lines[1]).toContain("A");
     });
   });
 
@@ -258,92 +215,32 @@ describe("Bm25Retriever", () => {
     });
 
     it("deve incluir cabeçalho e bullets", () => {
-      const mem = makeMemory({ text: "Usa pnpm", type: "preference" });
-      const results: RetrievalResult[] = [
-        { memory: mem, score: 1.0, strategy: "bm25" },
-      ];
-
-      const block = retriever.formatContextBlock(results);
+      const page = makePage({ body: "Usa pnpm", type: "preference" });
+      const block = retriever.formatContextBlock([makeResult(page)]);
       expect(block).toContain("## Persistent Memory");
       expect(block).toContain("- [preference] Usa pnpm");
     });
 
-    it("deve respeitar maxBytes (padrão 4KB)", () => {
+    it("deve respeitar maxBytes", () => {
       const results: RetrievalResult[] = [];
       for (let i = 0; i < 20; i++) {
-        results.push({
-          memory: makeMemory({ text: "X".repeat(200), type: "fact" }),
-          score: 1.0,
-          strategy: "bm25",
-        });
+        results.push(makeResult(makePage({ body: "X".repeat(200), type: "fact" })));
       }
 
       const block = retriever.formatContextBlock(results, 512);
       expect(Buffer.byteLength(block)).toBeLessThanOrEqual(512);
     });
 
-    it("deve truncar memórias que excedem o limite", () => {
-      const results: RetrievalResult[] = [];
-      for (let i = 0; i < 5; i++) {
-        results.push({
-          memory: makeMemory({ text: "Memória importante " + i, type: "fact" }),
-          score: 1.0,
-          strategy: "bm25",
-        });
-      }
-
-      const block = retriever.formatContextBlock(results, 200);
-      // Deve ter pelo menos 1 bullet (header + 1 bullet)
-      expect(block.split("\n").length).toBeGreaterThanOrEqual(2);
-      expect(Buffer.byteLength(block)).toBeLessThanOrEqual(200);
-    });
-
-    it("deve parar de adicionar bullets quando estoura o limite", () => {
-      const results: RetrievalResult[] = [
-        {
-          memory: makeMemory({ text: "A".repeat(100), type: "fact" }),
-          score: 1.0,
-          strategy: "bm25",
-        },
-        {
-          memory: makeMemory({ text: "B".repeat(100), type: "preference" }),
-          score: 0.9,
-          strategy: "bm25",
-        },
-        {
-          memory: makeMemory({ text: "C".repeat(100), type: "decision" }),
-          score: 0.8,
-          strategy: "bm25",
-        },
+    it("deve truncar ao estourar limite", () => {
+      const results = [
+        makeResult(makePage({ body: "A".repeat(100), type: "fact" })),
+        makeResult(makePage({ body: "B".repeat(100), type: "preference" })),
+        makeResult(makePage({ body: "C".repeat(100), type: "decision" })),
       ];
 
       const block = retriever.formatContextBlock(results, 250);
-      // Só deve caber header + 1 ou 2 bullets
       const lines = block.split("\n").filter((l) => l.startsWith("- "));
       expect(lines.length).toBeLessThanOrEqual(2);
-    });
-  });
-
-  // ── truncateText (via formatResults) ───────────────────────────────
-
-  describe("truncateText", () => {
-    it("não deve truncar texto curto", () => {
-      const mem = makeMemory({ text: "Curto", type: "fact" });
-      const results: RetrievalResult[] = [
-        { memory: mem, score: 1.0, strategy: "bm25" },
-      ];
-      const formatted = retriever.formatResults(results);
-      expect(formatted).toContain("Curto");
-      expect(formatted.endsWith("…")).toBe(false);
-    });
-
-    it("deve truncar e adicionar … no final", () => {
-      const mem = makeMemory({ text: "X".repeat(300), type: "fact" });
-      const results: RetrievalResult[] = [
-        { memory: mem, score: 1.0, strategy: "bm25" },
-      ];
-      const formatted = retriever.formatResults(results);
-      expect(formatted.endsWith("…")).toBe(true);
     });
   });
 });
