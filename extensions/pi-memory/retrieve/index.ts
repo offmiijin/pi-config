@@ -1,18 +1,16 @@
 /**
- * HybridRetriever — Retrieval híbrido: BM25 + Vector.
- * ADR-005.
+ * HybridRetriever — Retrieval híbrido: BM25 + Vector sobre páginas.
  *
  * Pipeline:
  *   1. Paralelo: BM25 (lexical) + Vector (semântico, se disponível)
- *   2. Merge: scores normalizados, dedup por id
+ *   2. Merge: scores normalizados, dedup por page.id
  *   3. Retorna top-K final
  *
  * Graceful degradation:
  *   - Sem VectorRetriever → só BM25
- *   - Com tudo → BM25 + Vector
  */
 
-import type { Memory, RetrievalResult } from "../types";
+import type { RetrievalResult } from "../types";
 import type { IStorage } from "../storage/index";
 import type { Bm25Retriever } from "./bm25";
 import type { VectorRetriever } from "./vector";
@@ -20,9 +18,7 @@ import type { VectorRetriever } from "./vector";
 // ── Config ─────────────────────────────────────────────────────────────
 
 export interface HybridRetrieverConfig {
-  /** Nº de resultados de cada estratégia antes da fusão. Default: 20 */
   candidatesPerStrategy: number;
-  /** Ativar busca vetorial? Default: true (se disponível) */
   vectorEnabled: boolean;
 }
 
@@ -58,11 +54,7 @@ export class HybridRetriever {
 
   /**
    * Busca híbrida: BM25 + Vector (se disponível).
-   * Score médio quando ambas estratégias retornam mesma memória.
-   *
-   * @param query - Texto de busca
-   * @param topK - Número de resultados finais (default: 10)
-   * @returns Resultados ranqueados com strategy indicando origem
+   * Score médio quando ambas estratégias retornam mesma página.
    */
   async search(query: string, topK = 10): Promise<RetrievalResult[]> {
     const k = this.config.candidatesPerStrategy;
@@ -76,7 +68,7 @@ export class HybridRetriever {
       try {
         vectorResults = await this.vector.searchAsResults(
           query,
-          (id) => this.storage.getMemory(id),
+          (id) => this.storage.getPageById(id),
           k
         );
       } catch {
@@ -84,18 +76,18 @@ export class HybridRetriever {
       }
     }
 
-    // Merge: scores normalizados, dedup por id
+    // Merge: dedup por page.id, média de scores
     const merged = new Map<string, RetrievalResult>();
     for (const r of bm25Results) {
-      merged.set(r.memory.id, r);
+      merged.set(r.page.id, r);
     }
     for (const r of vectorResults) {
-      const existing = merged.get(r.memory.id);
+      const existing = merged.get(r.page.id);
       if (existing) {
         existing.score = (existing.score + r.score) / 2;
         existing.strategy = "hybrid";
       } else {
-        merged.set(r.memory.id, r);
+        merged.set(r.page.id, r);
       }
     }
 
@@ -106,7 +98,6 @@ export class HybridRetriever {
 
   // ── Stats ────────────────────────────────────────────────────────
 
-  /** Componentes ativos no pipeline */
   get activeComponents(): {
     bm25: boolean;
     vector: boolean;

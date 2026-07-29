@@ -2,30 +2,6 @@
  * Tipos e interfaces da extensão pi-memory.
  */
 
-// ── Memory ─────────────────────────────────────────────────────────────
-
-export type MemoryType = "preference" | "decision" | "lesson" | "fact" | "pattern";
-
-export type MemoryScope = "project" | "user" | "session" | "global";
-
-export interface Memory {
-  id: string;
-  text: string;
-  embedding: Float32Array | null; // 384 dims (all-MiniLM-L6-v2)
-  type: MemoryType;
-  scope: MemoryScope;
-  tags: string[]; // ex: ["#preference", "#pnpm"]
-  confidence: number; // 0.0 – 1.0
-  timestamp: number; // unix ms
-  last_accessed: number; // unix ms
-  access_count: number;
-  source_ids: string[]; // observation IDs que geraram esta memória
-  superseded_by: string | null;
-  pinned: boolean;
-  project_id: string;
-  content_hash: string; // SHA256
-}
-
 // ── RawObservation (ADR-001) ───────────────────────────────────────────
 
 export type ObservationType = "tool_result" | "user_prompt";
@@ -181,15 +157,9 @@ export interface Page {
 // ── Retrieval ──────────────────────────────────────────────────────────
 
 export interface RetrievalResult {
-  memory: Memory;
-  score: number; // 0.0 – 1.0
-  strategy: "bm25" | "vector" | "hybrid";
-}
-
-export interface PageSearchResult {
   page: Page;
   snippet: string;   // primeiros 300 chars do body
-  score: number;
+  score: number; // 0.0 – 1.0
   strategy: "fts5" | "vector" | "hybrid";
 }
 
@@ -215,12 +185,12 @@ export type GatewayDecision = "KNOWN" | "PRIOR" | "NONE";
 // ── Stat counters ──────────────────────────────────────────────────────
 
 export interface MemoryStats {
-  total_memories: number;
+  total_pages: number;
   total_observations: number;
   pending_extraction: number;
   expired_observations: number;
-  by_type: Record<MemoryType, number>;
-  by_scope: Record<MemoryScope, number>;
+  by_type: Record<PageType, number>;
+  by_scope: Record<PageScope, number>;
   avg_confidence: number;
   pinned_count: number;
   operations: {

@@ -12,7 +12,7 @@ import * as path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { parseFrontmatter } from "./frontmatter";
 import type { Frontmatter } from "./frontmatter";
-import type { Page, PageSearchResult } from "../types";
+import type { Page } from "../types";
 import type { IStorage } from "../storage/index";
 
 // ── Config ─────────────────────────────────────────────────────────────

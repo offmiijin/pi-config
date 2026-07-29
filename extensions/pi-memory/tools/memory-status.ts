@@ -12,6 +12,7 @@ import { Type } from "typebox";
 import type { IStorage } from "../storage/index";
 import type { GitLayer } from "../wiki/git-layer";
 import type { PageStore } from "../storage/page-store";
+import type { PageType, PageScope } from "../types";
 
 export interface StatusDeps {
   storage: IStorage;

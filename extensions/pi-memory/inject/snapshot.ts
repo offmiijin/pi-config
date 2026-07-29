@@ -270,7 +270,7 @@ export class CacheStableInjector {
     if (results.length === 0) return "";
 
     const confThreshold = this.config.confidenceThreshold;
-    const relevant = results.filter((r) => r.memory.confidence >= confThreshold);
+    const relevant = results.filter((r) => r.page.confidence >= confThreshold);
     if (relevant.length === 0) return "";
 
     const header = ""; // header is added by buildMemoryBlock
@@ -280,12 +280,12 @@ export class CacheStableInjector {
     // Formata bullets
     const bullets: string[] = [];
     for (let i = 0; i < Math.min(relevant.length, maxBullets); i++) {
-      const mem = relevant[i].memory;
+      const page = relevant[i].page;
       const text =
-        mem.text.length > maxBulletLen
-          ? mem.text.slice(0, maxBulletLen - 1) + "…"
-          : mem.text;
-      bullets.push(`- [${mem.type}] ${text}`);
+        page.body.length > maxBulletLen
+          ? page.body.slice(0, maxBulletLen - 1) + "…"
+          : page.body;
+      bullets.push(`- [${page.type}] ${text}`);
     }
 
     // Middle-truncation

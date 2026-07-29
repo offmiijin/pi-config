@@ -10,56 +10,12 @@ import { createSqliteDb } from "./sqlite-factory";
 import type { SqliteDatabase } from "./sqlite-adapter";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Memory, MemoryType, MemoryScope, RawObservation } from "../types";
+import type { RawObservation, Page, PageType, PageScope, RetrievalResult } from "../types";
 import type { IStorage } from "./index";
 
 // ── SQL DDL ────────────────────────────────────────────────────────────
 
 const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS memories (
-  id TEXT PRIMARY KEY,
-  text TEXT NOT NULL,
-  embedding BLOB,
-  type TEXT NOT NULL,
-  scope TEXT NOT NULL,
-  tags TEXT,
-  confidence REAL DEFAULT 0.5,
-  timestamp INTEGER NOT NULL,
-  last_accessed INTEGER,
-  access_count INTEGER DEFAULT 0,
-  source_ids TEXT,
-  superseded_by TEXT,
-  pinned INTEGER DEFAULT 0,
-  project_id TEXT NOT NULL,
-  content_hash TEXT
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-  text,
-  type,
-  tags,
-  content='memories',
-  content_rowid='rowid',
-  tokenize='porter unicode61'
-);
-
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-  INSERT INTO memories_fts(rowid, text, type, tags)
-  VALUES (new.rowid, new.text, new.type, new.tags);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, rowid, text, type, tags)
-  VALUES ('delete', old.rowid, old.text, old.type, old.tags);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, rowid, text, type, tags)
-  VALUES ('delete', old.rowid, old.text, old.type, old.tags);
-  INSERT INTO memories_fts(rowid, text, type, tags)
-  VALUES (new.rowid, new.text, new.type, new.tags);
-END;
-
 CREATE TABLE IF NOT EXISTS observations (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
@@ -77,8 +33,6 @@ CREATE TABLE IF NOT EXISTS observations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_observations_ttl ON observations(ttl);
-CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
-CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
 `;
 
 // ── Pages DDL (novo modelo) ────────────────────────────────────────────
@@ -144,40 +98,9 @@ CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status);
 // ── SQL Statements (reusadas via db.query cache interno) ───────────────
 
 const SQL = {
-  insertMemory: `
-    INSERT INTO memories (id, text, embedding, type, scope, tags, confidence,
-      timestamp, last_accessed, access_count, source_ids, superseded_by,
-      pinned, project_id, content_hash)
-    VALUES ($id, $text, $embedding, $type, $scope, $tags, $confidence,
-      $timestamp, $last_accessed, $access_count, $source_ids, $superseded_by,
-      $pinned, $project_id, $content_hash)
-  `,
-
-  getMemory: `SELECT * FROM memories WHERE id = $id`,
-
-  getMemoriesByProject: `SELECT * FROM memories WHERE project_id = $project_id ORDER BY timestamp DESC`,
-
-  getMemoryByHash: `SELECT * FROM memories WHERE project_id = $project_id AND content_hash = $content_hash`,
-
-  getMemoryByHashGlobal: `SELECT * FROM memories WHERE content_hash = $content_hash LIMIT 1`,
-
-  updateMemory: `
-    UPDATE memories SET
-      text = $text, embedding = $embedding, type = $type, scope = $scope,
-      tags = $tags, confidence = $confidence, timestamp = $timestamp,
-      last_accessed = $last_accessed, access_count = $access_count,
-      source_ids = $source_ids, superseded_by = $superseded_by,
-      pinned = $pinned, project_id = $project_id, content_hash = $content_hash
-    WHERE id = $id
-  `,
-
-  deleteMemory: `DELETE FROM memories WHERE id = $id`,
-
-  getAllMemories: `SELECT * FROM memories ORDER BY timestamp DESC`,
-
-  deleteAllMemories: `DELETE FROM memories WHERE project_id = $project_id`,
-
   deleteAllObservations: `DELETE FROM observations WHERE project_id = $project_id`,
+
+  deleteAllPages: `DELETE FROM pages WHERE project_id = $project_id`,
 
   insertObservation: `
     INSERT INTO observations (id, session_id, project_id, timestamp, type,
@@ -196,40 +119,9 @@ const SQL = {
 
   deleteExpiredObservations: `DELETE FROM observations WHERE ttl < $now`,
 
-  countMemories: `SELECT COUNT(*) as count FROM memories`,
-
   countObservations: `SELECT COUNT(*) as count FROM observations`,
 
   countPendingExtraction: `SELECT COUNT(*) as count FROM observations WHERE extracted = 0`,
-
-  ftsSearch: `
-    SELECT m.*, bm25(memories_fts) as bm25_score
-    FROM memories m
-    JOIN memories_fts ON m.rowid = memories_fts.rowid
-    WHERE memories_fts MATCH $query
-      AND m.project_id = $project_id
-    ORDER BY bm25_score
-    LIMIT $limit
-  `,
-
-  ftsSearchAll: `
-    SELECT m.*, bm25(memories_fts) as bm25_score
-    FROM memories m
-    JOIN memories_fts ON m.rowid = memories_fts.rowid
-    WHERE memories_fts MATCH $query
-    ORDER BY bm25_score
-    LIMIT $limit
-  `,
-
-  getMemoriesWithEmbeddings: `SELECT * FROM memories WHERE project_id = $project_id AND embedding IS NOT NULL`,
-
-  getMemoriesWithoutEmbedding: `SELECT * FROM memories WHERE project_id = $project_id AND embedding IS NULL ORDER BY timestamp ASC`,
-
-  getAllMemoriesWithEmbeddings: `SELECT * FROM memories WHERE embedding IS NOT NULL`,
-
-  getAllMemoriesWithoutEmbedding: `SELECT * FROM memories WHERE embedding IS NULL ORDER BY timestamp ASC`,
-
-  updateEmbedding: `UPDATE memories SET embedding = $embedding WHERE id = $id`,
 
   // ── Pages ────────────────────────────────────────────────────────────
 
@@ -267,7 +159,7 @@ const SQL = {
     LIMIT $limit
   `,
 
-  countPages: `SELECT COUNT(*) as count FROM pages`,
+  countPages: `SELECT COUNT(*) as count FROM pages WHERE status = 'active'`,
 
   getPagesWithEmbeddings: `SELECT p.* FROM pages p JOIN page_embeddings e ON p.id = e.page_id WHERE p.project_id = $project_id`,
 
@@ -294,88 +186,8 @@ export class SqliteStore implements IStorage {
     this.db.exec(SCHEMA_PAGES_SQL);
   }
 
-  // ── Memória ────────────────────────────────────────────────────────
-
-  insertMemory(mem: Memory): void {
-    this.db.prepare(SQL.insertMemory).run({
-      $id: mem.id,
-      $text: mem.text,
-      $embedding: mem.embedding ? new Uint8Array(mem.embedding.buffer) : null,
-      $type: mem.type,
-      $scope: mem.scope,
-      $tags: JSON.stringify(mem.tags),
-      $confidence: mem.confidence,
-      $timestamp: mem.timestamp,
-      $last_accessed: mem.last_accessed,
-      $access_count: mem.access_count,
-      $source_ids: JSON.stringify(mem.source_ids),
-      $superseded_by: mem.superseded_by,
-      $pinned: mem.pinned ? 1 : 0,
-      $project_id: mem.project_id,
-      $content_hash: mem.content_hash,
-    });
-  }
-
-  getMemory(id: string): Memory | null {
-    const row = this.db.prepare(SQL.getMemory).get({ $id: id }) as Record<string, unknown> | undefined;
-    return row ? this.rowToMemory(row) : null;
-  }
-
-  getMemoriesByProject(projectId: string): Memory[] {
-    const rows = this.db.prepare(SQL.getMemoriesByProject).all({
-      $project_id: projectId,
-    }) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToMemory(r));
-  }
-
-  /** Returns ALL memories (no project filter). Used by global DB queries. */
-  getAllMemories(): Memory[] {
-    const rows = this.db.prepare(SQL.getAllMemories).all() as Record<string, unknown>[];
-    return rows.map((r) => this.rowToMemory(r));
-  }
-
-  getMemoryByHash(projectId: string, contentHash: string): Memory | null {
-    const row = this.db.prepare(SQL.getMemoryByHash).get({
-      $project_id: projectId,
-      $content_hash: contentHash,
-    }) as Record<string, unknown> | undefined;
-    return row ? this.rowToMemory(row) : null;
-  }
-
-  /** Hash lookup across all project_ids (used by global DB). */
-  getMemoryByHashGlobal(contentHash: string): Memory | null {
-    const row = this.db.prepare(SQL.getMemoryByHashGlobal).get({
-      $content_hash: contentHash,
-    }) as Record<string, unknown> | undefined;
-    return row ? this.rowToMemory(row) : null;
-  }
-
-  updateMemory(mem: Memory): void {
-    this.db.prepare(SQL.updateMemory).run({
-      $id: mem.id,
-      $text: mem.text,
-      $embedding: mem.embedding ? new Uint8Array(mem.embedding.buffer) : null,
-      $type: mem.type,
-      $scope: mem.scope,
-      $tags: JSON.stringify(mem.tags),
-      $confidence: mem.confidence,
-      $timestamp: mem.timestamp,
-      $last_accessed: mem.last_accessed,
-      $access_count: mem.access_count,
-      $source_ids: JSON.stringify(mem.source_ids),
-      $superseded_by: mem.superseded_by,
-      $pinned: mem.pinned ? 1 : 0,
-      $project_id: mem.project_id,
-      $content_hash: mem.content_hash,
-    });
-  }
-
-  deleteMemory(id: string): void {
-    this.db.prepare(SQL.deleteMemory).run({ $id: id });
-  }
-
-  deleteAllMemories(projectId: string): number {
-    const result = this.db.prepare(SQL.deleteAllMemories).run({ $project_id: projectId });
+  deleteAllPages(projectId: string): number {
+    const result = this.db.prepare(SQL.deleteAllPages).run({ $project_id: projectId });
     return result.changes;
   }
 
@@ -384,7 +196,7 @@ export class SqliteStore implements IStorage {
     return result.changes;
   }
 
-  // ── Pages (novo modelo) ────────────────────────────────────────────
+  // ── Pages ───────────────────────────────────────────────────────────
 
   insertPage(page: Page): void {
     this.db.prepare(SQL.insertPage).run({
@@ -453,7 +265,7 @@ export class SqliteStore implements IStorage {
     return !!row;
   }
 
-  searchPagesFts(query: string, projectId: string | null, limit = 20): PageSearchResult[] {
+  searchPagesFts(query: string, projectId: string | null, limit = 20): RetrievalResult[] {
     const ftsQuery = this.buildFtsQuery(query);
     const rows = this.db.prepare(SQL.pagesFtsSearch).all({
       $query: ftsQuery,
@@ -476,6 +288,34 @@ export class SqliteStore implements IStorage {
   countPages(): number {
     const row = this.db.prepare(SQL.countPages).get() as { count: number };
     return row.count;
+  }
+
+  getPageById(id: string): Page | null {
+    const row = this.db.prepare("SELECT * FROM pages WHERE id = $id").get({
+      $id: id,
+    }) as Record<string, unknown> | undefined;
+    return row ? this.rowToPage(row) : null;
+  }
+
+  getPagesWithEmbeddingData(projectId: string): Array<{ id: string; embedding: Float32Array }> {
+    const rows = this.db.prepare(`
+      SELECT p.id, e.embedding
+      FROM pages p
+      JOIN page_embeddings e ON p.id = e.page_id
+      WHERE p.project_id = $project_id
+    `).all({ $project_id: projectId }) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => {
+      const emb = r["embedding"] as Uint8Array | Buffer | ArrayBuffer;
+      return {
+        id: r["id"] as string,
+        embedding: new Float32Array(
+          emb instanceof ArrayBuffer ? emb : emb.buffer,
+          emb instanceof ArrayBuffer ? 0 : emb.byteOffset,
+          (emb instanceof ArrayBuffer ? emb.byteLength : emb.length) / 4
+        ),
+      };
+    });
   }
 
   getPagesWithEmbeddings(projectId: string): Page[] {
@@ -578,77 +418,7 @@ export class SqliteStore implements IStorage {
     return result.changes;
   }
 
-  // ── Search (FTS5 BM25) ─────────────────────────────────────────────
-
-  searchFts(query: string, projectId: string, limit = 20): Array<{ memory: Memory; bm25Score: number }> {
-    const ftsQuery = this.buildFtsQuery(query);
-    const rows = this.db.prepare(SQL.ftsSearch).all({
-      $query: ftsQuery,
-      $project_id: projectId,
-      $limit: limit,
-    }) as Array<Record<string, unknown>>;
-
-    return rows.map((r) => ({
-      memory: this.rowToMemory(r),
-      bm25Score: r["bm25_score"] as number,
-    }));
-  }
-
-  /** Search FTS across ALL projects (for global DB queries). */
-  searchFtsAll(query: string, limit = 20): Array<{ memory: Memory; bm25Score: number }> {
-    const ftsQuery = this.buildFtsQuery(query);
-    const rows = this.db.prepare(SQL.ftsSearchAll).all({
-      $query: ftsQuery,
-      $limit: limit,
-    }) as Array<Record<string, unknown>>;
-
-    return rows.map((r) => ({
-      memory: this.rowToMemory(r),
-      bm25Score: r["bm25_score"] as number,
-    }));
-  }
-
-  // ── Embeddings ─────────────────────────────────────────────────────
-
-  getMemoriesWithEmbeddings(projectId: string): Memory[] {
-    const rows = this.db.prepare(SQL.getMemoriesWithEmbeddings).all({
-      $project_id: projectId,
-    }) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToMemory(r));
-  }
-
-  getMemoriesWithoutEmbedding(projectId: string): Memory[] {
-    const rows = this.db.prepare(SQL.getMemoriesWithoutEmbedding).all({
-      $project_id: projectId,
-    }) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToMemory(r));
-  }
-
-  /** Get all memories with embeddings (no project filter — for global DB). */
-  getAllMemoriesWithEmbeddings(): Memory[] {
-    const rows = this.db.prepare(SQL.getAllMemoriesWithEmbeddings).all() as Record<string, unknown>[];
-    return rows.map((r) => this.rowToMemory(r));
-  }
-
-  /** Get all memories without embedding (no project filter — for global DB). */
-  getAllMemoriesWithoutEmbedding(): Memory[] {
-    const rows = this.db.prepare(SQL.getAllMemoriesWithoutEmbedding).all() as Record<string, unknown>[];
-    return rows.map((r) => this.rowToMemory(r));
-  }
-
-  updateEmbedding(id: string, embedding: Float32Array): void {
-    this.db.prepare(SQL.updateEmbedding).run({
-      $id: id,
-      $embedding: new Uint8Array(embedding.buffer, embedding.byteOffset, embedding.byteLength),
-    });
-  }
-
   // ── Stats ──────────────────────────────────────────────────────────
-
-  countMemories(): number {
-    const row = this.db.prepare(SQL.countMemories).get() as { count: number };
-    return row.count;
-  }
 
   countObservations(): number {
     const row = this.db.prepare(SQL.countObservations).get() as { count: number };
@@ -671,33 +441,6 @@ export class SqliteStore implements IStorage {
   }
 
   // ── Serialization ──────────────────────────────────────────────────
-
-  private rowToMemory(row: Record<string, unknown>): Memory {
-    const emb = row["embedding"] as Uint8Array | Buffer | ArrayBuffer | null;
-    return {
-      id: row["id"] as string,
-      text: row["text"] as string,
-      embedding: emb
-        ? new Float32Array(
-            emb instanceof ArrayBuffer ? emb : emb.buffer,
-            emb instanceof ArrayBuffer ? 0 : emb.byteOffset,
-            (emb instanceof ArrayBuffer ? emb.byteLength : emb.length) / 4
-          )
-        : null,
-      type: row["type"] as MemoryType,
-      scope: row["scope"] as MemoryScope,
-      tags: JSON.parse((row["tags"] as string) || "[]"),
-      confidence: row["confidence"] as number,
-      timestamp: row["timestamp"] as number,
-      last_accessed: row["last_accessed"] as number,
-      access_count: row["access_count"] as number,
-      source_ids: JSON.parse((row["source_ids"] as string) || "[]"),
-      superseded_by: (row["superseded_by"] as string) || null,
-      pinned: (row["pinned"] as number) === 1,
-      project_id: row["project_id"] as string,
-      content_hash: row["content_hash"] as string,
-    };
-  }
 
   private rowToPage(row: Record<string, unknown>): Page {
     return {

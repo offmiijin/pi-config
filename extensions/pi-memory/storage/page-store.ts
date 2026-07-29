@@ -21,7 +21,7 @@ import { GitLayer } from "../wiki/git-layer";
 import type { GitLayerConfig } from "../wiki/git-layer";
 import { slugifyPathByType, resolveUniquePath } from "../wiki/slugify";
 import type { Frontmatter } from "../wiki/frontmatter";
-import type { Page, PageType, PageScope, PageSearchResult } from "../types";
+import type { Page, PageType, PageScope, RetrievalResult } from "../types";
 import type { IStorage } from "./index";
 
 // ── Write params ───────────────────────────────────────────────────────
@@ -185,7 +185,7 @@ export class PageStore {
    * Busca páginas via FTS5.
    * Se projectId for específico, inclui páginas globais (_global).
    */
-  searchPages(query: string, projectId: string | null, topK = 10): PageSearchResult[] {
+  searchPages(query: string, projectId: string | null, topK = 10): RetrievalResult[] {
     return this.storage.searchPagesFts(query, projectId, topK);
   }
 

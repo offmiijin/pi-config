@@ -16,7 +16,6 @@ import { createCaptureHooks } from "./capture/hooks";
 
 import { LlmExtractor } from "./extract/llm-extractor";
 import type { LlmExtractorConfig } from "./extract/llm-extractor";
-import { SweepConsolidator } from "./consolidate/sweep";
 import { Bm25Retriever } from "./retrieve/bm25";
 import { EmbeddingService } from "./utils/embedding";
 import { VectorRetriever } from "./retrieve/vector";
@@ -41,7 +40,6 @@ let storage: IStorage | null = null;
 let buffer: ObservationBuffer | null = null;
 let retriever: Bm25Retriever | null = null;
 let llmExtractor: LlmExtractor | null = null;
-let sweepConsolidator: SweepConsolidator | null = null;
 let embeddingService: EmbeddingService | null = null;
 let vectorRetriever: VectorRetriever | null = null;
 let hybridRetriever: HybridRetriever | null = null;
@@ -52,12 +50,12 @@ let sessionId: string | null = null;
 
 function resetStats(): MemoryStats {
   return {
-    total_memories: 0,
+    total_pages: 0,
     total_observations: 0,
     pending_extraction: 0,
     expired_observations: 0,
-    by_type: { preference: 0, decision: 0, lesson: 0, fact: 0, pattern: 0 },
-    by_scope: { project: 0, user: 0, session: 0, global: 0 },
+    by_type: { preference: 0, decision: 0, lesson: 0, fact: 0, pattern: 0, session: 0 },
+    by_scope: { project: 0, global: 0 },
     avg_confidence: 0,
     pinned_count: 0,
     operations: {
@@ -75,24 +73,17 @@ function resetStats(): MemoryStats {
 }
 
 export default function (pi: ExtensionAPI) {
-  // ── Carregar .env (API key segura, fora do alcance do agente) ─────
   loadEnvFile();
-
-  // ── Verificação de runtime ──────────────────────────────────────
-  // Em Node.js sem better-sqlite3, emite warning cedo.
   checkRuntime();
 
-  // ── Flag ──────────────────────────────────────────────────────────
   pi.registerFlag?.("no-memory", {
     description: "Disable persistent memory for this session",
     type: "boolean",
     default: false,
   });
 
-  // ── Carregar configuração (inclui migração automática) ──
   config = loadConfig(pi.projectDir);
 
-  // --no-memory flag sobrescreve config
   if (pi.getFlag?.("no-memory")) {
     config.disabled = true;
   }
@@ -105,28 +96,19 @@ export default function (pi: ExtensionAPI) {
 
   // ── Lifecycle: session_start ──────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
-    // Recarrega config do disco (aplica mudanças feitas via /memory)
     config = loadConfig(pi.projectDir);
 
-    if (config.disabled) {
-      return;
-    }
-
-    // Já inicializado? (ex: reload)
+    if (config.disabled) return;
     if (storage) return;
 
     const projectId = hashProjectId(pi.projectDir ?? "default");
     sessionId = randomUUID();
-
-    // Cria diretório de dados
     const dbPath = path.join(config.data_dir, `${projectId}.db`);
 
     try {
-      // Inicializa storage
       storage = new SqliteStore(dbPath);
       storage.open();
 
-      // Inicializa PageStore + GitLayer
       const wikiRoot = path.join(config.data_dir, "wiki");
       pageStore = new PageStore(wikiRoot, storage, {
         enabled: true,
@@ -140,19 +122,18 @@ export default function (pi: ExtensionAPI) {
       });
       gitLayer.init();
 
-      // Inicializa buffer
       buffer = new ObservationBuffer(
         config.buffer_max_size,
         config.buffer_flush_interval_ms
       );
       buffer.attach(storage);
 
-      // Inicializa retriever (BM25), se habilitado
+      // ── Retrievers (baseados em páginas) ──
       if (config.retrieval.bm25_enabled) {
         retriever = new Bm25Retriever(storage);
       }
 
-      // Inicializa embedding service + vector retriever (Fase 2.4)
+      // ── Vector search (opt-in) ──
       if (config.retrieval.vector.local.enabled || config.retrieval.vector.api.enabled) {
         const apiKey = process.env.VECTOR_API_KEY || "";
 
@@ -165,15 +146,11 @@ export default function (pi: ExtensionAPI) {
           preferApi: config.retrieval.vector.api.enabled && !config.retrieval.vector.local.enabled,
         });
 
-        // Cria VectorRetriever imediatamente (síncrono) — referência válida
-        // para HybridRetriever. O índice começa vazio; busca degrada
-        // graciosamente via catch até o embedding service ficar pronto.
         vectorRetriever = new VectorRetriever(embeddingService);
 
-        // Inicializa em background (não bloqueia session_start)
         embeddingService.initialize().then(() => {
           if (embeddingService?.isReady && storage) {
-            // Backfill: gera embeddings para memórias sem embedding
+            // Backfill: gera embeddings para páginas sem embedding
             runEmbeddingBackfill(
               storage,
               embeddingService,
@@ -186,25 +163,22 @@ export default function (pi: ExtensionAPI) {
                   "info"
                 );
               }
-            }).catch(() => {
-              // Backfill falhou, mas o sistema continua funcional
-            });
+            }).catch(() => {});
 
             // Reconstrói índice com embeddings existentes
             try {
-              const withEmb = storage.getMemoriesWithEmbeddings(projectId);
-              vectorRetriever!.buildIndex(withEmb);
+              const embData = storage.getPagesWithEmbeddingData(projectId);
+              vectorRetriever!.buildIndex(embData);
             } catch {
               // Índice vazio, continua sem vector search
             }
           }
         }).catch(() => {
-          // Embedding service falhou, sistema continua com BM25 apenas
           embeddingService = null;
         });
       }
 
-      // Inicializa HybridRetriever — quando hybrid ou vector habilitado
+      // ── HybridRetriever ──
       const vectorEnabled = config.retrieval.vector.local.enabled || config.retrieval.vector.api.enabled;
       const needsHybrid = config.retrieval.hybrid_enabled || vectorEnabled;
 
@@ -225,9 +199,9 @@ export default function (pi: ExtensionAPI) {
         : retriever
           ? (query: string) =>
             Promise.resolve(retriever!.search(query, projectId, config.retrieval.default_top_k))
-          : async () => [];
+          : async () => [] as RetrievalResult[];
 
-      // Inicializa CacheStableInjector (Fase 2.6)
+      // ── CacheStableInjector ──
       cacheStableInjector = new CacheStableInjector(
         searchFn,
         {
@@ -238,7 +212,7 @@ export default function (pi: ExtensionAPI) {
         }
       );
 
-      // Inicializa extrator N3 (LLM) se configurado
+      // ── LLM Extractor (N3) ──
       const llmEnabled =
         config.extraction_level === "llm" ||
         config.extraction_level === "kg" ||
@@ -263,39 +237,17 @@ export default function (pi: ExtensionAPI) {
               stats.operations.extractions_n3 += count;
             },
           );
-
-          // Inicializa sweep consolidator (N2)
-          sweepConsolidator = new SweepConsolidator(
-            storage,
-            llmExtractor,
-            projectId,
-            {
-              intervalMs: config.llm_extraction.sweep_consolidator_interval_ms,
-              observationThreshold: config.llm_extraction.sweep_observation_threshold,
-              decayEnabled: config.consolidation.decay_enabled,
-              decayDays: config.consolidation.decay_days,
-              decayFactor: config.consolidation.decay_factor,
-              pruningEnabled: config.consolidation.pruning_enabled,
-              pruningConfidenceThreshold: config.consolidation.pruning_confidence_threshold,
-              pruningAgeDays: config.consolidation.pruning_age_days,
-            },
-            () => {
-              stats.operations.consolidations_n2++;
-            },
-          );
-          sweepConsolidator.schedule();
         }
       }
 
       if (ctx?.hasUI) {
-        const memCount = storage.countMemories();
+        const pageCount = storage.countPages();
         ctx.ui.notify(
-          `🧠 pi-memory carregado (${memCount} memórias)`,
+          `🧠 pi-memory carregado (${pageCount} páginas)`,
           "info"
         );
       }
     } catch (err) {
-      // Falha não deve quebrar o agente
       if (ctx?.hasUI) {
         ctx.ui.notify(
           `⚠️ pi-memory: falha ao inicializar storage: ${(err as Error).message}`,
@@ -335,7 +287,7 @@ export default function (pi: ExtensionAPI) {
 
     const projectId = hashProjectId(pi.projectDir ?? "default");
 
-    // 1. CAPTURE: registra user prompt como observação
+    // CAPTURE: registra user prompt como observação
     if (buffer && sessionId) {
       const hooks = createCaptureHooks({
         buffer,
@@ -350,17 +302,12 @@ export default function (pi: ExtensionAPI) {
       stats.operations.captures++;
     }
 
-    // TTL cleanup: se não há sweep (N3 desligado), limpa observações expiradas
-    // a cada turno para evitar acúmulo infinito
-    if (!sweepConsolidator && storage) {
-      try {
-        storage.cleanupExpired(Date.now());
-      } catch {
-        // Best-effort
-      }
-    }
+    // TTL cleanup best-effort
+    try {
+      storage.cleanupExpired(Date.now());
+    } catch { /* best-effort */ }
 
-    // 2. INJECT: bloco de memória via cache snapshot (Fase 2.6)
+    // INJECT: bloco de memória via cache snapshot
     const prompt = (event as { prompt: string }).prompt ?? "";
     const memoryBlock = await cacheStableInjector.getMemoryBlock(prompt);
 
@@ -382,7 +329,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async (event, _ctx) => {
     if (!llmExtractor || !storage) return;
 
-    // Verifica se turno foi "rico" (teve bash/edit/write)
     const toolResults: Array<{ toolName?: string }> =
       (event as Record<string, unknown>)["toolResults"] as Array<{ toolName?: string }> ?? [];
 
@@ -393,10 +339,8 @@ export default function (pi: ExtensionAPI) {
 
     if (!isRich) return;
 
-    // Flush buffer para garantir que observações estão no storage
     if (buffer) buffer.flush();
 
-    // Coleta observações pendentes de extração
     const projectId = hashProjectId(pi.projectDir ?? "default");
     const pending = storage.getPendingObservations(projectId);
 
@@ -407,7 +351,6 @@ export default function (pi: ExtensionAPI) {
 
   // ── Lifecycle: session_before_compact ─────────────────────────────
   pi.on("session_before_compact", async (_event, _ctx) => {
-    // Invalida snapshot: handoff capturado, rebuild obrigatório
     if (cacheStableInjector) {
       cacheStableInjector.invalidate();
     }
@@ -415,33 +358,20 @@ export default function (pi: ExtensionAPI) {
 
   // ── Lifecycle: session_shutdown ───────────────────────────────────
   pi.on("session_shutdown", async (_event, _ctx) => {
-    // Flush buffer
     if (buffer) {
       buffer.flush();
       buffer.detach();
       buffer = null;
     }
 
-    // Fecha storage
     if (storage) {
-      try {
-        storage.close();
-      } catch {
-        // Best-effort
-      }
+      try { storage.close(); } catch { /* best-effort */ }
       storage = null;
     }
 
-    // Shutdown N3 extractor
     if (llmExtractor) {
       llmExtractor.shutdown();
       llmExtractor = null;
-    }
-
-    // Stop sweep
-    if (sweepConsolidator) {
-      sweepConsolidator.stop();
-      sweepConsolidator = null;
     }
 
     retriever = null;
@@ -456,10 +386,6 @@ export default function (pi: ExtensionAPI) {
 
   // ── Tools ─────────────────────────────────────────────────────────
   const projectId = hashProjectId(pi.projectDir ?? "default");
-
-  // Tools recebem lazy getters — resolvem pageStore/storage no momento
-  // da chamada, não no momento do registro (que ocorre antes de
-  // session_start inicializar esses objetos).
 
   pi.registerTool({
     ...createMemorySearchTool(
@@ -478,7 +404,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     ...createMemoryRestoreTool(() => ({
       pageStore: pageStore ?? (null as unknown as PageStore),
-      wikiRoot,
+      wikiRoot: path.join(config.data_dir, "wiki"),
       gitLayer,
       projectId,
     })),
@@ -497,7 +423,6 @@ export default function (pi: ExtensionAPI) {
     description: "Configure pi-memory: vector, llm, decay, pruning, clear data. TUI only.",
     getArgumentCompletions: () => null,
     handler: async (_args, ctx) => {
-      // helper: recarrega config do disco para o modulo (global apenas)
       const reloadConfigFromDisk = () => {
         const cfgPath = extraConfigPath();
         try {
@@ -509,7 +434,6 @@ export default function (pi: ExtensionAPI) {
         } catch { /* ignora */ }
       };
 
-      // helper: salva config no ~/.pi/agent/extensions/pi-memory.json
       const saveConfigToDisk = (patch: Partial<PiMemoryConfig>) => {
         const configPath = extraConfigPath();
         const configDir = path.dirname(configPath);
@@ -535,7 +459,6 @@ export default function (pi: ExtensionAPI) {
 
       reloadConfigFromDisk();
 
-      // helpers de display
       const modeLabel = (feat: string): string => {
         if (feat === "vector") {
           const v = config.retrieval.vector;
@@ -559,7 +482,6 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // TUI: SettingsList
       let configTarget: string | null = null;
       try {
         const { Container, SettingsList } = await import("@earendil-works/pi-tui");
@@ -633,7 +555,6 @@ export default function (pi: ExtensionAPI) {
           };
         });
 
-        // Configuracao externa (apos fechar SettingsList)
         if (configTarget === "vector") {
           const curLocal = config.retrieval.vector.local.enabled;
           const curApi   = config.retrieval.vector.api.enabled;
@@ -706,119 +627,63 @@ export default function (pi: ExtensionAPI) {
             curMode
           );
 
-          if (!mode || mode === curMode) {
-            // Nada mudou ou cancelado
-          } else if (mode === "off") {
-            // Desabilita
-            saveEnvKey("LLM_API_KEY", "");
-            saveConfigToDisk({
-              extraction_level: "none",
-              llm_extraction: { enabled: false },
-            } as unknown as Partial<PiMemoryConfig>);
-            ctx.ui.notify("LLM extraction disabled. Run /reload to apply.", "success");
-          } else {
-            // API mode — resolve chave
-            const curKey = process.env.LLM_API_KEY || "";
-            let hasKey = !!curKey;
-            let cancelled = false;
-
-            // Coleta chaves existentes de outros serviços
-            const otherKeys: Array<{ label: string; varName: string }> = [];
-            if (process.env.VECTOR_API_KEY) otherKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
-
-            if (otherKeys.length > 0) {
-              const reuseOpts = [
-                curKey ? "Enter different key" : "Enter new key",
-                ...otherKeys.map((k) => `Reuse ${k.label}`),
-              ];
-              const reuseChoice = await ctx.ui.select(
-                "API key for LLM",
-                reuseOpts,
-                reuseOpts[0]
-              );
-
-              if (reuseChoice && reuseChoice.startsWith("Reuse")) {
-                const chosen = otherKeys.find((k) => `Reuse ${k.label}` === reuseChoice);
-                if (chosen) {
-                  saveEnvKey("LLM_API_KEY", process.env[chosen.varName]!);
-                  hasKey = true;
-                }
-              } else if (curKey) {
-                // Já tem chave — input com atual como default
-                const result = await ctx.ui.input(
-                  "API key for LLM",
-                  "Leave as-is to keep current key, or enter a new one.",
-                  curKey
-                );
-                if (result !== null && result !== undefined) {
-                  const trimmed = result.trim();
-                  if (trimmed) {
-                    saveEnvKey("LLM_API_KEY", trimmed);
-                  }
-                  hasKey = true;
-                } else {
-                  cancelled = true;
-                }
-              } else {
-                // Não tem chave — input vazio
-                const result = await ctx.ui.input(
-                  "API key for LLM",
-                  "Required for LLM extraction. Will be saved to extensions/pi-memory/.env",
-                  ""
-                );
-                if (result && result.trim()) {
-                  saveEnvKey("LLM_API_KEY", result.trim());
-                  hasKey = true;
-                } else {
-                  cancelled = true;
-                }
-              }
-            } else {
-              // Nenhuma outra chave — input direto
-              if (curKey) {
-                const result = await ctx.ui.input(
-                  "API key for LLM",
-                  "Leave as-is to keep current key, or enter a new one.",
-                  curKey
-                );
-                if (result !== null && result !== undefined) {
-                  const trimmed = result.trim();
-                  if (trimmed) {
-                    saveEnvKey("LLM_API_KEY", trimmed);
-                  }
-                  hasKey = true;
-                } else {
-                  cancelled = true;
-                }
-              } else {
-                const result = await ctx.ui.input(
-                  "API key for LLM",
-                  "Required for LLM extraction. Will be saved to extensions/pi-memory/.env",
-                  ""
-                );
-                if (result && result.trim()) {
-                  saveEnvKey("LLM_API_KEY", result.trim());
-                  hasKey = true;
-                } else {
-                  cancelled = true;
-                }
-              }
-            }
-
-            if (cancelled) {
-              ctx.ui.notify("LLM configuration cancelled.", "info");
-            } else if (hasKey) {
-              const model = "mistralai/mistral-nemo";
+          if (mode && mode !== curMode) {
+            if (mode === "off") {
+              saveEnvKey("LLM_API_KEY", "");
               saveConfigToDisk({
-                extraction_level: "llm",
-                llm_extraction: { model, enabled: true },
+                extraction_level: "none",
+                llm_extraction: { enabled: false },
               } as unknown as Partial<PiMemoryConfig>);
-              ctx.ui.notify("LLM configured. Run /reload to apply.", "success");
+              ctx.ui.notify("LLM extraction disabled. Run /reload to apply.", "success");
+            } else {
+              const curKey = process.env.LLM_API_KEY || "";
+              let hasKey = !!curKey;
+              let cancelled = false;
+
+              const otherKeys: Array<{ label: string; varName: string }> = [];
+              if (process.env.VECTOR_API_KEY) otherKeys.push({ label: "Vector API key", varName: "VECTOR_API_KEY" });
+
+              if (otherKeys.length > 0) {
+                const reuseOpts = [
+                  curKey ? "Enter different key" : "Enter new key",
+                  ...otherKeys.map((k) => `Reuse ${k.label}`),
+                ];
+                const reuseChoice = await ctx.ui.select("API key for LLM", reuseOpts, reuseOpts[0]);
+
+                if (reuseChoice && reuseChoice.startsWith("Reuse")) {
+                  const chosen = otherKeys.find((k) => `Reuse ${k.label}` === reuseChoice);
+                  if (chosen) { saveEnvKey("LLM_API_KEY", process.env[chosen.varName]!); hasKey = true; }
+                } else if (curKey) {
+                  const result = await ctx.ui.input("API key for LLM", "Leave as-is to keep current key, or enter a new one.", curKey);
+                  if (result !== null && result !== undefined) { const t = result.trim(); if (t) { saveEnvKey("LLM_API_KEY", t); } hasKey = true; } else { cancelled = true; }
+                } else {
+                  const result = await ctx.ui.input("API key for LLM", "Required for LLM extraction.", "");
+                  if (result && result.trim()) { saveEnvKey("LLM_API_KEY", result.trim()); hasKey = true; } else { cancelled = true; }
+                }
+              } else {
+                if (curKey) {
+                  const result = await ctx.ui.input("API key for LLM", "Leave as-is to keep current key, or enter a new one.", curKey);
+                  if (result !== null && result !== undefined) { const t = result.trim(); if (t) { saveEnvKey("LLM_API_KEY", t); } hasKey = true; } else { cancelled = true; }
+                } else {
+                  const result = await ctx.ui.input("API key for LLM", "Required for LLM extraction.", "");
+                  if (result && result.trim()) { saveEnvKey("LLM_API_KEY", result.trim()); hasKey = true; } else { cancelled = true; }
+                }
+              }
+
+              if (cancelled) {
+                ctx.ui.notify("LLM configuration cancelled.", "info");
+              } else if (hasKey) {
+                const model = "mistralai/mistral-nemo";
+                saveConfigToDisk({
+                  extraction_level: "llm",
+                  llm_extraction: { model, enabled: true },
+                } as unknown as Partial<PiMemoryConfig>);
+                ctx.ui.notify("LLM configured. Run /reload to apply.", "success");
+              }
             }
           }
         }
 
-        // Clear: confirmacao + delecao
         if (configTarget === "clear") {
           const confirmed = await ctx.ui.confirm(
             "Clear all data?",
@@ -827,13 +692,12 @@ export default function (pi: ExtensionAPI) {
           if (!confirmed) {
             ctx.ui.notify("Clear cancelled.", "info");
           } else {
-            // Usa pi.projectDir (mesmo do session_start), não ctx.cwd (que difere)
             const pid = hashProjectId(pi.projectDir ?? "default");
-            let memDel = 0;
+            let pageDel = 0;
             let obsDel = 0;
             try {
               if (storage) {
-                memDel = storage.deleteAllMemories(pid);
+                pageDel = storage.deleteAllPages(pid);
                 obsDel = storage.deleteAllObservations(pid);
                 if (cacheStableInjector) cacheStableInjector.invalidate();
                 if (vectorRetriever) vectorRetriever.clear();
@@ -842,32 +706,25 @@ export default function (pi: ExtensionAPI) {
             } catch (e) {
               ctx.ui.notify("Clear failed: " + (e as Error).message, "error");
             }
-            if (memDel > 0 || obsDel > 0) {
-              ctx.ui.notify("Cleared: " + memDel + " pages, " + obsDel + " observations removed from index.", "success");
+            if (pageDel > 0 || obsDel > 0) {
+              ctx.ui.notify("Cleared: " + pageDel + " pages, " + obsDel + " observations removed.", "success");
             } else {
-              ctx.ui.notify("No pages found for project " + pid + ".", "warning");
+              ctx.ui.notify("No data found for project " + pid + ".", "warning");
             }
           }
         }
       } catch (e) {
         ctx.ui.notify("TUI error: " + (e as Error).message, "error");
-      } 
+      }
     },
   });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-/**
- * Verifica se o runtime tem o necessário para storage.
- * Em Node.js sem better-sqlite3, emite warning via console.
- * Não lança erro — o sistema degrada graciosamente no session_start.
- */
 function checkRuntime(): void {
-  // Só verifica em Node (Bun tem bun:sqlite nativo)
   if (typeof (globalThis as any).Bun !== "undefined") return;
 
-  // Node: verifica se better-sqlite3 está disponível
   try {
     createRequire(import.meta.url)("better-sqlite3");
   } catch {
@@ -881,7 +738,6 @@ function checkRuntime(): void {
   }
 }
 
-/** Faz deep merge de um patch no objeto config em memória (mutação in-place) */
 function deepMergeConfig(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const key of Object.keys(source)) {
     const sv = source[key];
@@ -897,15 +753,10 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Caminho do arquivo .env relativo a este módulo */
 function envFilePath(): string {
   return path.join(path.dirname(new URL(import.meta.url).pathname), '.env');
 }
 
-/**
- * Carrega variáveis do arquivo .env para process.env.
- * Apenas chaves ainda não definidas (não sobrescreve env vars existentes).
- */
 function loadEnvFile(): void {
   try {
     const envPath = envFilePath();
@@ -918,9 +769,7 @@ function loadEnvFile(): void {
       if (eqIdx === -1) continue;
       const key = trimmed.slice(0, eqIdx).trim();
       const val = trimmed.slice(eqIdx + 1).trim();
-      // Remove quotes wrapping
       const cleanVal = val.replace(/^["']|["']$/g, '');
-      // Só define se não existir (env var do shell tem prioridade)
       if (!process.env[key] && cleanVal) {
         process.env[key] = cleanVal;
       }
@@ -930,10 +779,6 @@ function loadEnvFile(): void {
   }
 }
 
-/**
- * Salva (ou remove) uma variável de ambiente no arquivo .env.
- * Se value for vazia, remove a linha do arquivo.
- */
 function saveEnvKey(varName: string, value: string): void {
   try {
     const envPath = envFilePath();
@@ -956,7 +801,6 @@ function saveEnvKey(varName: string, value: string): void {
       if (!found) lines.push(newLine);
       process.env[varName] = value;
     } else {
-      // Remove linha
       lines = lines.filter(l => !l.trimStart().startsWith(`${varName}=`));
       delete process.env[varName];
     }
@@ -967,13 +811,8 @@ function saveEnvKey(varName: string, value: string): void {
   }
 }
 
-/**
- * Gera um ID de projeto curto (8 chars hex) a partir do diretório.
- * Estável: mesmo diretório = mesmo ID.
- */
 function hashProjectId(projectDir: string): string {
   if (!projectDir || projectDir === "default") return "default";
-  // Hash simples: soma de charCodes mod 16^8
   let hash = 0;
   for (let i = 0; i < projectDir.length; i++) {
     hash = (hash * 31 + projectDir.charCodeAt(i)) >>> 0;
@@ -982,10 +821,8 @@ function hashProjectId(projectDir: string): string {
 }
 
 /**
- * Backfill de embeddings: gera e persiste embeddings para memórias
+ * Backfill de embeddings: gera e persiste embeddings para páginas
  * que ainda não têm. Atualiza o VectorRetriever incrementalmente.
- *
- * @returns Número de embeddings gerados
  */
 async function runEmbeddingBackfill(
   storage: IStorage,
@@ -993,32 +830,31 @@ async function runEmbeddingBackfill(
   vecRetriever: VectorRetriever,
   projectId: string
 ): Promise<number> {
-  const withoutEmb = storage.getMemoriesWithoutEmbedding(projectId);
+  const withoutEmb = storage.getPagesWithoutEmbedding(projectId);
   if (withoutEmb.length === 0) return 0;
 
-  const texts = withoutEmb.map((m) => m.text);
+  const texts = withoutEmb.map((p) => p.body);
   let count = 0;
 
   try {
-    // Processa em lotes de 32 para não sobrecarregar memória
     const batchSize = 32;
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
-      const memoryBatch = withoutEmb.slice(i, i + batchSize);
+      const pageBatch = withoutEmb.slice(i, i + batchSize);
 
       const embeddings = await embedService.embedBatch(batch);
 
       for (let j = 0; j < embeddings.length; j++) {
-        const mem = memoryBatch[j];
+        const page = pageBatch[j];
         const emb = embeddings[j];
 
-        storage.updateEmbedding(mem.id, emb);
-        vecRetriever.upsert({ ...mem, embedding: emb });
+        storage.updatePageEmbedding(page.id, emb);
+        vecRetriever.upsert(page.id, emb);
         count++;
       }
     }
   } catch {
-    // Backfill parcial — próximos sweeps tentam de novo
+    // Backfill parcial — próximos ciclos tentam de novo
   }
 
   return count;

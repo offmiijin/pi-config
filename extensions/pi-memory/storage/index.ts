@@ -4,22 +4,12 @@
  * Todas as operações são síncronas.
  */
 
-import type { Memory, RawObservation, Page, PageSearchResult } from "../types";
+import type { RawObservation, Page, RetrievalResult } from "../types";
 
 export interface IStorage {
   // ── Lifecycle ────────────────────────────────────────────────────
   open(): void;
   close(): void;
-
-  // ── Memories ─────────────────────────────────────────────────────
-  insertMemory(memory: Memory): void;
-  getMemory(id: string): Memory | null;
-  getMemoriesByProject(projectId: string): Memory[];
-  getMemoryByHash(projectId: string, contentHash: string): Memory | null;
-  updateMemory(memory: Memory): void;
-  deleteMemory(id: string): void;
-  deleteAllMemories(projectId: string): number;
-  deleteAllObservations(projectId: string): number;
 
   // ── Observations ─────────────────────────────────────────────────
   insertObservation(obs: RawObservation): void;
@@ -29,35 +19,25 @@ export interface IStorage {
   markExtracted(observationIds: string[]): void;
   cleanupExpired(now: number): number;
 
-  // ── Search ───────────────────────────────────────────────────────
-  searchFts(
-    query: string,
-    projectId: string,
-    limit?: number
-  ): Array<{ memory: Memory; bm25Score: number }>;
-
-  // ── Embeddings ───────────────────────────────────────────────────
-  getMemoriesWithEmbeddings(projectId: string): Memory[];
-  getMemoriesWithoutEmbedding(projectId: string): Memory[];
-  updateEmbedding(id: string, embedding: Float32Array): void;
-
-  // ── Pages (novo modelo — markdown como fonte) ────────────────────
+  // ── Pages (markdown como fonte da verdade) ───────────────────────
   insertPage(page: Page): void;
   updatePage(page: Page): void;
   deletePage(projectId: string, path: string): void;
+  deleteAllPages(projectId: string): number;
+  deleteAllObservations(projectId: string): number;
   getPage(projectId: string, path: string): Page | null;
+  getPageById(id: string): Page | null;
   getPagesByProject(projectId: string): Page[];
   pageExists(projectId: string, path: string): boolean;
-  searchPagesFts(query: string, projectId: string | null, limit?: number): PageSearchResult[];
+  searchPagesFts(query: string, projectId: string | null, limit?: number): RetrievalResult[];
   getPagesWithEmbeddings(projectId: string): Page[];
+  getPagesWithEmbeddingData(projectId: string): Array<{ id: string; embedding: Float32Array }>;
   getPagesWithoutEmbedding(projectId: string): Page[];
   updatePageEmbedding(pageId: string, embedding: Float32Array): void;
-  countPages(): number;
 
   // ── Stats ────────────────────────────────────────────────────────
-  countMemories(): number;
+  countPages(): number;
   countObservations(): number;
   countPendingExtraction(): number;
-  countPages(): number;
 
 }
