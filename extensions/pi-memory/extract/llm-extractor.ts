@@ -235,6 +235,8 @@ export class LlmExtractor {
   extractBatch(observations: RawObservation[]): void {
     if (!this.config.apiKey) return;
     if (observations.length === 0) return;
+    // Trava de concorrência: se já tem extração rodando, não empilha outra
+    if (this.busy) return;
     this.extract(observations);
   }
 
@@ -277,11 +279,11 @@ export class LlmExtractor {
 
     if (batch.length === 0) return;
 
-    // Para modo enqueue, verifica busy e limpa timer
+    // Verifica busy e seta (ambos modos)
+    if (this.busy) return;
+    this.busy = true;
     if (!isForced) {
-      if (this.busy) return;
       this.clearTimer();
-      this.busy = true;
     }
 
     try {
@@ -378,14 +380,11 @@ export class LlmExtractor {
         }
       }
     } finally {
-      // Só gerencia busy/timer no modo enqueue
-      if (!isForced) {
-        this.busy = false;
-        // Se ainda há pendentes, agenda próximo batch
-        if (this.pendingObs.length > 0 && !this.timer) {
-          this.timer = setTimeout(() => this.extract(), this.config.maxWaitMs);
-          if (this.timer.unref) this.timer.unref();
-        }
+      this.busy = false;
+      // Timer de re-agendamento só no modo enqueue
+      if (!isForced && this.pendingObs.length > 0 && !this.timer) {
+        this.timer = setTimeout(() => this.extract(), this.config.maxWaitMs);
+        if (this.timer.unref) this.timer.unref();
       }
     }
   }

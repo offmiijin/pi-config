@@ -278,7 +278,7 @@ export default function (pi: ExtensionAPI) {
             llmExtractor,
             projectId,
             {
-              intervalMs: config.llm_extraction.sweep_interval_ms,
+              intervalMs: config.llm_extraction.sweep_consolidator_interval_ms,
               observationThreshold: config.llm_extraction.sweep_observation_threshold,
               decayEnabled: config.consolidation.decay_enabled,
               decayDays: config.consolidation.decay_days,

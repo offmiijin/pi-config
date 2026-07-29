@@ -99,8 +99,9 @@ CAPTURE → EXTRACT → STORE → CONSOLIDATE → RETRIEVE → INJECT
     "enabled": false,
     "model": "mistralai/mistral-nemo",
     "timeout_ms": 5000,
-    "sweep_observation_threshold": 10,
-    "sweep_interval_ms": 30000
+    "sweep_observation_threshold": 100,
+    "sweep_interval_ms": 30000,
+    "sweep_consolidator_interval_ms": 1800000
   },
   "consolidation": {
     "dedup_enabled": true,
