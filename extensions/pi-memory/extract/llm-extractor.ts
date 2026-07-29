@@ -269,9 +269,13 @@ export class LlmExtractor {
 
   /**
    * Enfileira observações para extração no próximo batch.
+   * Ignora observações já enfileiradas (dedup por id).
    */
   enqueue(observations: RawObservation[]): void {
-    this.pendingObservations.push(...observations);
+    const pendingIds = new Set(this.pendingObservations.map((o) => o.id));
+    const newObs = observations.filter((o) => !pendingIds.has(o.id));
+    if (newObs.length === 0) return;
+    this.pendingObservations.push(...newObs);
     this.scheduleBatch();
   }
 
@@ -290,6 +294,11 @@ export class LlmExtractor {
       if (suggestions.length > 0) {
         await this.persistSuggestions(suggestions);
         this.markExtracted(observations);
+        // Remove observações processadas da fila pendente
+        const processedIds = new Set(observations.map((o) => o.id));
+        this.pendingObservations = this.pendingObservations.filter(
+          (o) => !processedIds.has(o.id),
+        );
         this.circuit.recordSuccess();
         this.consecutiveFailures = 0;
         this.onExtracted?.(suggestions.length);
