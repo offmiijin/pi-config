@@ -17,11 +17,11 @@ import { randomUUID } from "node:crypto";
 // ── Config ─────────────────────────────────────────────────────────────
 
 export interface LlmExtractorConfig {
-  /** API key do OpenRouter (ou provider compatível) */
+  /** API key (LLM_API_KEY env var). Provider OpenAI-compatível. */
   apiKey: string;
   /** Modelo LLM. Default: mistralai/mistral-nemo */
   model: string;
-  /** Base URL da API OpenAI-compatível. Default: OpenRouter */
+  /** Base URL da API OpenAI-compatível. */
   baseUrl: string;
   /** Timeout da chamada HTTP em ms. Default: 5000 */
   timeoutMs: number;

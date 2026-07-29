@@ -31,7 +31,7 @@ CAPTURE → EXTRACT → STORE → CONSOLIDATE → RETRIEVE → INJECT
 | **CONSOLIDATE N1** | Dedup por hash SHA256 + último fato vence por chave composta (type+scope+tags). Detecção de contradição via 13 patterns regex. Reforço incremental de confidence (+0.05 por reforço, cap 1.0). | ✅ |
 | **CONSOLIDATE N2** | Sweep periódico (default: 30min). Agrupa observações pendentes por tool_name, extrai por grupo, aplica decay de confidence, pruning de memórias obsoletas, limpeza de TTL. | ✅ |
 | **RETRIEVE** | BM25 via FTS5 (prefix matching, porter stemmer, unicode tokenizer). Normalização min-max 0-1. | ✅ |
-| **RETRIEVE VECTOR** | Embeddings `all-MiniLM-L6-v2` (384 dims) via @xenova/transformers (local, ~80MB). Fallback API via OpenRouter. Índice em RAM com dot product (brute force, <15ms até 10K memórias). Backfill automático de embeddings ausentes. | ✅ (opt-in) |
+| **RETRIEVE VECTOR** | Embeddings `all-MiniLM-L6-v2` (384 dims) via @xenova/transformers (local, ~80MB). Fallback API. Índice em RAM com dot product (brute force, <15ms até 10K memórias). Backfill automático de embeddings ausentes. | ✅ (opt-in) |
 | **RETRIEVE HYBRID** | BM25 + Vector → RRF fusion (k=60) → Cross-encoder reranker (`ms-marco-MiniLM-L-6-v2` local ou `cohere/rerank-4-pro` via API). Graceful degradation em qualquer componente ausente. | ✅ (opt-in) |
 | **INJECT** | Bloco `## Persistent Memory` injetado via `before_agent_start`. Cache snapshot estável (ADR-006): bloco congelado entre checkpoints. Middle-truncation quando excede cap. Filtro de prompts triviais (continue, ok, etc). Day rollover força rebuild. | ✅ |
 

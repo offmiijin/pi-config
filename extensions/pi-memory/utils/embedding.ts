@@ -21,11 +21,11 @@ export interface EmbeddingServiceConfig {
   normalize: boolean;
   /** Timeout para download do modelo em ms. Default: 30000 */
   modelDownloadTimeoutMs: number;
-  /** API key para fallback (OpenRouter). Se não informada, fallback desabilitado. */
+  /** API key para embeddings (VECTOR_API_KEY env var). Se não informada, fallback desabilitado. */
   apiKey?: string;
   /** Se true, tenta API antes do backend local. Default: false */
   preferApi: boolean;
-  /** Base URL para API de embeddings (OpenAI-compatível). Default: OpenRouter */
+  /** Base URL para API de embeddings (OpenAI-compatível). */
   apiBaseUrl: string;
   /** Modelo API para fallback. Default: "openai/text-embedding-3-small" */
   apiModel: string;

@@ -41,9 +41,9 @@ export interface RerankerConfig {
   modelDownloadTimeoutMs: number;
 
   // ── API fallback ───────────────────────────────────────────────
-  /** API key do OpenRouter para fallback. Se vazia, fallback desabilitado. */
+  /** API key para reranker (RERANKER_API_KEY env var). Se vazia, fallback desabilitado. */
   apiKey?: string;
-  /** Base URL da API (OpenRouter). Default: https://openrouter.ai/api/v1 */
+  /** Base URL da API. */
   apiBaseUrl: string;
   /** Modelo de rerank via API. Default: cohere/rerank-4-pro */
   apiModel: string;
