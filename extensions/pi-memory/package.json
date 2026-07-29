@@ -12,7 +12,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "bun test tests/integration.test.ts --timeout 30000"
   },
   "engines": {
     "node": ">=18.0.0",
