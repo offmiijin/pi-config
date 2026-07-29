@@ -49,8 +49,8 @@ export interface PiMemoryConfig {
   /** Threshold de confiança para injeção automática */
   injection_confidence_threshold: number;
 
-  /** Nível de extração ativo: "none" | "regex" | "llm" | "kg" */
-  extraction_level: "none" | "regex" | "llm" | "kg";
+  /** Nível de extração ativo: "none" | "llm" | "kg" */
+  extraction_level: "none" | "llm" | "kg";
 
   /** Configuração do LLM para extração N3 */
   llm_extraction: {
@@ -69,10 +69,9 @@ export interface PiMemoryConfig {
 
   /** Configuração de consolidação */
   consolidation: {
-    dedup_enabled: boolean;
     decay_enabled: boolean;
-    decay_days: number; // dias sem acesso para iniciar decay
-    decay_factor: number; // multiplicador (ex: 0.9)
+    decay_days: number;
+    decay_factor: number;
     pruning_enabled: boolean;
     pruning_confidence_threshold: number;
     pruning_age_days: number;
@@ -110,7 +109,6 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
     sweep_consolidator_interval_ms: 1_800_000,
   },
   consolidation: {
-    dedup_enabled: true,
     decay_enabled: false,
     decay_days: 7,
     decay_factor: 0.9,
