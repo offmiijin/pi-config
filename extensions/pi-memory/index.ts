@@ -82,10 +82,17 @@ export default function (pi: ExtensionAPI) {
   // ── Flag ──────────────────────────────────────────────────────────
   pi.registerFlag?.("no-memory", {
     description: "Disable persistent memory for this session",
+    type: "boolean",
+    default: false,
   });
 
   // ── Carregar configuração (inclui migração automática) ──
   config = loadConfig(pi.projectDir);
+
+  // --no-memory flag sobrescreve config
+  if (pi.getFlag?.("no-memory")) {
+    config.disabled = true;
+  }
 
   if (config.disabled) {
     return;
@@ -734,7 +741,7 @@ export default function (pi: ExtensionAPI) {
             // Desabilita
             saveEnvKey("LLM_API_KEY", "");
             saveConfigToDisk({
-              extraction_level: "regex",
+              extraction_level: "none",
               llm_extraction: { enabled: false },
             } as unknown as Partial<PiMemoryConfig>);
             ctx.ui.notify("LLM extraction disabled. Run /reload to apply.", "success");

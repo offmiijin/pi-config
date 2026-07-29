@@ -53,8 +53,8 @@ export function loadConfig(_project_dir?: string): PiMemoryConfig {
     }
   }
 
-  // ── Flag --no-memory ──
-  if (process.env.PI_NO_MEMORY === "1" || process.argv.includes("--no-memory")) {
+  // ── Env var --no-memory ──
+  if (process.env.PI_NO_MEMORY === "1") {
     config.disabled = true;
   }
 
