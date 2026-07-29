@@ -5,7 +5,7 @@
  * Todas as operações são síncronas.
  */
 
-import type { Memory, RawObservation } from "../types";
+import type { Memory, RawObservation, Page, PageSearchResult } from "../types";
 
 export interface IStorage {
   // ── Lifecycle ────────────────────────────────────────────────────
@@ -42,9 +42,23 @@ export interface IStorage {
   getMemoriesWithoutEmbedding(projectId: string): Memory[];
   updateEmbedding(id: string, embedding: Float32Array): void;
 
+  // ── Pages (novo modelo — markdown como fonte) ────────────────────
+  insertPage(page: Page): void;
+  updatePage(page: Page): void;
+  deletePage(projectId: string, path: string): void;
+  getPage(projectId: string, path: string): Page | null;
+  getPagesByProject(projectId: string): Page[];
+  pageExists(projectId: string, path: string): boolean;
+  searchPagesFts(query: string, projectId: string | null, limit?: number): PageSearchResult[];
+  getPagesWithEmbeddings(projectId: string): Page[];
+  getPagesWithoutEmbedding(projectId: string): Page[];
+  updatePageEmbedding(pageId: string, embedding: Float32Array): void;
+  countPages(): number;
+
   // ── Stats ────────────────────────────────────────────────────────
   countMemories(): number;
   countObservations(): number;
   countPendingExtraction(): number;
+  countPages(): number;
 
 }

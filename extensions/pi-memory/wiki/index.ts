@@ -19,3 +19,5 @@ export {
 } from "./frontmatter";
 export { WikiWriter } from "./writer";
 export type { WikiWriterConfig } from "./writer";
+export { Indexer } from "./indexer";
+export type { IndexerConfig, IndexResult } from "./indexer";

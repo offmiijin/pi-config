@@ -164,12 +164,44 @@ export const DEFAULT_CONFIG: PiMemoryConfig = {
   },
 };
 
+// ── Page (novo modelo — markdown como fonte da verdade) ──────────────
+
+export type PageType = "decision" | "preference" | "lesson" | "pattern" | "fact" | "session";
+
+export type PageScope = "project" | "global";
+
+export interface Page {
+  id: string;
+  project_id: string;         // '<hash>' | '_global'
+  path: string;                // 'decisions/foo.md'
+  title: string;
+  body: string;                // duplicado do markdown pra FTS5
+  type: PageType;
+  scope: PageScope;
+  tags: string[];
+  confidence: number;
+  status: "active" | "superseded" | "draft";
+  pinned: boolean;
+  supersedes: string | null;   // path da página anterior
+  created_at: number;          // unix ms
+  updated_at: number;          // unix ms
+  content_hash: string;        // SHA256 do body
+  mtime: number;               // filesystem mtime
+}
+
 // ── Retrieval ──────────────────────────────────────────────────────────
 
 export interface RetrievalResult {
   memory: Memory;
   score: number; // 0.0 – 1.0
   strategy: "bm25" | "vector" | "hybrid";
+}
+
+export interface PageSearchResult {
+  page: Page;
+  snippet: string;   // primeiros 300 chars do body
+  score: number;
+  strategy: "fts5" | "vector" | "hybrid";
 }
 
 // ── Memory Gateway (ADR-006) ─────────────────────────────────────────

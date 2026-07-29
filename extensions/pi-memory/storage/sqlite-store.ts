@@ -81,6 +81,66 @@ CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
 `;
 
+// ── Pages DDL (novo modelo) ────────────────────────────────────────────
+
+const SCHEMA_PAGES_SQL = `
+CREATE TABLE IF NOT EXISTS pages (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  type TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  tags TEXT,
+  confidence REAL DEFAULT 0.5,
+  status TEXT DEFAULT 'active',
+  pinned INTEGER DEFAULT 0,
+  supersedes TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  mtime INTEGER NOT NULL,
+  UNIQUE(project_id, path)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
+  title, body,
+  content='pages',
+  content_rowid='rowid',
+  tokenize='porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
+  INSERT INTO pages_fts(rowid, title, body)
+  VALUES (new.rowid, new.title, new.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages BEGIN
+  INSERT INTO pages_fts(pages_fts, rowid, title, body)
+  VALUES ('delete', old.rowid, old.title, old.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
+  INSERT INTO pages_fts(pages_fts, rowid, title, body)
+  VALUES ('delete', old.rowid, old.title, old.body);
+  INSERT INTO pages_fts(rowid, title, body)
+  VALUES (new.rowid, new.title, new.body);
+END;
+
+CREATE TABLE IF NOT EXISTS page_embeddings (
+  page_id TEXT PRIMARY KEY REFERENCES pages(id),
+  embedding BLOB,
+  provider TEXT,
+  model TEXT,
+  dim INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_pages_project ON pages(project_id);
+CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
+CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status);
+`;
+
 // ── SQL Statements (reusadas via db.query cache interno) ───────────────
 
 const SQL = {
@@ -170,6 +230,50 @@ const SQL = {
   getAllMemoriesWithoutEmbedding: `SELECT * FROM memories WHERE embedding IS NULL ORDER BY timestamp ASC`,
 
   updateEmbedding: `UPDATE memories SET embedding = $embedding WHERE id = $id`,
+
+  // ── Pages ────────────────────────────────────────────────────────────
+
+  insertPage: `
+    INSERT INTO pages (id, project_id, path, title, body, type, scope, tags,
+      confidence, status, pinned, supersedes, created_at, updated_at, content_hash, mtime)
+    VALUES ($id, $project_id, $path, $title, $body, $type, $scope, $tags,
+      $confidence, $status, $pinned, $supersedes, $created_at, $updated_at, $content_hash, $mtime)
+  `,
+
+  updatePage: `
+    UPDATE pages SET
+      path = $path, title = $title, body = $body, type = $type, scope = $scope,
+      tags = $tags, confidence = $confidence, status = $status, pinned = $pinned,
+      supersedes = $supersedes, updated_at = $updated_at,
+      content_hash = $content_hash, mtime = $mtime
+    WHERE id = $id
+  `,
+
+  deletePage: `DELETE FROM pages WHERE project_id = $project_id AND path = $path`,
+
+  getPage: `SELECT * FROM pages WHERE project_id = $project_id AND path = $path`,
+
+  getPagesByProject: `SELECT * FROM pages WHERE project_id = $project_id ORDER BY updated_at DESC`,
+
+  pageExists: `SELECT 1 FROM pages WHERE project_id = $project_id AND path = $path LIMIT 1`,
+
+  pagesFtsSearch: `
+    SELECT p.*, bm25(pages_fts) as fts_score
+    FROM pages p
+    JOIN pages_fts ON p.rowid = pages_fts.rowid
+    WHERE pages_fts MATCH $query
+      AND ($project_id IS NULL OR p.project_id = $project_id OR p.project_id = '_global')
+    ORDER BY fts_score
+    LIMIT $limit
+  `,
+
+  countPages: `SELECT COUNT(*) as count FROM pages`,
+
+  getPagesWithEmbeddings: `SELECT p.* FROM pages p JOIN page_embeddings e ON p.id = e.page_id WHERE p.project_id = $project_id`,
+
+  getPagesWithoutEmbedding: `SELECT p.* FROM pages p LEFT JOIN page_embeddings e ON p.id = e.page_id WHERE p.project_id = $project_id AND e.page_id IS NULL ORDER BY p.updated_at ASC`,
+
+  updatePageEmbedding: `INSERT OR REPLACE INTO page_embeddings (page_id, embedding, provider, model, dim) VALUES ($page_id, $embedding, $provider, $model, $dim)`,
 };
 
 // ── Store ──────────────────────────────────────────────────────────────
@@ -187,6 +291,7 @@ export class SqliteStore implements IStorage {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec(SCHEMA_SQL);
+    this.db.exec(SCHEMA_PAGES_SQL);
   }
 
   // ── Memória ────────────────────────────────────────────────────────
@@ -277,6 +382,124 @@ export class SqliteStore implements IStorage {
   deleteAllObservations(projectId: string): number {
     const result = this.db.prepare(SQL.deleteAllObservations).run({ $project_id: projectId });
     return result.changes;
+  }
+
+  // ── Pages (novo modelo) ────────────────────────────────────────────
+
+  insertPage(page: Page): void {
+    this.db.prepare(SQL.insertPage).run({
+      $id: page.id,
+      $project_id: page.project_id,
+      $path: page.path,
+      $title: page.title,
+      $body: page.body,
+      $type: page.type,
+      $scope: page.scope,
+      $tags: JSON.stringify(page.tags),
+      $confidence: page.confidence,
+      $status: page.status,
+      $pinned: page.pinned ? 1 : 0,
+      $supersedes: page.supersedes ?? null,
+      $created_at: page.created_at,
+      $updated_at: page.updated_at,
+      $content_hash: page.content_hash,
+      $mtime: page.mtime,
+    });
+  }
+
+  updatePage(page: Page): void {
+    this.db.prepare(SQL.updatePage).run({
+      $id: page.id,
+      $path: page.path,
+      $title: page.title,
+      $body: page.body,
+      $type: page.type,
+      $scope: page.scope,
+      $tags: JSON.stringify(page.tags),
+      $confidence: page.confidence,
+      $status: page.status,
+      $pinned: page.pinned ? 1 : 0,
+      $supersedes: page.supersedes ?? null,
+      $updated_at: page.updated_at,
+      $content_hash: page.content_hash,
+      $mtime: page.mtime,
+    });
+  }
+
+  deletePage(projectId: string, path: string): void {
+    this.db.prepare(SQL.deletePage).run({ $project_id: projectId, $path: path });
+  }
+
+  getPage(projectId: string, path: string): Page | null {
+    const row = this.db.prepare(SQL.getPage).get({
+      $project_id: projectId,
+      $path: path,
+    }) as Record<string, unknown> | undefined;
+    return row ? this.rowToPage(row) : null;
+  }
+
+  getPagesByProject(projectId: string): Page[] {
+    const rows = this.db.prepare(SQL.getPagesByProject).all({
+      $project_id: projectId,
+    }) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToPage(r));
+  }
+
+  pageExists(projectId: string, path: string): boolean {
+    const row = this.db.prepare(SQL.pageExists).get({
+      $project_id: projectId,
+      $path: path,
+    }) as { 1?: number } | undefined;
+    return !!row;
+  }
+
+  searchPagesFts(query: string, projectId: string | null, limit = 20): PageSearchResult[] {
+    const ftsQuery = this.buildFtsQuery(query);
+    const rows = this.db.prepare(SQL.pagesFtsSearch).all({
+      $query: ftsQuery,
+      $project_id: projectId ?? null,
+      $limit: limit,
+    }) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => {
+      const page = this.rowToPage(r);
+      const score = r["fts_score"] as number;
+      return {
+        page,
+        snippet: page.body.slice(0, 300),
+        score: this.normalizeScore(score, rows as Array<Record<string, unknown>>),
+        strategy: "fts5" as const,
+      };
+    });
+  }
+
+  countPages(): number {
+    const row = this.db.prepare(SQL.countPages).get() as { count: number };
+    return row.count;
+  }
+
+  getPagesWithEmbeddings(projectId: string): Page[] {
+    const rows = this.db.prepare(SQL.getPagesWithEmbeddings).all({
+      $project_id: projectId,
+    }) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToPage(r));
+  }
+
+  getPagesWithoutEmbedding(projectId: string): Page[] {
+    const rows = this.db.prepare(SQL.getPagesWithoutEmbedding).all({
+      $project_id: projectId,
+    }) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToPage(r));
+  }
+
+  updatePageEmbedding(pageId: string, embedding: Float32Array): void {
+    this.db.prepare(SQL.updatePageEmbedding).run({
+      $page_id: pageId,
+      $embedding: new Uint8Array(embedding.buffer, embedding.byteOffset, embedding.byteLength),
+      $provider: "local",
+      $model: "all-MiniLM-L6-v2",
+      $dim: 384,
+    });
   }
 
   // ── Observações ────────────────────────────────────────────────────
@@ -474,6 +697,40 @@ export class SqliteStore implements IStorage {
       project_id: row["project_id"] as string,
       content_hash: row["content_hash"] as string,
     };
+  }
+
+  private rowToPage(row: Record<string, unknown>): Page {
+    return {
+      id: row["id"] as string,
+      project_id: row["project_id"] as string,
+      path: row["path"] as string,
+      title: row["title"] as string,
+      body: row["body"] as string,
+      type: row["type"] as PageType,
+      scope: row["scope"] as PageScope,
+      tags: JSON.parse((row["tags"] as string) || "[]"),
+      confidence: row["confidence"] as number,
+      status: (row["status"] as Page["status"]) || "active",
+      pinned: (row["pinned"] as number) === 1,
+      supersedes: (row["supersedes"] as string) || null,
+      created_at: row["created_at"] as number,
+      updated_at: row["updated_at"] as number,
+      content_hash: row["content_hash"] as string,
+      mtime: row["mtime"] as number,
+    };
+  }
+
+  /**
+   * Normaliza score BM25 (menor = melhor) para score 0-1 (maior = melhor).
+   * Usa min-max normalization sobre o batch retornado.
+   */
+  private normalizeScore(score: number, allRows: Array<Record<string, unknown>>, scoreKey = "fts_score"): number {
+    if (allRows.length === 0) return 0;
+    const scores = allRows.map((r) => r[scoreKey] as number);
+    const min = Math.min(...scores);
+    const max = Math.max(...scores);
+    if (max === min) return 1.0;
+    return 1.0 - (score - min) / (max - min);
   }
 
   private rowToObservation(row: Record<string, unknown>): RawObservation {
