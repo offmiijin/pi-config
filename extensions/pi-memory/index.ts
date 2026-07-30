@@ -11,7 +11,7 @@
  * Parts:
  *   1. [x] Scaffold — directories, project ID, session lifecycle
  *   2. [x] Append observations at turn_end
- *   3. [ ] Register 5 tools (scaffold with stubs)
+ *   3. [x] Register 5 tools (scaffold with stubs)
  *   4. [ ] memory_save — persist/update markdown files
  *   5. [ ] memory_search — ripgrep wrapper
  *   6. [ ] memory_status — observation counter
@@ -20,20 +20,34 @@
  *   9. [ ] Skill with usage instructions
  */
 
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	ensureDirectories,
 	ensureFileDir,
 	extractTextContent,
 	extractToolCallNames,
+	formatFrontmatter,
+	formatMemoryEntry,
 	formatObservation,
 	formatSessionHeader,
 	generateSessionHash,
+	getMemoryFilePath,
+	getSupersedesPath,
 	hashSessionFile,
 	identifyProject,
+	parseFrontmatter,
+	recalcOverallConfidence,
+	extractEntryConfidences,
 } from "./utils.ts";
 import { countObservations, getSessionFilePath } from "./utils.ts";
+import {
+	DecaySchema,
+	ExtractSchema,
+	SaveSchema,
+	SearchSchema,
+	StatusSchema,
+} from "./schemas.ts";
 
 // ── Extension ──────────────────────────────────────────────────────────────
 
@@ -47,13 +61,11 @@ export default function (pi: ExtensionAPI) {
 		projectId = identifyProject(ctx.cwd);
 		ensureDirectories(projectId);
 
-		// Generate a session hash for the session file
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
-		// Re-read project on tree navigation (same session, different branch)
 		projectId = identifyProject(ctx.cwd);
 	});
 
@@ -64,7 +76,6 @@ export default function (pi: ExtensionAPI) {
 		const assistantMsg = event.message;
 		if (!assistantMsg) return;
 
-		// 1. Find the last user prompt from the session branch
 		const branch = ctx.sessionManager.getBranch();
 		let userPrompt = "";
 		for (let i = branch.length - 1; i >= 0; i--) {
@@ -75,29 +86,234 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// 2. Extract tool calls and assistant response from the assistant message
 		const toolCalls = extractToolCallNames(assistantMsg.content);
 		const agentResponse = extractTextContent(assistantMsg.content);
 
-		// 3. Build session file path
 		const sessionFile = getSessionFilePath(projectId, currentSessionHash);
-
-		// 4. Ensure directory exists
 		ensureFileDir(sessionFile);
 
-		// 5. If file is new, write the session header
 		if (!existsSync(sessionFile)) {
 			const header = formatSessionHeader(currentSessionHash);
 			appendFileSync(sessionFile, header + "\n");
 		}
 
-		// 6. Count existing observations to determine the next number
 		const obsNumber = countObservations(sessionFile) + 1;
-
-		// 7. Format and append the observation
 		const obs = formatObservation(obsNumber, userPrompt, toolCalls, agentResponse);
 		appendFileSync(sessionFile, obs + "\n");
 	});
 
-	// ── Tools (stubs — registered in subsequent parts) ────────────────────
+	// ── Tools ──────────────────────────────────────────────────────────────
+
+	/* ── memory_status (Part 6) ── */
+	pi.registerTool({
+		name: "memory_status",
+		label: "Memory Status",
+		description:
+			"Returns current observation count and threshold. " +
+			"Call periodically; when count nears ~50, run memory_extract.",
+		promptSnippet:
+			"memory_status: Check observation count (extract at ~50)",
+		parameters: StatusSchema,
+
+		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: "memory_status not yet implemented",
+					},
+				],
+				details: { implemented: false },
+			};
+		},
+	});
+
+	/* ── memory_save (Part 4) ── */
+	pi.registerTool({
+		name: "memory_save",
+		label: "Memory Save",
+		description:
+			"Saves or updates a memory. Same context key = same file (entry is appended). " +
+			"Use supersedes to mark an old memory as replaced.",
+		promptSnippet:
+			"memory_save: Save/update a memory (same context = same file)",
+		parameters: SaveSchema,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			if (!projectId) {
+				return {
+					content: [{ type: "text", text: "Error: no active project" }],
+					details: { error: "no_active_project" },
+				};
+			}
+
+			const {
+				type,
+				context,
+				title,
+				content,
+				scope,
+				tags = [],
+				confidence = 0.5,
+				supersedes,
+			} = params;
+
+			const today = new Date().toISOString().slice(0, 10);
+
+			// 1. Handle supersede: move old memory to .supersedes/
+			if (supersedes) {
+				const oldPath = getMemoryFilePath(projectId, type, supersedes, scope);
+				if (existsSync(oldPath)) {
+					const supPath = getSupersedesPath(oldPath);
+					ensureFileDir(supPath);
+
+					// Read old frontmatter and add superseded info
+					const oldContent = readFileSync(oldPath, "utf-8");
+					const { meta } = parseFrontmatter(oldContent);
+					meta.superseded_at = today;
+					meta.superseded_by = context;
+					meta.confidence = 0; // superseded = zero confidence
+
+					const newOldContent = oldContent.startsWith("---")
+						? formatFrontmatter(meta) + oldContent.slice(oldContent.indexOf("\n---\n", 4) + 5)
+						: formatFrontmatter(meta) + oldContent;
+
+					writeFileSync(supPath, newOldContent);
+					renameSync(oldPath, supPath);
+				} // if not found, it's already gone — proceed
+			}
+
+			// 2. Determine file path
+			const filePath = getMemoryFilePath(projectId, type, context, scope);
+			ensureFileDir(filePath);
+
+			// 3. Build entry
+			const entry = formatMemoryEntry(today, title, content, confidence);
+
+			if (!existsSync(filePath)) {
+				// ── Create new file ──
+				const meta: Record<string, unknown> = {
+					context,
+					type,
+					created: today,
+					updated: today,
+					confidence,
+					entries: 1,
+				};
+				if (tags.length > 0) meta.tags = tags;
+
+				const frontmatter = formatFrontmatter(meta);
+				writeFileSync(filePath, frontmatter + entry + "\n");
+
+				return {
+					content: [{ type: "text", text: `Created memory: ${scope}/${type}/${context}` }],
+					details: { action: "created", file: filePath },
+				};
+			} else {
+				// ── Append to existing file ──
+				const existing = readFileSync(filePath, "utf-8");
+				const { meta, body } = parseFrontmatter(existing);
+
+				// Recalculate confidence
+				const existingConfidences = extractEntryConfidences(body);
+				const newOverall = recalcOverallConfidence(existingConfidences, confidence);
+
+				// Update frontmatter
+				meta.updated = today;
+				meta.confidence = newOverall;
+				meta.entries = ((meta.entries as number) || 0) + 1;
+
+				// Merge tags
+				if (tags.length > 0) {
+					const existingTags = (meta.tags as string[]) || [];
+					meta.tags = [...new Set([...existingTags, ...tags])];
+				}
+
+				const frontmatter = formatFrontmatter(meta);
+				writeFileSync(filePath, frontmatter + body + entry + "\n");
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Appended to memory: ${scope}/${type}/${context} (entries: ${meta.entries})`,
+						},
+					],
+					details: { action: "appended", file: filePath, entries: meta.entries },
+				};
+			}
+		},
+	});
+
+	/* ── memory_search (Part 5) ── */
+	pi.registerTool({
+		name: "memory_search",
+		label: "Memory Search",
+		description:
+			"Searches memories via ripgrep. " +
+			"Use when you need past context about a topic.",
+		promptSnippet:
+			"memory_search: Search past memories via ripgrep",
+		parameters: SearchSchema,
+
+		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: "memory_search not yet implemented",
+					},
+				],
+				details: { implemented: false },
+			};
+		},
+	});
+
+	/* ── memory_decay (Part 7) ── */
+	pi.registerTool({
+		name: "memory_decay",
+		label: "Memory Decay",
+		description:
+			"Reduces confidence of a memory or moves it to .supersedes/. " +
+			"Call when a memory is obsolete or contradicted.",
+		promptSnippet:
+			"memory_decay: Reduce confidence or supersede a memory",
+		parameters: DecaySchema,
+
+		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: "memory_decay not yet implemented",
+					},
+				],
+				details: { implemented: false },
+			};
+		},
+	});
+
+	/* ── memory_extract (Part 8) ── */
+	pi.registerTool({
+		name: "memory_extract",
+		label: "Memory Extract",
+		description:
+			"Processes session observations into organized memories. " +
+			"Reads the session file, identifies contexts, and saves memories via memory_save.",
+		promptSnippet:
+			"memory_extract: Process session observations into memories",
+		parameters: ExtractSchema,
+
+		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: "memory_extract not yet implemented",
+					},
+				],
+				details: { implemented: false },
+			};
+		},
+	});
 }

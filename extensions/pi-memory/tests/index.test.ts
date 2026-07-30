@@ -1,5 +1,5 @@
 /**
- * Tests for pi-memory (Part 1 + 2: Scaffold + Observations).
+ * Tests for pi-memory (Parts 1-3: Scaffold, Observations, Tool stubs).
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -12,26 +12,79 @@ import {
 	countObservations,
 	ensureDirectories,
 	ensureFileDir,
+	extractEntryConfidences,
 	extractTextContent,
 	extractToolCallNames,
+	formatFrontmatter,
+	formatMemoryEntry,
 	formatObservation,
 	formatSessionHeader,
 	formatTimestamp,
 	generateSessionHash,
 	getMemoryDirectories,
+	getMemoryFilePath,
 	getSessionFilePath,
+	getSupersedesPath,
 	hashSessionFile,
 	identifyProject,
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
+	parseFrontmatter,
+	recalcOverallConfidence,
+	sanitizeFilename,
 } from "../utils.ts";
+
+import {
+	DecaySchema,
+	ExtractSchema,
+	MemoryTypeEnum,
+	SaveSchema,
+	SearchSchema,
+	StatusSchema,
+} from "../schemas.ts";
+
+// ── Schema test helper ─────────────────────────────────────────────────────
+
+/**
+ * Checks that a schema property has a specific JSON Schema type.
+ */
+function propHasType(schema: object, prop: string, type: string): boolean {
+	const s = schema as Record<string, unknown>;
+	const props = s.properties as Record<string, unknown> | undefined;
+	if (!props) return false;
+	const p = props[prop] as Record<string, unknown> | undefined;
+	return p?.type === type;
+}
+
+function propIsOptional(schema: object, prop: string): boolean {
+	const s = schema as Record<string, unknown>;
+	const required = s.required as string[] | undefined;
+	if (!required) return true; // no required = all optional
+	return !required.includes(prop);
+}
+
+function propIsRequired(schema: object, prop: string): boolean {
+	const s = schema as Record<string, unknown>;
+	const required = s.required as string[] | undefined;
+	return required?.includes(prop) ?? false;
+}
+
+function schemaIsObject(schema: object): boolean {
+	return (schema as Record<string, unknown>).type === "object";
+}
+
+function schemaHasProperty(schema: object, prop: string): boolean {
+	const s = schema as Record<string, unknown>;
+	const props = s.properties as Record<string, unknown> | undefined;
+	return !!props && prop in props;
+}
 
 // ── identifyProject ────────────────────────────────────────────────────────
 
 describe("identifyProject", () => {
 	let tmpDir: string;
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		tmpDir = mkdtempSync(join(tmpdir(), "pi-memory-test-"));
 	});
 
@@ -313,7 +366,10 @@ describe("extractToolCallNames", () => {
 	});
 
 	it("skips blocks without name property", () => {
-		const content = [{ type: "toolCall", arguments: {} }, { type: "toolCall", name: "rg", arguments: {} }];
+		const content = [
+			{ type: "toolCall", arguments: {} },
+			{ type: "toolCall", name: "rg", arguments: {} },
+		];
 		expect(extractToolCallNames(content)).toEqual(["rg"]);
 	});
 });
@@ -341,7 +397,13 @@ describe("formatTimestamp", () => {
 
 describe("formatObservation", () => {
 	it("produces correct structure with all fields", () => {
-		const result = formatObservation(1, "Create login", ["read", "edit"], "Added form", new Date(2025, 0, 15, 10, 30, 0));
+		const result = formatObservation(
+			1,
+			"Create login",
+			["read", "edit"],
+			"Added form",
+			new Date(2025, 0, 15, 10, 30, 0),
+		);
 
 		const lines = result.split("\n");
 		expect(lines[0]).toBe("");
@@ -364,15 +426,14 @@ describe("formatObservation", () => {
 	it("truncates long user prompt to 1000 chars", () => {
 		const longPrompt = "x".repeat(2000);
 		const result = formatObservation(1, longPrompt, [], "ok");
-		// The user prompt in the output should be truncated
-		const userLine = result.split("\n").find((l) => l.startsWith('User:'));
+		const userLine = result.split("\n").find((l) => l.startsWith("User:"));
 		expect(userLine?.length).toBeLessThan(2000);
 	});
 
 	it("truncates long agent response to 2000 chars", () => {
 		const longResponse = "y".repeat(3000);
 		const result = formatObservation(1, "hi", [], longResponse);
-		const agentLine = result.split("\n").find((l) => l.startsWith('Agent:'));
+		const agentLine = result.split("\n").find((l) => l.startsWith("Agent:"));
 		expect(agentLine?.length).toBeLessThan(3000);
 	});
 });
@@ -397,7 +458,7 @@ describe("formatSessionHeader", () => {
 describe("countObservations", () => {
 	let tmpDir: string;
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		tmpDir = mkdtempSync(join(tmpdir(), "pi-memory-count-"));
 	});
 
@@ -465,7 +526,7 @@ describe("countObservations", () => {
 describe("ensureFileDir", () => {
 	let tmpDir: string;
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		tmpDir = mkdtempSync(join(tmpdir(), "pi-memory-filedir-"));
 	});
 
@@ -482,7 +543,410 @@ describe("ensureFileDir", () => {
 	it("does not throw if directory already exists", () => {
 		const nested = join(tmpDir, "exists", "file.md");
 		ensureFileDir(nested);
-		ensureFileDir(nested); // second call should not throw
+		ensureFileDir(nested);
 		expect(existsSync(join(tmpDir, "exists"))).toBeTrue();
+	});
+});
+
+// ── Tool schemas (structural validation) ───────────────────────────────────
+
+describe("memory_status schema", () => {
+	it("is an object schema with no properties", () => {
+		expect(schemaIsObject(StatusSchema)).toBeTrue();
+		const props = (StatusSchema as Record<string, unknown>).properties as Record<string, unknown>;
+		expect(Object.keys(props)).toHaveLength(0);
+	});
+});
+
+describe("memory_save schema", () => {
+	it("is an object schema", () => {
+		expect(schemaIsObject(SaveSchema)).toBeTrue();
+	});
+
+	it("has required fields: type, context, title, content, scope", () => {
+		expect(propIsRequired(SaveSchema, "type")).toBeTrue();
+		expect(propIsRequired(SaveSchema, "context")).toBeTrue();
+		expect(propIsRequired(SaveSchema, "title")).toBeTrue();
+		expect(propIsRequired(SaveSchema, "content")).toBeTrue();
+		expect(propIsRequired(SaveSchema, "scope")).toBeTrue();
+	});
+
+	it("has optional fields: tags, confidence, supersedes", () => {
+		expect(propIsOptional(SaveSchema, "tags")).toBeTrue();
+		expect(propIsOptional(SaveSchema, "confidence")).toBeTrue();
+		expect(propIsOptional(SaveSchema, "supersedes")).toBeTrue();
+	});
+
+	it("type field is a union of literal strings", () => {
+		expect(schemaHasProperty(SaveSchema, "type")).toBeTrue();
+		const s = SaveSchema as Record<string, unknown>;
+		const props = s.properties as Record<string, unknown>;
+		const typeProp = props.type as Record<string, unknown>;
+		// StringEnum creates a union (anyOf) of literals
+		const variants = (typeProp.anyOf ?? typeProp.oneOf ?? []) as Array<Record<string, unknown>>;
+		expect(variants.length).toBeGreaterThan(0);
+		const values = variants.map((v) => v.const);
+		expect(values).toContain("_rules");
+		expect(values).toContain("patterns");
+	});
+});
+
+describe("memory_search schema", () => {
+	it("is an object schema", () => {
+		expect(schemaIsObject(SearchSchema)).toBeTrue();
+	});
+
+	it("has required: query", () => {
+		expect(propIsRequired(SearchSchema, "query")).toBeTrue();
+	});
+
+	it("has optional: scope, type, min_confidence, limit", () => {
+		expect(propIsOptional(SearchSchema, "scope")).toBeTrue();
+		expect(propIsOptional(SearchSchema, "type")).toBeTrue();
+		expect(propIsOptional(SearchSchema, "min_confidence")).toBeTrue();
+		expect(propIsOptional(SearchSchema, "limit")).toBeTrue();
+	});
+
+	it("query is string type", () => {
+		expect(propHasType(SearchSchema, "query", "string")).toBeTrue();
+	});
+});
+
+describe("memory_decay schema", () => {
+	it("is an object schema", () => {
+		expect(schemaIsObject(DecaySchema)).toBeTrue();
+	});
+
+	it("has required: context, delta", () => {
+		expect(propIsRequired(DecaySchema, "context")).toBeTrue();
+		expect(propIsRequired(DecaySchema, "delta")).toBeTrue();
+	});
+
+	it("has optional: move_to_supersedes, reason", () => {
+		expect(propIsOptional(DecaySchema, "move_to_supersedes")).toBeTrue();
+		expect(propIsOptional(DecaySchema, "reason")).toBeTrue();
+	});
+
+	it("delta is number type", () => {
+		// Number in typebox can be "number" or "integer" in JSON Schema
+		const s = DecaySchema as Record<string, unknown>;
+		const props = s.properties as Record<string, unknown>;
+		const delta = props.delta as Record<string, unknown>;
+		expect(["number", "integer"]).toContain(delta.type);
+	});
+});
+
+describe("memory_extract schema", () => {
+	it("is an object schema", () => {
+		expect(schemaIsObject(ExtractSchema)).toBeTrue();
+	});
+
+	it("has optional session_file", () => {
+		expect(schemaHasProperty(ExtractSchema, "session_file")).toBeTrue();
+		expect(propIsOptional(ExtractSchema, "session_file")).toBeTrue();
+	});
+});
+
+describe("MemoryTypeEnum values", () => {
+	it("is a union of literal strings", () => {
+		const e = MemoryTypeEnum as Record<string, unknown>;
+		expect(e.anyOf ?? e.oneOf ?? e.enum).toBeDefined();
+	});
+
+	it("contains all 5 memory types", () => {
+		const e = MemoryTypeEnum as Record<string, unknown>;
+		const variants = (e.anyOf ?? e.oneOf ?? []) as Array<Record<string, unknown>>;
+		if (variants.length > 0) {
+			// Union of literals: each is { type: "string", const: "..." }
+			const values = variants.map((v) => v.const);
+			expect(values).toContain("_rules");
+			expect(values).toContain("decisions");
+			expect(values).toContain("gotchas");
+			expect(values).toContain("lessons");
+			expect(values).toContain("patterns");
+		}
+	});
+});
+
+describe("ScopeEnum values", () => {
+	it("contains global and project", async () => {
+		const { ScopeEnum } = await import("../schemas.ts");
+		const s = ScopeEnum as Record<string, unknown>;
+		const variants = (s.anyOf ?? s.oneOf ?? []) as Array<Record<string, unknown>>;
+		const values = variants.map((v) => v.const);
+		expect(values).toContain("global");
+		expect(values).toContain("project");
+	});
+});
+
+// ── Memory file helpers ────────────────────────────────────────────────────
+
+describe("sanitizeFilename", () => {
+	it("lowercases and replaces spaces with hyphens", () => {
+		
+		expect(sanitizeFilename("Next.js App Router")).toBe("next-js-app-router");
+	});
+
+	it("removes non-alphanumeric characters", () => {
+		expect(sanitizeFilename("React 19! @types")).toBe("react-19-types");
+	});
+
+	it("collapses multiple hyphens", () => {
+		
+		expect(sanitizeFilename("foo___bar!!baz")).toBe("foo-bar-baz");
+	});
+
+	it("trims leading and trailing hyphens", () => {
+		
+		expect(sanitizeFilename("!!hello!!")).toBe("hello");
+	});
+
+	it("returns empty string for all-special input", () => {
+		
+		expect(sanitizeFilename("!!!")).toBe("");
+	});
+});
+
+describe("getMemoryFilePath", () => {
+	it("returns path under _global for global scope", () => {
+		
+		const path = getMemoryFilePath("proj", "_rules", "Next.js Router", "global");
+		expect(path).toContain("_global");
+		expect(path).toContain("_rules");
+		expect(path).toContain("next-js-router.md");
+		expect(path.startsWith(MEMORIES_ROOT)).toBeTrue();
+	});
+
+	it("returns path under projects for project scope", () => {
+		
+		const path = getMemoryFilePath("my_project", "gotchas", "test-context", "project");
+		expect(path).toContain("projects");
+		expect(path).toContain("my_project");
+		expect(path).toContain("gotchas");
+		expect(path).toContain("test-context.md");
+		expect(path.startsWith(MEMORIES_ROOT)).toBeTrue();
+	});
+});
+
+describe("getSupersedesPath", () => {
+	it("maps a global memory path to .supersedes", () => {
+		
+		const original = join(MEMORIES_ROOT, "_global", "_rules", "test.md");
+		const sup = getSupersedesPath(original);
+		expect(sup).toContain(".supersedes");
+		expect(sup).toContain("_global");
+		expect(sup).toContain("_rules");
+		expect(sup).toContain("test.md");
+	});
+
+	it("maps a project memory path to .supersedes", () => {
+		
+		const original = join(MEMORIES_ROOT, "projects", "p1", "gotchas", "ctx.md");
+		const sup = getSupersedesPath(original);
+		expect(sup).toContain(".supersedes");
+		expect(sup).toContain("projects");
+		expect(sup).toContain("p1");
+		expect(sup).toContain("ctx.md");
+	});
+});
+
+describe("parseFrontmatter", () => {
+	it("returns empty meta for content without frontmatter", () => {
+		
+		const { meta, body } = parseFrontmatter("# Just a heading\n\ncontent");
+		expect(meta).toEqual({});
+		expect(body).toBe("# Just a heading\n\ncontent");
+	});
+
+	it("parses simple frontmatter", () => {
+		
+		const fm = ["---", "context: test", "type: gotcha", "confidence: 0.7", "entries: 2", "---", "", "body here"].join("\n");
+		const { meta, body } = parseFrontmatter(fm);
+		expect(meta.context).toBe("test");
+		expect(meta.type).toBe("gotcha");
+		expect(meta.confidence).toBe(0.7);
+		expect(meta.entries).toBe(2);
+		expect(body.trim()).toBe("body here");
+	});
+
+	it("parses tags array", () => {
+		
+		const fm = ["---", 'tags: ["a", "b"]', "---", "", "body"].join("\n");
+		const { meta } = parseFrontmatter(fm);
+		expect(meta.tags).toEqual(["a", "b"]);
+	});
+
+	it("handles boolean values", () => {
+		
+		const fm = ["---", "active: true", "done: false", "---", ""].join("\n");
+		const { meta } = parseFrontmatter(fm);
+		expect(meta.active).toBeTrue();
+		expect(meta.done).toBeFalse();
+	});
+});
+
+describe("formatFrontmatter", () => {
+	it("formats simple metadata", () => {
+		
+		const result = formatFrontmatter({ context: "test", type: "gotcha" });
+		expect(result.startsWith("---\n")).toBeTrue();
+		expect(result).toContain("context: test");
+		expect(result).toContain("type: gotcha");
+		expect(result.endsWith("---\n")).toBeTrue();
+	});
+
+	it("formats tags array", () => {
+		
+		const result = formatFrontmatter({ tags: ["nextjs", "router"] });
+		expect(result).toContain('tags: ["nextjs", "router"]');
+	});
+
+	it("formats number values", () => {
+		
+		const result = formatFrontmatter({ confidence: 0.7, entries: 3 });
+		expect(result).toContain("confidence: 0.7");
+		expect(result).toContain("entries: 3");
+	});
+});
+
+describe("formatMemoryEntry", () => {
+	it("formats entry with confidence", () => {
+		
+		const result = formatMemoryEntry("2025-01-15", "My Title", "Some content", 0.8);
+		expect(result).toContain("## [2025-01-15] My Title");
+		expect(result).toContain("confidence: 0.8");
+		expect(result).toContain("Some content");
+	});
+
+	it("formats entry without confidence", () => {
+		
+		const result = formatMemoryEntry("2025-06-01", "Just Title", "Just content");
+		expect(result).toContain("## [2025-06-01] Just Title");
+		expect(result).not.toContain("confidence:");
+		expect(result).toContain("Just content");
+	});
+});
+
+describe("extractEntryConfidences", () => {
+	it("extracts confidence values from body", () => {
+		
+		const body = ["## [2025-01-15] First", "confidence: 0.8", "", "content", "", "## [2025-01-20] Second", "confidence: 0.6", ""].join("\n");
+		expect(extractEntryConfidences(body)).toEqual([0.8, 0.6]);
+	});
+
+	it("returns empty array when no confidences", () => {
+		
+		expect(extractEntryConfidences("just text")).toEqual([]);
+	});
+});
+
+describe("recalcOverallConfidence", () => {
+	it("averages confidences", () => {
+		
+		expect(recalcOverallConfidence([0.8, 0.6], 0.7)).toBe(0.7); // (0.8+0.6+0.7)/3 = 0.7
+	});
+
+	it("returns single confidence if no existing", () => {
+		
+		expect(recalcOverallConfidence([], 0.5)).toBe(0.5);
+	});
+
+	it("rounds to 2 decimal places", () => {
+		
+		expect(recalcOverallConfidence([0.5, 0.6], 0.7)).toBe(0.6);
+	});
+});
+
+// ── Integration: memory_save (via utils helpers) ───────────────────────────
+
+describe("memory_save integration", () => {
+	let tmpRoot: string;
+	let origMemoriesRoot: string;
+
+	beforeAll(async () => {
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+		origMemoriesRoot = MEMORIES_ROOT;
+		tmpRoot = mkdtempSync(join(tmpdir(), "pi-memory-save-"));
+	});
+
+	afterAll(() => {
+		rmSync(tmpRoot, { recursive: true, force: true });
+	});
+
+	it("creates a new memory file", async () => {
+		const { getMemoryFilePath, ensureFileDir, formatFrontmatter, formatMemoryEntry } = await import("../utils.ts");
+		const { writeFileSync, existsSync } = await import("node:fs");
+
+		const ctx = "my-context";
+		const fp = join(tmpRoot, "_global", "_rules", ctx + ".md");
+
+		// Simulate the save logic
+		const meta = { context: ctx, type: "_rules", created: "2025-01-15", updated: "2025-01-15", confidence: 0.7, entries: 1 };
+		const entry = formatMemoryEntry("2025-01-15", "Test Title", "Test content", 0.7);
+		ensureFileDir(fp);
+		writeFileSync(fp, formatFrontmatter(meta) + entry + "\n");
+
+		expect(existsSync(fp)).toBeTrue();
+		const content = readFileSync(fp, "utf-8");
+		expect(content).toContain("context: my-context");
+		expect(content).toContain("## [2025-01-15] Test Title");
+		expect(content).toContain("Test content");
+	});
+
+	it("appends entry to existing memory file", async () => {
+		const { formatMemoryEntry, formatFrontmatter, parseFrontmatter, extractEntryConfidences, recalcOverallConfidence } = await import("../utils.ts");
+		const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
+
+		const fp = join(tmpRoot, "_global", "_rules", "my-context.md");
+
+		// Read existing, append
+		const existing = readFileSync(fp, "utf-8");
+		const { meta, body } = parseFrontmatter(existing);
+
+		const confs = extractEntryConfidences(body);
+		meta.confidence = recalcOverallConfidence(confs, 0.6);
+		meta.updated = "2025-01-20";
+		meta.entries = (meta.entries as number) + 1;
+
+		const newEntry = formatMemoryEntry("2025-01-20", "Second Entry", "More content", 0.6);
+		writeFileSync(fp, formatFrontmatter(meta) + body + newEntry + "\n");
+
+		const updated = readFileSync(fp, "utf-8");
+		expect(updated).toContain("## [2025-01-20] Second Entry");
+		expect(updated).toContain("entries: 2");
+		expect(updated).toContain("confidence: 0.65"); // (0.7 + 0.6) / 2
+	});
+
+	it("creates and moves to .supersedes on supersede", async () => {
+		const { getSupersedesPath, ensureFileDir, formatFrontmatter, formatMemoryEntry } = await import("../utils.ts");
+		const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
+
+		// Create old memory
+		const oldFp = join(tmpRoot, "_global", "_rules", "old-context.md");
+		const meta = { context: "old-context", type: "_rules", created: "2025-01-01", updated: "2025-01-01", confidence: 0.5, entries: 1 };
+		const entry = formatMemoryEntry("2025-01-01", "Old info", "Outdated", 0.5);
+		ensureFileDir(oldFp);
+		writeFileSync(oldFp, formatFrontmatter(meta) + entry + "\n");
+
+		// Move to supersedes
+		const supPath = join(tmpRoot, ".supersedes", "_global", "_rules", "old-context.md");
+		const oldContent = readFileSync(oldFp, "utf-8");
+
+		// Add superseded meta
+		
+		const parsed = parseFrontmatter(oldContent);
+		parsed.meta.superseded_at = "2025-01-15";
+		parsed.meta.superseded_by = "new-context";
+		parsed.meta.confidence = 0;
+
+		ensureFileDir(supPath);
+		writeFileSync(supPath, formatFrontmatter(parsed.meta) + parsed.body);
+
+		expect(existsSync(supPath)).toBeTrue();
+		const supContent = readFileSync(supPath, "utf-8");
+		expect(supContent).toContain("superseded_at: 2025-01-15");
+		expect(supContent).toContain("superseded_by: new-context");
+		expect(supContent).toContain("confidence: 0");
+		expect(supContent).toContain("## [2025-01-01] Old info");
 	});
 });

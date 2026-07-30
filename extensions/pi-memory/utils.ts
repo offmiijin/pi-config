@@ -229,3 +229,154 @@ export function ensureFileDir(filePath: string): void {
 		mkdirSync(dir, { recursive: true });
 	}
 }
+
+// ── Memory file helpers ────────────────────────────────────────────────────
+
+/**
+ * Sanitizes a string to be safe for use as a filename.
+ * Lowercases, replaces non-alphanumeric with hyphens, collapses multiple hyphens.
+ */
+export function sanitizeFilename(name: string): string {
+	return name
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "");
+}
+
+/**
+ * Returns the file path for a memory given scope, type and context.
+ */
+export function getMemoryFilePath(
+	projectId: string,
+	type: string,
+	context: string,
+	scope: "global" | "project",
+): string {
+	const filename = `${sanitizeFilename(context)}.md`;
+	if (scope === "global") {
+		return join(MEMORIES_ROOT, "_global", type, filename);
+	}
+	return join(MEMORIES_ROOT, "projects", projectId, type, filename);
+}
+
+/**
+ * Returns the .supersedes/ path for a given memory file path.
+ */
+export function getSupersedesPath(originalPath: string): string {
+	const relative = originalPath.startsWith(MEMORIES_ROOT + "/")
+		? originalPath.slice(MEMORIES_ROOT.length + 1)
+		: originalPath;
+	return join(MEMORIES_ROOT, ".supersedes", relative);
+}
+
+/**
+ * Parses YAML frontmatter from a markdown file.
+ * Returns metadata and body content separately.
+ */
+export function parseFrontmatter(content: string): {
+	meta: Record<string, unknown>;
+	body: string;
+} {
+	if (!content.startsWith("---\n")) return { meta: {}, body: content };
+
+	const endIdx = content.indexOf("\n---\n", 4);
+	if (endIdx === -1) return { meta: {}, body: content };
+
+	const yaml = content.slice(4, endIdx);
+	const body = content.slice(endIdx + 5);
+
+	const meta: Record<string, unknown> = {};
+	for (const line of yaml.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#")) continue;
+		const match = trimmed.match(/^(\w+):\s*(.*)$/);
+		if (!match) continue;
+
+		let value: unknown = match[2].trim();
+
+		// Array: ["a", "b"]
+		if (typeof value === "string" && value.startsWith("[") && value.endsWith("]")) {
+			value = value
+				.slice(1, -1)
+				.split(",")
+				.map((s) => s.trim().replace(/^"(.*)"$/, "$1"));
+		} else if (value === "true") value = true;
+		else if (value === "false") value = false;
+		else if (typeof value === "string" && !isNaN(Number(value))) value = Number(value);
+
+		meta[match[1]] = value;
+	}
+
+	return { meta, body };
+}
+
+/**
+ * Formats metadata as YAML frontmatter string.
+ */
+export function formatFrontmatter(meta: Record<string, unknown>): string {
+	const lines = ["---"];
+	for (const [key, value] of Object.entries(meta)) {
+		if (Array.isArray(value)) {
+			lines.push(`${key}: [${value.map((v) => `"${v}"`).join(", ")}]`);
+		} else if (typeof value === "number") {
+			lines.push(`${key}: ${value}`);
+		} else if (typeof value === "boolean") {
+			lines.push(`${key}: ${value}`);
+		} else {
+			lines.push(`${key}: ${value}`);
+		}
+	}
+	lines.push("---");
+	return lines.join("\n") + "\n";
+}
+
+/**
+ * Formats a memory entry as markdown.
+ */
+export function formatMemoryEntry(
+	date: string,
+	title: string,
+	content: string,
+	confidence?: number,
+): string {
+	const lines: string[] = [];
+	if (confidence !== undefined) {
+		lines.push(`## [${date}] ${title}`);
+		lines.push(`confidence: ${confidence}`);
+	} else {
+		lines.push(`## [${date}] ${title}`);
+	}
+	lines.push("");
+	lines.push(content.trim());
+	lines.push("");
+	return lines.join("\n");
+}
+
+/**
+ * Extracts confidence values from all entries in a memory file body.
+ */
+export function extractEntryConfidences(body: string): number[] {
+	const confidences: number[] = [];
+	const regex = /^confidence:\s*([\d.]+)$/gm;
+	let match;
+	while ((match = regex.exec(body)) !== null) {
+		const val = parseFloat(match[1]);
+		if (!isNaN(val)) confidences.push(val);
+	}
+	return confidences;
+}
+
+/**
+ * Recalculates the overall confidence as average of all entry confidences,
+ * falling back to the provided default if no entries have explicit confidence.
+ */
+export function recalcOverallConfidence(
+	existingConfidences: number[],
+	newConfidence: number,
+): number {
+	const all = [...existingConfidences, newConfidence];
+	if (all.length === 0) return 0.5;
+	const sum = all.reduce((a, b) => a + b, 0);
+	return Math.round((sum / all.length) * 100) / 100;
+}
