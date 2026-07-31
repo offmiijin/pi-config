@@ -4,7 +4,7 @@
 
 import { execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -290,6 +290,56 @@ export function getSupersedesPath(originalPath: string): string {
 		? originalPath.slice(MEMORIES_ROOT.length + 1)
 		: originalPath;
 	return join(MEMORIES_ROOT, ".supersedes", relative);
+}
+
+/**
+ * Moves a memory file to .supersedes/, preserving structure and adding
+ * superseded metadata. The original file is removed.
+ * Returns the new path.
+ */
+export function moveToSupersedes(
+	filePath: string,
+	extraMeta: Record<string, unknown> = {},
+): string {
+	const content = readFileSync(filePath, "utf-8");
+	const { meta, body } = parseFrontmatter(content);
+
+	meta.superseded_at = new Date().toISOString().slice(0, 10);
+	meta.confidence = 0;
+	for (const [k, v] of Object.entries(extraMeta)) {
+		meta[k] = v;
+	}
+
+	const supPath = getSupersedesPath(filePath);
+	ensureFileDir(supPath);
+	writeFileSync(supPath, formatFrontmatter(meta) + body);
+	rmSync(filePath, { force: true });
+	return supPath;
+}
+
+/**
+ * Finds the memory file for a context across all types and scopes.
+ * Returns undefined if not found.
+ */
+export function findMemoryFile(
+	projectId: string,
+	context: string,
+): string | undefined {
+	for (const scope of ["global", "project"] as const) {
+		for (const type of MEMORY_TYPES) {
+			const fp = getMemoryFilePath(projectId, type, context, scope);
+			if (existsSync(fp)) return fp;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Applies a decay delta to a confidence value, clamped at 0.
+ * Delta is treated as a reduction regardless of sign.
+ */
+export function applyDecay(currentConfidence: number, delta: number): number {
+	return Math.max(0, Math.round((currentConfidence - Math.abs(delta)) * 100) / 100);
 }
 
 /**

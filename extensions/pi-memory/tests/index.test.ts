@@ -9,10 +9,12 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import {
+	applyDecay,
 	countObservations,
 	ensureDirectories,
 	ensureFileDir,
 	extractEntryConfidences,
+	findMemoryFile,
 	extractTextContent,
 	extractToolCallNames,
 	formatFrontmatter,
@@ -30,6 +32,7 @@ import {
 	identifyProject,
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
+	moveToSupersedes,
 	OBSERVATION_THRESHOLD,
 	parseFrontmatter,
 	readFileConfidence,
@@ -1151,5 +1154,126 @@ describe("getObservationStatus", () => {
 		expect(status.observation_count).toBe(2);
 
 		rmSync(fp, { force: true });
+	});
+});
+
+// ── Memory decay ───────────────────────────────────────────────────────────
+
+describe("applyDecay", () => {
+	it("reduces confidence by delta", () => {
+		expect(applyDecay(0.7, -0.3)).toBe(0.4);
+	});
+
+	it("treats positive delta as reduction", () => {
+		expect(applyDecay(0.7, 0.3)).toBe(0.4);
+	});
+
+	it("clamps at 0", () => {
+		expect(applyDecay(0.3, -0.9)).toBe(0);
+	});
+
+	it("rounds to 2 decimal places", () => {
+		expect(applyDecay(0.55, -0.1)).toBe(0.45);
+	});
+
+	it("keeps confidence if delta is 0", () => {
+		expect(applyDecay(0.5, 0)).toBe(0.5);
+	});
+});
+
+describe("findMemoryFile", () => {
+	let testProjectId: string;
+
+	beforeAll(async () => {
+		testProjectId = `__test_find_${Date.now()}`;
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+
+		// Create a memory in a specific location
+		const fp = join(MEMORIES_ROOT, "_global", "gotchas", "findme.md");
+		ensureFileDir(fp);
+		writeFileSync(fp, "---\ncontext: findme\ntype: gotchas\nconfidence: 0.6\n---\n\ncontent");
+
+		// Project-scoped memory
+		const pfp = join(MEMORIES_ROOT, "projects", testProjectId, "_rules", "projrule.md");
+		ensureFileDir(pfp);
+		writeFileSync(pfp, "---\ncontext: projrule\ntype: _rules\nconfidence: 0.7\n---\n\ncontent");
+	});
+
+	afterAll(async () => {
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+		rmSync(join(MEMORIES_ROOT, "_global", "gotchas", "findme.md"), { force: true });
+		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+	});
+
+	it("finds global memory by context", () => {
+		const fp = findMemoryFile("__test_find_20250101", "findme");
+		expect(fp).toBeDefined();
+		expect(fp!).toContain("_global");
+		expect(fp!).toContain("gotchas");
+	});
+
+	it("finds project memory by context", () => {
+		const fp = findMemoryFile(testProjectId, "projrule");
+		expect(fp).toBeDefined();
+		expect(fp!).toContain("projects");
+		expect(fp!).toContain("projrule");
+	});
+
+	it("returns undefined for unknown context", () => {
+		expect(findMemoryFile("whatever", "does-not-exist-xyz")).toBeUndefined();
+	});
+});
+
+describe("moveToSupersedes", () => {
+	let testProjectId: string;
+
+	beforeAll(async () => {
+		testProjectId = `__test_move_${Date.now()}`;
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+
+		const fp = join(MEMORIES_ROOT, "_global", "_rules", "decayme.md");
+		ensureFileDir(fp);
+		writeFileSync(
+			fp,
+			[
+				"---",
+				"context: decayme",
+				"type: _rules",
+				"confidence: 0.6",
+				"---",
+				"",
+				"## [2025-01-01] Old rule",
+				"",
+				"Some content here.",
+			].join("\n"),
+		);
+	});
+
+	afterAll(async () => {
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+		rmSync(join(MEMORIES_ROOT, "_global", "_rules", "decayme.md"), { force: true });
+		rmSync(join(MEMORIES_ROOT, ".supersedes", "_global", "_rules", "decayme.md"), { force: true });
+	});
+
+	it("moves file to .supersedes preserving structure", async () => {
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+
+		const original = join(MEMORIES_ROOT, "_global", "_rules", "decayme.md");
+		const supPath = moveToSupersedes(original, { superseded_reason: "test decay" });
+
+		// Original removed
+		expect(existsSync(original)).toBeFalse();
+
+		// New file exists at expected location
+		expect(supPath).toBe(join(MEMORIES_ROOT, ".supersedes", "_global", "_rules", "decayme.md"));
+		expect(existsSync(supPath)).toBeTrue();
+
+		// Content preserved with metadata
+		const content = readFileSync(supPath, "utf-8");
+		expect(content).toContain("context: decayme");
+		expect(content).toContain("superseded_at:");
+		expect(content).toContain("superseded_reason: test decay");
+		expect(content).toContain("confidence: 0");
+		expect(content).toContain("## [2025-01-01] Old rule");
 	});
 });

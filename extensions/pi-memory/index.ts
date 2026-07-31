@@ -20,15 +20,17 @@
  *   9. [ ] Skill with usage instructions
  */
 
-import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	countObservations,
 	ensureDirectories,
+	applyDecay,
 	ensureFileDir,
 	extractEntryConfidences,
 	extractTextContent,
 	extractToolCallNames,
+	findMemoryFile,
 	formatFrontmatter,
 	formatMemoryEntry,
 	formatObservation,
@@ -37,9 +39,9 @@ import {
 	getMemoryFilePath,
 	getObservationStatus,
 	getSessionFilePath,
-	getSupersedesPath,
 	hashSessionFile,
 	identifyProject,
+	moveToSupersedes,
 	parseFrontmatter,
 	recalcOverallConfidence,
 	searchMemories,
@@ -181,22 +183,7 @@ export default function (pi: ExtensionAPI) {
 			if (supersedes) {
 				const oldPath = getMemoryFilePath(projectId, type, supersedes, scope);
 				if (existsSync(oldPath)) {
-					const supPath = getSupersedesPath(oldPath);
-					ensureFileDir(supPath);
-
-					// Read old frontmatter and add superseded info
-					const oldContent = readFileSync(oldPath, "utf-8");
-					const { meta } = parseFrontmatter(oldContent);
-					meta.superseded_at = today;
-					meta.superseded_by = context;
-					meta.confidence = 0; // superseded = zero confidence
-
-					const newOldContent = oldContent.startsWith("---")
-						? formatFrontmatter(meta) + oldContent.slice(oldContent.indexOf("\n---\n", 4) + 5)
-						: formatFrontmatter(meta) + oldContent;
-
-					writeFileSync(supPath, newOldContent);
-					renameSync(oldPath, supPath);
+					moveToSupersedes(oldPath, { superseded_by: context });
 				} // if not found, it's already gone — proceed
 			}
 
@@ -330,15 +317,80 @@ export default function (pi: ExtensionAPI) {
 			"memory_decay: Reduce confidence or supersede a memory",
 		parameters: DecaySchema,
 
-		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			if (!projectId) {
+				return {
+					content: [{ type: "text", text: "Error: no active project" }],
+					details: { error: "no_active_project" },
+				};
+			}
+
+			const { context, delta, move_to_supersedes, reason } = params;
+
+			const filePath = findMemoryFile(projectId, context);
+			if (!filePath) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `No memory found for context "${context}"`,
+						},
+					],
+					details: { error: "not_found", context },
+				};
+			}
+
+			const content = readFileSync(filePath, "utf-8");
+			const { meta, body } = parseFrontmatter(content);
+			const currentConf = typeof meta.confidence === "number" ? meta.confidence : 0.5;
+
+			// Force move to .supersedes/
+			if (move_to_supersedes) {
+				const supPath = moveToSupersedes(filePath, {
+					superseded_reason: reason,
+				});
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Moved memory "${context}" to .supersedes/`,
+						},
+					],
+					details: { action: "superseded", file: supPath, context },
+				};
+			}
+
+			const newConf = applyDecay(currentConf, delta);
+
+			// Confidence reached 0 — move to .supersedes/
+			if (newConf <= 0) {
+				const supPath = moveToSupersedes(filePath, {
+					superseded_reason: reason,
+				});
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Confidence reached 0 — moved "${context}" to .supersedes/`,
+						},
+					],
+					details: { action: "superseded", file: supPath, context },
+				};
+			}
+
+			// Update confidence in place
+			meta.confidence = newConf;
+			meta.updated = new Date().toISOString().slice(0, 10);
+			writeFileSync(filePath, formatFrontmatter(meta) + body);
+
 			return {
 				content: [
 					{
 						type: "text",
-						text: "memory_decay not yet implemented",
+						text: `Reduced confidence of "${context}" from ${currentConf} to ${newConf}`,
 					},
 				],
-				details: { implemented: false },
+				details: { action: "decayed", file: filePath, context, confidence: newConf },
 			};
 		},
 	});
