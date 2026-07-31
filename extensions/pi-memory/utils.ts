@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-export const MEMORIES_ROOT = join(homedir(), ".pi", "memories");
+export const MEMORIES_ROOT = join(homedir(), ".pi", "agent", "memories");
 export const OBSERVATION_THRESHOLD = 50;
 
 export const MEMORY_TYPES = ["_rules", "decisions", "gotchas", "lessons", "patterns"] as const;

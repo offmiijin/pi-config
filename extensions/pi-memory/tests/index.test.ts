@@ -1157,7 +1157,9 @@ describe("getObservationStatus", () => {
 		const status = getObservationStatus("__status_test", "statushash", date);
 		expect(status.observation_count).toBe(2);
 
+		// cleanup: arquivo + diretórios do projeto de teste
 		rmSync(fp, { force: true });
+		rmSync(join(MEMORIES_ROOT, "projects", "__status_test"), { recursive: true, force: true });
 	});
 });
 
@@ -1432,6 +1434,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 	afterAll(async () => {
 		const { MEMORIES_ROOT } = await import("../utils.ts");
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), { recursive: true, force: true });
 	});
 
 	it("creates a new memory file", () => {

@@ -57,7 +57,7 @@ Sistema de memória persistente. Memórias são arquivos markdown organizados po
 ## Estrutura de Diretórios
 
 ```
-~/.pi/memories/
+~/.pi/agent/memories/
 ├── _global/          → memórias de todos os projetos
 │   ├── _rules/  decisions/  gotchas/  lessons/  patterns/
 ├── .supersedes/      → memórias substituídas (espelha estrutura)
