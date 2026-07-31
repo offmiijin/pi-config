@@ -333,6 +333,16 @@ export function formatSessionHeader(sessionHash: string, date?: string): string 
 }
 
 /**
+ * Resets a session file to a fresh state (header only, zero observations).
+ * Keeps the same file path and session hash.
+ */
+export function resetSessionFile(filePath: string, sessionHash: string): void {
+	ensureFileDir(filePath);
+	const header = formatSessionHeader(sessionHash);
+	writeFileSync(filePath, header + "\n");
+}
+
+/**
  * Ensures the directory for a file path exists, creating it if needed.
  */
 export function ensureFileDir(filePath: string): void {

@@ -50,6 +50,7 @@ import {
 	parseExtractionResult,
 	parseFrontmatter,
 	readSessionContent,
+	resetSessionFile,
 	saveMemory,
 	searchMemories,
 	shouldPromptExtraction,
@@ -556,6 +557,10 @@ export default function (pi: ExtensionAPI) {
 				saved.push({ context: mem.context, action: result.action });
 			}
 
+			// 4. Reset session file (mesmo hash, zero observações) — só após sucesso
+			resetSessionFile(sessionFile, currentSessionHash);
+			lastPromptedBucket = -1; // reinicia ciclo de trigger (próximo trigger às 50)
+
 			const summary = saved
 				.map((s) => `- ${s.action}: ${s.context}`)
 				.join("\n");
@@ -564,10 +569,15 @@ export default function (pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text",
-						text: `Extracted ${saved.length} memory(ies) from ${sessionFile}:\n${summary}`,
+						text: `Extracted ${saved.length} memory(ies) from ${sessionFile}:\n${summary}\nSession observations reset.`,
 					},
 				],
-				details: { count: saved.length, saved, session_file: sessionFile },
+				details: {
+					count: saved.length,
+					saved,
+					session_file: sessionFile,
+					reset: true,
+				},
 			};
 		},
 	});

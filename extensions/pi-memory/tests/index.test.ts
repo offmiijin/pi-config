@@ -41,6 +41,7 @@ import {
 	parseFrontmatter,
 	readFileConfidence,
 	recalcOverallConfidence,
+	resetSessionFile,
 	sanitizeFilename,
 	saveMemory,
 	searchMemories,
@@ -1243,6 +1244,54 @@ describe("getObservationStatus", () => {
 		// cleanup: arquivo + diretórios do projeto de teste
 		rmSync(fp, { force: true });
 		rmSync(join(MEMORIES_ROOT, "projects", "__status_test"), { recursive: true, force: true });
+	});
+});
+
+describe("resetSessionFile", () => {
+	it("resets a session file to header only", () => {
+		const date = "2026-07-31";
+		const fp = getSessionFilePath("__reset_test", "resethash", date);
+		ensureFileDir(fp);
+
+		// Cria arquivo com observações
+		writeFileSync(
+			fp,
+			[
+				"# Session resethash — 2026-07-31",
+				"",
+				"## Obs #1 (10:00:00)",
+				'User: "hi"',
+				"Tools: (none)",
+				'Agent: "hello"',
+				"",
+				"## Obs #2 (10:01:00)",
+				'User: "again"',
+				"Tools: bash",
+				'Agent: "ok"',
+				"",
+			].join("\n"),
+		);
+
+		resetSessionFile(fp, "resethash");
+
+		const content = readFileSync(fp, "utf-8");
+		expect(content).toBe("# Session resethash — 2026-07-31\n");
+		expect(countObservations(fp)).toBe(0);
+
+		rmSync(join(MEMORIES_ROOT, "projects", "__reset_test"), { recursive: true, force: true });
+	});
+
+	it("creates file if it doesn't exist", () => {
+		const date = "2026-07-31";
+		const fp = getSessionFilePath("__reset_test2", "resethash2", date);
+
+		resetSessionFile(fp, "resethash2");
+
+		expect(existsSync(fp)).toBeTrue();
+		const content = readFileSync(fp, "utf-8");
+		expect(content).toContain("# Session resethash2");
+
+		rmSync(join(MEMORIES_ROOT, "projects", "__reset_test2"), { recursive: true, force: true });
 	});
 });
 
