@@ -134,21 +134,17 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Tool results: casa tool_calls do turno com o buffer do tool_result
-		const toolResults: ToolObservation[] = [];
+		// Tool calls do conteúdo do assistant (ordem de origem)
 		const toolCalls = extractToolCalls(assistantMsg.content);
-		for (const tc of toolCalls) {
-			const buffered = toolResultsBuffer.get(tc.id);
-			toolResults.push(buffered ?? { name: tc.name });
-		}
-		toolResultsBuffer.clear();
 
-		// Fallback 1: scan do branch (mensagens role="toolResult" após último user)
-		if (toolResults.length === 0 && lastUserIdx >= 0) {
+		// Resultados deste turno a partir do branch (mensagens role="toolResult"
+		// após o último user — também em ordem de origem, conforme documentado)
+		const branchResults: ToolObservation[] = [];
+		if (lastUserIdx >= 0) {
 			for (let i = lastUserIdx + 1; i < branch.length; i++) {
 				const entry = branch[i];
 				if (entry.type === "message" && entry.message?.role === "toolResult") {
-					toolResults.push({
+					branchResults.push({
 						name: entry.message.toolName ?? "unknown",
 						result: extractTextContent(entry.message.content),
 						isError: !!entry.message.isError,
@@ -157,12 +153,22 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Fallback 2: nomes dos toolCall blocks caso nada encontrado
-		if (toolResults.length === 0) {
-			for (const n of extractToolCallNames(assistantMsg.content)) {
-				toolResults.push({ name: n });
-			}
+		// Alinha toolCalls[i] ↔ branchResults[i]; buffer enriquece por id
+		let toolResults: ToolObservation[];
+		if (toolCalls.length > 0) {
+			toolResults = toolCalls.map((tc, i) => {
+				const buffered = toolResultsBuffer.get(tc.id);
+				if (buffered && buffered.result) return buffered;
+				return branchResults[i] ?? { name: tc.name };
+			});
+		} else {
+			// Sem toolCall blocks no conteúdo: usa branchResults direto
+			toolResults =
+				branchResults.length > 0
+					? branchResults
+					: extractToolCallNames(assistantMsg.content).map((n) => ({ name: n }));
 		}
+		toolResultsBuffer.clear();
 
 		const agentResponse = extractTextContent(assistantMsg.content);
 
