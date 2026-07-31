@@ -18,6 +18,8 @@ import {
 	findMemoryFile,
 	extractTextContent,
 	extractToolCallNames,
+	extractToolCalls,
+	extractToolResultText,
 	formatFrontmatter,
 	formatMemoryEntry,
 	formatObservation,
@@ -407,11 +409,14 @@ describe("formatTimestamp", () => {
 // ── formatObservation ──────────────────────────────────────────────────────
 
 describe("formatObservation", () => {
-	it("produces correct structure with all fields", () => {
+	it("produces correct structure with tool results", () => {
 		const result = formatObservation(
 			1,
 			"Create login",
-			["read", "edit"],
+			[
+				{ name: "read", result: "file content" },
+				{ name: "edit", result: "saved" },
+			],
 			"Added form",
 			new Date(2025, 0, 15, 10, 30, 0),
 		);
@@ -420,8 +425,20 @@ describe("formatObservation", () => {
 		expect(lines[0]).toBe("");
 		expect(lines[1]).toBe("## Obs #1 (10:30:00)");
 		expect(lines[2]).toBe('User: "Create login"');
-		expect(lines[3]).toBe("Tools: read, edit");
-		expect(lines[4]).toBe('Agent: "Added form"');
+		expect(lines[3]).toBe("Tools:");
+		expect(lines[4]).toBe('  read → "file content"');
+		expect(lines[5]).toBe('  edit → "saved"');
+		expect(lines[6]).toBe('Agent: "Added form"');
+	});
+
+	it("marks tool errors", () => {
+		const result = formatObservation(1, "hi", [{ name: "bash", result: "not found", isError: true }], "ok");
+		expect(result).toContain('  bash → [error] "not found"');
+	});
+
+	it("shows tool name without result when result empty", () => {
+		const result = formatObservation(1, "hi", [{ name: "read" }], "ok");
+		expect(result).toContain("  read");
 	});
 
 	it("shows (none) when no tools called", () => {
@@ -430,7 +447,7 @@ describe("formatObservation", () => {
 	});
 
 	it("shows (no response) when agent response is empty", () => {
-		const result = formatObservation(3, "Test", ["bash"], "", new Date(2025, 0, 15, 10, 0, 0));
+		const result = formatObservation(3, "Test", [{ name: "bash" }], "", new Date(2025, 0, 15, 10, 0, 0));
 		expect(result).toContain("Agent: (no response)");
 	});
 
@@ -446,6 +463,72 @@ describe("formatObservation", () => {
 		const result = formatObservation(1, "hi", [], longResponse);
 		const agentLine = result.split("\n").find((l) => l.startsWith("Agent:"));
 		expect(agentLine?.length).toBeLessThan(3000);
+	});
+
+	it("truncates long tool results to 500 chars", () => {
+		const longResult = "z".repeat(1000);
+		const result = formatObservation(1, "hi", [{ name: "bash", result: longResult }], "ok");
+		const toolLine = result.split("\n").find((l) => l.includes("bash →"));
+		expect(toolLine?.length).toBeLessThan(1000);
+	});
+});
+
+describe("extractToolCalls", () => {
+	it("returns empty for non-array input", () => {
+		expect(extractToolCalls(null)).toEqual([]);
+		expect(extractToolCalls("str")).toEqual([]);
+	});
+
+	it("extracts id and name from toolCall blocks", () => {
+		const content = [
+			{ type: "toolCall", id: "call_1", name: "read", arguments: {} },
+			{ type: "toolCall", id: "call_2", name: "bash", arguments: {} },
+		];
+		expect(extractToolCalls(content)).toEqual([
+			{ id: "call_1", name: "read" },
+			{ id: "call_2", name: "bash" },
+		]);
+	});
+
+	it("ignores non-toolCall blocks", () => {
+		const content = [
+			{ type: "text", text: "hi" },
+			{ type: "toolCall", id: "c1", name: "grep", arguments: {} },
+		];
+		expect(extractToolCalls(content)).toEqual([{ id: "c1", name: "grep" }]);
+	});
+
+	it("handles missing id", () => {
+		const content = [{ type: "toolCall", name: "read", arguments: {} }];
+		expect(extractToolCalls(content)).toEqual([{ id: "", name: "read" }]);
+	});
+});
+
+describe("extractToolResultText", () => {
+	it("returns string as-is", () => {
+		expect(extractToolResultText("plain text")).toBe("plain text");
+	});
+
+	it("returns empty for null/undefined", () => {
+		expect(extractToolResultText(null)).toBe("");
+		expect(extractToolResultText(undefined)).toBe("");
+	});
+
+	it("extracts from content blocks array", () => {
+		const result = { content: [{ type: "text", text: "output here" }] };
+		expect(extractToolResultText(result)).toBe("output here");
+	});
+
+	it("extracts from direct text field", () => {
+		expect(extractToolResultText({ text: "direct" })).toBe("direct");
+	});
+
+	it("extracts from output field", () => {
+		expect(extractToolResultText({ output: "bash out" })).toBe("bash out");
+	});
+
+	it("returns empty for unrelated objects", () => {
+		expect(extractToolResultText({ foo: "bar" })).toBe("");
 	});
 });
 

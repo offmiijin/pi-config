@@ -158,18 +158,72 @@ export function formatTimestamp(date?: Date): string {
 }
 
 /**
+ * A tool call with its result, as recorded in an observation.
+ */
+export interface ToolObservation {
+	name: string;
+	result?: string;
+	isError?: boolean;
+}
+
+/**
+ * A tool call reference extracted from an assistant message.
+ */
+export interface ToolCallRef {
+	id: string;
+	name: string;
+}
+
+/**
+ * Extracts tool calls (id + name) from an assistant message content array.
+ */
+export function extractToolCalls(content: unknown): ToolCallRef[] {
+	if (!Array.isArray(content)) return [];
+
+	const calls: ToolCallRef[] = [];
+	for (const block of content) {
+		if (!block || typeof block !== "object") continue;
+		const b = block as Record<string, unknown>;
+		if (b.type === "toolCall" && typeof b.name === "string") {
+			calls.push({ id: typeof b.id === "string" ? b.id : "", name: b.name });
+		}
+	}
+	return calls;
+}
+
+/**
+ * Extracts readable text from a tool result.
+ * Handles strings, content block arrays, and common result shapes.
+ */
+export function extractToolResultText(result: unknown): string {
+	if (typeof result === "string") return result;
+	if (!result || typeof result !== "object") return "";
+
+	const r = result as Record<string, unknown>;
+
+	// Content blocks: { content: [{ type: "text", text }] }
+	if (Array.isArray(r.content)) {
+		return extractTextContent(r.content);
+	}
+	// Direct text field
+	if (typeof r.text === "string") return r.text;
+	// Bash-style output field
+	if (typeof r.output === "string") return r.output;
+
+	return "";
+}
+
+/**
  * Formats a single observation entry for appending to a session file.
  */
 export function formatObservation(
 	obsNumber: number,
 	userPrompt: string,
-	toolCalls: string[],
+	tools: ToolObservation[],
 	agentResponse: string,
 	timestamp?: Date,
 ): string {
 	const time = formatTimestamp(timestamp);
-	const toolsStr =
-		toolCalls.length > 0 ? `Tools: ${toolCalls.join(", ")}` : "Tools: (none)";
 
 	// Truncate long texts to keep the session file readable
 	const promptPreview = userPrompt.slice(0, 1000);
@@ -179,8 +233,22 @@ export function formatObservation(
 		"",
 		`## Obs #${obsNumber} (${time})`,
 		`User: "${promptPreview}"`,
-		toolsStr,
 	];
+
+	if (tools.length === 0) {
+		lines.push("Tools: (none)");
+	} else {
+		lines.push("Tools:");
+		for (const t of tools) {
+			const resultPreview = t.result ? t.result.slice(0, 500) : "";
+			const errorMark = t.isError ? "[error] " : "";
+			if (resultPreview) {
+				lines.push(`  ${t.name} → ${errorMark}"${resultPreview}"`);
+			} else {
+				lines.push(`  ${t.name}${errorMark ? " (error)" : ""}`);
+			}
+		}
+	}
 
 	if (responsePreview) {
 		lines.push(`Agent: "${responsePreview}"`);

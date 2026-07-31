@@ -33,7 +33,9 @@ import {
 	ensureFileDir,
 	extractTextContent,
 	extractToolCallNames,
+	extractToolCalls,
 	findMemoryFile,
+	type ToolObservation,
 	formatFrontmatter,
 	formatObservation,
 	formatSessionHeader,
@@ -69,6 +71,24 @@ export default function (pi: ExtensionAPI) {
 	// Auto-extraction trigger state
 	let lastPromptedBucket = -1;
 	let extractionDueCount = 0;
+	// Buffer de resultados de tools do turno atual (toolCallId → observação)
+	const toolResultsBuffer = new Map<string, ToolObservation>();
+
+	// ── Captura resultados de tools durante o turno ───────────────────────
+	pi.on("tool_result", async (event) => {
+		const e = event as unknown as {
+			toolCallId?: string;
+			toolName?: string;
+			content?: unknown;
+			isError?: boolean;
+		};
+		if (!e.toolCallId) return;
+		toolResultsBuffer.set(e.toolCallId, {
+			name: e.toolName ?? "unknown",
+			result: extractTextContent(e.content),
+			isError: !!e.isError,
+		});
+	});
 
 	// ── Session lifecycle ──────────────────────────────────────────────────
 	pi.on("session_start", async (_event, ctx) => {
@@ -99,16 +119,50 @@ export default function (pi: ExtensionAPI) {
 		if (!assistantMsg) return;
 
 		const branch = ctx.sessionManager.getBranch();
+
+		// Encontra o último prompt do usuário e coleta resultados de tools
+		// do turno atual (mensagens role="toolResult" após o último prompt)
 		let userPrompt = "";
+		let lastUserIdx = -1;
 		for (let i = branch.length - 1; i >= 0; i--) {
 			const entry = branch[i];
 			if (entry.type === "message" && entry.message?.role === "user") {
+				lastUserIdx = i;
 				userPrompt = extractTextContent(entry.message.content);
 				break;
 			}
 		}
 
-		const toolCalls = extractToolCallNames(assistantMsg.content);
+		// Tool results: casa tool_calls do turno com o buffer do tool_result
+		const toolResults: ToolObservation[] = [];
+		const toolCalls = extractToolCalls(assistantMsg.content);
+		for (const tc of toolCalls) {
+			const buffered = toolResultsBuffer.get(tc.id);
+			toolResults.push(buffered ?? { name: tc.name });
+		}
+		toolResultsBuffer.clear();
+
+		// Fallback 1: scan do branch (mensagens role="toolResult" após último user)
+		if (toolResults.length === 0 && lastUserIdx >= 0) {
+			for (let i = lastUserIdx + 1; i < branch.length; i++) {
+				const entry = branch[i];
+				if (entry.type === "message" && entry.message?.role === "toolResult") {
+					toolResults.push({
+						name: entry.message.toolName ?? "unknown",
+						result: extractTextContent(entry.message.content),
+						isError: !!entry.message.isError,
+					});
+				}
+			}
+		}
+
+		// Fallback 2: nomes dos toolCall blocks caso nada encontrado
+		if (toolResults.length === 0) {
+			for (const n of extractToolCallNames(assistantMsg.content)) {
+				toolResults.push({ name: n });
+			}
+		}
+
 		const agentResponse = extractTextContent(assistantMsg.content);
 
 		const sessionFile = getSessionFilePath(projectId, currentSessionHash);
@@ -120,16 +174,25 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const obsNumber = countObservations(sessionFile) + 1;
-		const obs = formatObservation(obsNumber, userPrompt, toolCalls, agentResponse);
+		const obs = formatObservation(obsNumber, userPrompt, toolResults, agentResponse);
 		appendFileSync(sessionFile, obs + "\n");
 
 		// ── Auto-extraction trigger ──
-		// Sinaliza o LLM (via before_agent_start) a cada cruzamento do threshold
+		// Envia mensagem follow-up pro LLM a cada cruzamento do threshold (50, 100, ...)
 		const count = countObservations(sessionFile);
 		const { prompt, bucket } = shouldPromptExtraction(count, lastPromptedBucket);
 		if (prompt) {
 			lastPromptedBucket = bucket;
-			extractionDueCount = count;
+			try {
+				pi.sendUserMessage(
+					`[pi-memory] Session reached ${count} observations (threshold ${OBSERVATION_THRESHOLD}). ` +
+						"Call memory_extract to process observations into memories.",
+					{ deliverAs: "followUp" },
+				);
+			} catch {
+				// Fallback: injeta no próximo before_agent_start
+				extractionDueCount = count;
+			}
 		}
 	});
 
