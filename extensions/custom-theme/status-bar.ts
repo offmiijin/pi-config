@@ -7,7 +7,16 @@
 import { CustomEditor, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, KeybindingsManager, SelectListTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
+import {
+	MEMORIES_ROOT,
+	MEMORY_TYPES,
+	countObservations,
+	getSessionFilePath,
+	hashSessionFile,
+	identifyProject,
+} from "../pi-memory/utils.ts";
 
 function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
@@ -27,6 +36,8 @@ class ModelInfoEditor extends CustomEditor {
 	private lastOutput = 0;
 	private contextUsage = 0;
 	private contextWindow = 0;
+	private memoryTotal = 0;
+	private memoryObservations = 0;
 
 	constructor(
 		tui: TUI,
@@ -64,6 +75,12 @@ class ModelInfoEditor extends CustomEditor {
 		this.invalidate();
 	}
 
+	setMemoryInfo(total: number, observations: number) {
+		this.memoryTotal = total;
+		this.memoryObservations = observations;
+		this.invalidate();
+	}
+
 	render(width: number): string[] {
 		const lines = super.render(width);
 		if (width <= 4) return lines;
@@ -96,6 +113,17 @@ class ModelInfoEditor extends CustomEditor {
 		const tokenInfo = dimFg(`${ctxStr}\u2191 ${formatTokenCount(this.lastInput)}/${formatTokenCount(this.lastOutput)} \u2193 ${formatTokenCount(this.sessionTokens)} $${this.sessionCost.toFixed(2)}`);
 
 		const topBorder = mutedFg("\u2500".repeat(width));
+
+		// Linha de memória — canto superior direito, acima das infos de token
+		const memoryInfo = [
+			this.uiTheme.fg("muted", "\u{1f9e0}"), // 🧠
+			this.uiTheme.fg("accent", String(this.memoryTotal)),
+			this.uiTheme.fg("muted", "\u{1f441}"), // 👁
+			this.uiTheme.fg("dim", String(this.memoryObservations)),
+		].join(" ");
+		const memoryW = visibleWidth(memoryInfo);
+		const memoryLine =
+			rail + " ".repeat(Math.max(0, innerW - memoryW)) + truncateToWidth(memoryInfo, innerW);
 
 		const bottomBorder = mutedFg("\u2500".repeat(width));
 
@@ -141,7 +169,7 @@ class ModelInfoEditor extends CustomEditor {
 		const gap = Math.max(1, innerW - leftW - rightW);
 		const metaLine = truncateToWidth(rail + leftPart + " ".repeat(gap) + rightPart, width);
 
-		return [topBorder, ...paddedContent, spacer, metaLine, bottomBorder, ...autoComplete];
+		return [topBorder, memoryLine, ...paddedContent, spacer, metaLine, bottomBorder, ...autoComplete];
 	}
 }
 
@@ -158,6 +186,34 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			editorRef?.setAgentType(type);
 		}
 	});
+
+	// ── helper: refresh memory stats from pi-memory store ──
+	function refreshMemoryStats(cwd: string, sessionFile: string | null | undefined) {
+		if (!editorRef) return;
+		try {
+			const projectId = identifyProject(cwd);
+
+			// Conta arquivos .md de memória do projeto (exclui sessions/)
+			let total = 0;
+			for (const t of MEMORY_TYPES) {
+				const dir = path.join(MEMORIES_ROOT, "projects", projectId, t);
+				if (existsSync(dir)) {
+					total += readdirSync(dir).filter((f) => f.endsWith(".md")).length;
+				}
+			}
+
+			// Conta observações pendentes da sessão atual
+			let observations = 0;
+			if (sessionFile) {
+				const hash = hashSessionFile(sessionFile);
+				observations = countObservations(getSessionFilePath(projectId, hash));
+			}
+
+			editorRef.setMemoryInfo(total, observations);
+		} catch {
+			// extensão pi-memory ausente — mantém 0/0
+		}
+	}
 
 	// ── helper: read agent type from session ──
 	function readAgentTypeFromSession(ctx: any): string {
@@ -189,6 +245,8 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		const modelId = ctx.model?.id || "unknown";
 		const provider = ctx.model?.provider || "";
 		const currentAgent = readAgentTypeFromSession(ctx);
+
+		refreshMemoryStats(ctx.cwd, ctx.sessionManager.getSessionFile());
 
 		ctx.ui.setEditorComponent((tui: TUI, baseTheme: EditorTheme, keybindings: KeybindingsManager) => {
 			const uiTheme = ctx.ui.theme;
@@ -290,5 +348,15 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	// Refresh agent type at start of each turn (fallback)
 	pi.on("turn_start", async (_event, ctx) => {
 		editorRef?.setAgentType(readAgentTypeFromSession(ctx));
+	});
+
+	// Refresh memória após cada turno (delay: garante append do pi-memory)
+	pi.on("turn_end", async (_event, ctx) => {
+		setTimeout(() => refreshMemoryStats(ctx.cwd, ctx.sessionManager.getSessionFile()), 150);
+	});
+
+	// Fallback: refresh após o agente assentar
+	pi.on("agent_settled", async (_event, ctx) => {
+		setTimeout(() => refreshMemoryStats(ctx.cwd, ctx.sessionManager.getSessionFile()), 150);
 	});
 }
