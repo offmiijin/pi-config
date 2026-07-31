@@ -42,6 +42,7 @@ import {
 	sanitizeFilename,
 	saveMemory,
 	searchMemories,
+	shouldPromptExtraction,
 } from "../utils.ts";
 
 import {
@@ -1157,6 +1158,50 @@ describe("getObservationStatus", () => {
 		expect(status.observation_count).toBe(2);
 
 		rmSync(fp, { force: true });
+	});
+});
+
+describe("shouldPromptExtraction", () => {
+	it("does not prompt below threshold", () => {
+		const r = shouldPromptExtraction(49, -1);
+		expect(r.prompt).toBeFalse();
+		expect(r.bucket).toBe(0);
+	});
+
+	it("prompts at threshold crossing", () => {
+		const r = shouldPromptExtraction(50, -1);
+		expect(r.prompt).toBeTrue();
+		expect(r.bucket).toBe(1);
+	});
+
+	it("prompts above threshold", () => {
+		const r = shouldPromptExtraction(67, -1);
+		expect(r.prompt).toBeTrue();
+		expect(r.bucket).toBe(1);
+	});
+
+	it("does not prompt again within same bucket", () => {
+		// já sinalizado no bucket 1 (50-99)
+		const r = shouldPromptExtraction(80, 1);
+		expect(r.prompt).toBeFalse();
+	});
+
+	it("prompts again at next threshold crossing", () => {
+		const r = shouldPromptExtraction(100, 1);
+		expect(r.prompt).toBeTrue();
+		expect(r.bucket).toBe(2);
+	});
+
+	it("accepts custom threshold", () => {
+		const r = shouldPromptExtraction(5, -1, 5);
+		expect(r.prompt).toBeTrue();
+		expect(r.bucket).toBe(1);
+	});
+
+	it("handles count at exactly 0", () => {
+		const r = shouldPromptExtraction(0, -1);
+		expect(r.prompt).toBeFalse();
+		expect(r.bucket).toBe(0);
 	});
 });
 

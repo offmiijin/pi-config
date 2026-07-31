@@ -44,11 +44,13 @@ import {
 	identifyProject,
 	MEMORIES_ROOT,
 	moveToSupersedes,
+	OBSERVATION_THRESHOLD,
 	parseExtractionResult,
 	parseFrontmatter,
 	readSessionContent,
 	saveMemory,
 	searchMemories,
+	shouldPromptExtraction,
 } from "./utils.ts";
 import {
 	DecaySchema,
@@ -64,6 +66,9 @@ export default function (pi: ExtensionAPI) {
 	// Runtime state (per session, reset on reload)
 	let projectId = "";
 	let currentSessionHash = "";
+	// Auto-extraction trigger state
+	let lastPromptedBucket = -1;
+	let extractionDueCount = 0;
 
 	// ── Session lifecycle ──────────────────────────────────────────────────
 	pi.on("session_start", async (_event, ctx) => {
@@ -72,10 +77,18 @@ export default function (pi: ExtensionAPI) {
 
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
+
+		// Reset auto-extraction trigger state
+		lastPromptedBucket = -1;
+		extractionDueCount = 0;
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		projectId = identifyProject(ctx.cwd);
+
+		// Reset trigger state on branch navigation
+		lastPromptedBucket = -1;
+		extractionDueCount = 0;
 	});
 
 	// ── Append observations at turn_end ────────────────────────────────────
@@ -109,6 +122,33 @@ export default function (pi: ExtensionAPI) {
 		const obsNumber = countObservations(sessionFile) + 1;
 		const obs = formatObservation(obsNumber, userPrompt, toolCalls, agentResponse);
 		appendFileSync(sessionFile, obs + "\n");
+
+		// ── Auto-extraction trigger ──
+		// Sinaliza o LLM (via before_agent_start) a cada cruzamento do threshold
+		const count = countObservations(sessionFile);
+		const { prompt, bucket } = shouldPromptExtraction(count, lastPromptedBucket);
+		if (prompt) {
+			lastPromptedBucket = bucket;
+			extractionDueCount = count;
+		}
+	});
+
+	// ── Inject extraction prompt at next user turn ────────────────────────
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (extractionDueCount > 0) {
+			const count = extractionDueCount;
+			extractionDueCount = 0;
+			return {
+				message: {
+					customType: "pi-memory",
+					content:
+						`[pi-memory] Session reached ${count} observations ` +
+						`(threshold ${OBSERVATION_THRESHOLD}). ` +
+						"Call memory_extract to process observations into memories.",
+					display: true,
+				},
+			};
+		}
 	});
 
 	// ── Tools ──────────────────────────────────────────────────────────────

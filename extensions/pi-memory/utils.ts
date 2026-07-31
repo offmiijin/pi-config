@@ -235,6 +235,28 @@ export function getObservationStatus(
 }
 
 /**
+ * Decides whether an extraction prompt should be emitted for the current
+ * observation count, based on the last prompted bucket.
+ *
+ * Triggers once per threshold crossing: 50, 100, 150, ...
+ *
+ * @param count             current observation count
+ * @param lastPromptedBucket last bucket that already triggered a prompt (-1 = none)
+ * @param threshold         observation threshold
+ */
+export function shouldPromptExtraction(
+	count: number,
+	lastPromptedBucket: number,
+	threshold: number = OBSERVATION_THRESHOLD,
+): { prompt: boolean; bucket: number } {
+	const bucket = Math.floor(count / threshold);
+	return {
+		prompt: count >= threshold && bucket > lastPromptedBucket,
+		bucket,
+	};
+}
+
+/**
  * Builds the initial session file header.
  */
 export function formatSessionHeader(sessionHash: string, date?: string): string {
