@@ -23,12 +23,14 @@ import {
 	generateSessionHash,
 	getMemoryDirectories,
 	getMemoryFilePath,
+	getObservationStatus,
 	getSessionFilePath,
 	getSupersedesPath,
 	hashSessionFile,
 	identifyProject,
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
+	OBSERVATION_THRESHOLD,
 	parseFrontmatter,
 	readFileConfidence,
 	recalcOverallConfidence,
@@ -1096,5 +1098,58 @@ describe("searchMemories", () => {
 		for (const r of results) {
 			expect(r.file).not.toContain(".supersedes");
 		}
+	});
+});
+
+// ── Observation status ─────────────────────────────────────────────────────
+
+describe("getObservationStatus", () => {
+	let tmpDir: string;
+
+	beforeAll(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), "pi-memory-status-"));
+	});
+
+	afterAll(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("returns threshold of 50", () => {
+		const status = getObservationStatus("proj", "hash123");
+		expect(status.threshold).toBe(50);
+		expect(OBSERVATION_THRESHOLD).toBe(50);
+	});
+
+	it("returns 0 observations for non-existent session file", () => {
+		const status = getObservationStatus("proj", "nonexistent", "2025-01-15");
+		expect(status.observation_count).toBe(0);
+	});
+
+	it("counts observations from session file", () => {
+		const date = "2025-01-15";
+		const fp = getSessionFilePath("__status_test", "statushash", date);
+		ensureFileDir(fp);
+		writeFileSync(
+			fp,
+			[
+				"# Session statushash — 2025-01-15",
+				"",
+				"## Obs #1 (10:00:00)",
+				'User: "hi"',
+				"Tools: (none)",
+				'Agent: "hello"',
+				"",
+				"## Obs #2 (10:01:00)",
+				'User: "how"',
+				"Tools: read",
+				'Agent: "ok"',
+				"",
+			].join("\n"),
+		);
+
+		const status = getObservationStatus("__status_test", "statushash", date);
+		expect(status.observation_count).toBe(2);
+
+		rmSync(fp, { force: true });
 	});
 });

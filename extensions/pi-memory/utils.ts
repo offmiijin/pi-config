@@ -213,6 +213,28 @@ export function countObservations(filePath: string): number {
 }
 
 /**
+ * Computes the observation status for the current session.
+ * Returns count, threshold and the session file path.
+ */
+export function getObservationStatus(
+	projectId: string,
+	sessionHash: string,
+	date?: string,
+): {
+	observation_count: number;
+	threshold: number;
+	session_file: string;
+} {
+	const sessionFile = getSessionFilePath(projectId, sessionHash, date);
+	const observationCount = countObservations(sessionFile);
+	return {
+		observation_count: observationCount,
+		threshold: OBSERVATION_THRESHOLD,
+		session_file: sessionFile,
+	};
+}
+
+/**
  * Builds the initial session file header.
  */
 export function formatSessionHeader(sessionHash: string, date?: string): string {

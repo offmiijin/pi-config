@@ -35,6 +35,7 @@ import {
 	formatSessionHeader,
 	generateSessionHash,
 	getMemoryFilePath,
+	getObservationStatus,
 	getSessionFilePath,
 	getSupersedesPath,
 	hashSessionFile,
@@ -118,14 +119,28 @@ export default function (pi: ExtensionAPI) {
 		parameters: StatusSchema,
 
 		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+			if (!projectId || !currentSessionHash) {
+				return {
+					content: [{ type: "text", text: "Error: no active session" }],
+					details: { error: "no_active_session" },
+				};
+			}
+
+			const status = getObservationStatus(projectId, currentSessionHash);
+			const remaining = Math.max(0, status.threshold - status.observation_count);
+
+			const text = [
+				`Observations: ${status.observation_count}/${status.threshold}`,
+				`Remaining until extraction: ${remaining}`,
+				`Session file: ${status.session_file}`,
+				remaining === 0
+					? "Threshold reached — call memory_extract now."
+					: `Continue working. Call memory_status periodically.`,
+			].join("\n");
+
 			return {
-				content: [
-					{
-						type: "text",
-						text: "memory_status not yet implemented",
-					},
-				],
-				details: { implemented: false },
+				content: [{ type: "text", text }],
+				details: status,
 			};
 		},
 	});
