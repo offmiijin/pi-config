@@ -12,12 +12,12 @@
  *   1. [x] Scaffold — directories, project ID, session lifecycle
  *   2. [x] Append observations at turn_end
  *   3. [x] Register 5 tools (scaffold with stubs)
- *   4. [ ] memory_save — persist/update markdown files
- *   5. [ ] memory_search — ripgrep wrapper
- *   6. [ ] memory_status — observation counter
- *   7. [ ] memory_decay — confidence reduction / supersede
- *   8. [ ] memory_extract — process session file via LLM
- *   9. [ ] Skill with usage instructions
+ *   4. [x] memory_save — persist/update markdown files
+ *   5. [x] memory_search — ripgrep wrapper
+ *   6. [x] memory_status — observation counter
+ *   7. [x] memory_decay — confidence reduction / supersede
+ *   8. [x] memory_extract — process session file via LLM
+ *   9. [x] Skill with usage instructions
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
