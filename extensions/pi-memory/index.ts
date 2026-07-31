@@ -21,29 +21,33 @@
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { uuidv7 } from "@earendil-works/pi-ai";
+import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+	applyDecay,
+	buildExtractionPrompt,
 	countObservations,
 	ensureDirectories,
-	applyDecay,
 	ensureFileDir,
-	extractEntryConfidences,
 	extractTextContent,
 	extractToolCallNames,
 	findMemoryFile,
 	formatFrontmatter,
-	formatMemoryEntry,
 	formatObservation,
 	formatSessionHeader,
 	generateSessionHash,
-	getMemoryFilePath,
 	getObservationStatus,
 	getSessionFilePath,
 	hashSessionFile,
 	identifyProject,
+	MEMORIES_ROOT,
 	moveToSupersedes,
+	parseExtractionResult,
 	parseFrontmatter,
-	recalcOverallConfidence,
+	readSessionContent,
+	saveMemory,
 	searchMemories,
 } from "./utils.ts";
 import {
@@ -166,86 +170,17 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const {
-				type,
-				context,
-				title,
-				content,
-				scope,
-				tags = [],
-				confidence = 0.5,
-				supersedes,
-			} = params;
+			const result = saveMemory(projectId, params);
 
-			const today = new Date().toISOString().slice(0, 10);
+			const text =
+				result.action === "created"
+					? `Created memory: ${params.scope}/${params.type}/${params.context}`
+					: `Appended to memory: ${params.scope}/${params.type}/${params.context} (entries: ${result.entries})`;
 
-			// 1. Handle supersede: move old memory to .supersedes/
-			if (supersedes) {
-				const oldPath = getMemoryFilePath(projectId, type, supersedes, scope);
-				if (existsSync(oldPath)) {
-					moveToSupersedes(oldPath, { superseded_by: context });
-				} // if not found, it's already gone — proceed
-			}
-
-			// 2. Determine file path
-			const filePath = getMemoryFilePath(projectId, type, context, scope);
-			ensureFileDir(filePath);
-
-			// 3. Build entry
-			const entry = formatMemoryEntry(today, title, content, confidence);
-
-			if (!existsSync(filePath)) {
-				// ── Create new file ──
-				const meta: Record<string, unknown> = {
-					context,
-					type,
-					created: today,
-					updated: today,
-					confidence,
-					entries: 1,
-				};
-				if (tags.length > 0) meta.tags = tags;
-
-				const frontmatter = formatFrontmatter(meta);
-				writeFileSync(filePath, frontmatter + entry + "\n");
-
-				return {
-					content: [{ type: "text", text: `Created memory: ${scope}/${type}/${context}` }],
-					details: { action: "created", file: filePath },
-				};
-			} else {
-				// ── Append to existing file ──
-				const existing = readFileSync(filePath, "utf-8");
-				const { meta, body } = parseFrontmatter(existing);
-
-				// Recalculate confidence
-				const existingConfidences = extractEntryConfidences(body);
-				const newOverall = recalcOverallConfidence(existingConfidences, confidence);
-
-				// Update frontmatter
-				meta.updated = today;
-				meta.confidence = newOverall;
-				meta.entries = ((meta.entries as number) || 0) + 1;
-
-				// Merge tags
-				if (tags.length > 0) {
-					const existingTags = (meta.tags as string[]) || [];
-					meta.tags = [...new Set([...existingTags, ...tags])];
-				}
-
-				const frontmatter = formatFrontmatter(meta);
-				writeFileSync(filePath, frontmatter + body + entry + "\n");
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Appended to memory: ${scope}/${type}/${context} (entries: ${meta.entries})`,
-						},
-					],
-					details: { action: "appended", file: filePath, entries: meta.entries },
-				};
-			}
+			return {
+				content: [{ type: "text", text }],
+				details: result,
+			};
 		},
 	});
 
@@ -406,15 +341,130 @@ export default function (pi: ExtensionAPI) {
 			"memory_extract: Process session observations into memories",
 		parameters: ExtractSchema,
 
-		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (!projectId || !currentSessionHash) {
+				return {
+					content: [{ type: "text", text: "Error: no active session" }],
+					details: { error: "no_active_session" },
+				};
+			}
+
+			// 1. Determine session file and read content
+			let sessionFile: string;
+			if (params.session_file) {
+				sessionFile = params.session_file.startsWith("/")
+					? params.session_file
+					: join(MEMORIES_ROOT, "projects", projectId, "sessions", params.session_file);
+			} else {
+				sessionFile = getSessionFilePath(projectId, currentSessionHash);
+			}
+
+			const sessionContent = readSessionContent(sessionFile);
+			if (!sessionContent.trim()) {
+				return {
+					content: [{ type: "text", text: "Session file is empty or missing." }],
+					details: { error: "empty_session", session_file: sessionFile },
+				};
+			}
+
+			// 2. Call LLM to analyze observations
+			const model = ctx.model;
+			if (!model) {
+				return {
+					content: [{ type: "text", text: "Error: no active model for extraction" }],
+					details: { error: "no_model" },
+				};
+			}
+
+			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+			if (!auth?.ok || !auth.apiKey) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: no API key for ${model.provider}/${model.id}`,
+						},
+					],
+					details: { error: "no_api_key" },
+				};
+			}
+
+			const prompt = buildExtractionPrompt(sessionContent);
+
+			let responseText: string;
+			try {
+				const response = await complete(
+					model,
+					{
+						messages: [
+							{
+								role: "user",
+								content: [{ type: "text", text: prompt }],
+								timestamp: Date.now(),
+							},
+						],
+					},
+					{
+						apiKey: auth.apiKey,
+						headers: auth.headers,
+						env: auth.env,
+						reasoningEffort: "high",
+						cacheRetention: "none",
+						sessionId: uuidv7(),
+					},
+				);
+				responseText = response.content
+					.filter((c): c is { type: "text"; text: string } => c.type === "text")
+					.map((c) => c.text)
+					.join("\n");
+			} catch (e: unknown) {
+				const msg = (e as Error).message ?? String(e);
+				return {
+					content: [{ type: "text", text: `Extraction LLM call failed: ${msg}` }],
+					details: { error: msg },
+				};
+			}
+
+			const memories = parseExtractionResult(responseText);
+			if (memories.length === 0) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Extraction produced no valid memories.",
+						},
+					],
+					details: { count: 0 },
+				};
+			}
+
+			// 3. Save each memory
+			const saved: { context: string; action: string }[] = [];
+			for (const mem of memories) {
+				const result = saveMemory(projectId, {
+					type: mem.type,
+					context: mem.context,
+					title: mem.title,
+					content: mem.content,
+					scope: mem.scope,
+					confidence: mem.confidence ?? 0.5,
+					tags: mem.tags ?? [],
+				});
+				saved.push({ context: mem.context, action: result.action });
+			}
+
+			const summary = saved
+				.map((s) => `- ${s.action}: ${s.context}`)
+				.join("\n");
+
 			return {
 				content: [
 					{
 						type: "text",
-						text: "memory_extract not yet implemented",
+						text: `Extracted ${saved.length} memory(ies) from ${sessionFile}:\n${summary}`,
 					},
 				],
-				details: { implemented: false },
+				details: { count: saved.length, saved, session_file: sessionFile },
 			};
 		},
 	});

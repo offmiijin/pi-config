@@ -581,4 +581,163 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 
 	return results.slice(0, limit);
 }
+
+// ── Memory save (shared) ──────────────────────────────────────────────────
+
+/**
+ * Input parameters for saveMemory.
+ */
+export interface SaveMemoryParams {
+	type: string;
+	context: string;
+	title: string;
+	content: string;
+	scope: "global" | "project";
+	tags?: string[];
+	confidence?: number;
+	supersedes?: string;
+}
+
+/**
+ * Saves or updates a memory file. Shared by memory_save and memory_extract.
+ *
+ * - New context → creates file with frontmatter + first entry
+ * - Existing context → appends entry, updates frontmatter (entries, confidence, tags)
+ * - supersedes → moves old memory to .supersedes/ first
+ */
+export function saveMemory(
+	projectId: string,
+	params: SaveMemoryParams,
+): { action: "created" | "appended"; file: string; entries?: number } {
+	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes } = params;
+	const today = new Date().toISOString().slice(0, 10);
+
+	// Handle supersede: move old memory to .supersedes/
+	if (supersedes) {
+		const oldPath = getMemoryFilePath(projectId, type, supersedes, scope);
+		if (existsSync(oldPath)) {
+			moveToSupersedes(oldPath, { superseded_by: context });
+		}
+	}
+
+	const filePath = getMemoryFilePath(projectId, type, context, scope);
+	ensureFileDir(filePath);
+
+	const entry = formatMemoryEntry(today, title, content, confidence);
+
+	if (!existsSync(filePath)) {
+		// Create new file
+		const meta: Record<string, unknown> = {
+			context,
+			type,
+			created: today,
+			updated: today,
+			confidence,
+			entries: 1,
+		};
+		if (tags.length > 0) meta.tags = tags;
+
+		writeFileSync(filePath, formatFrontmatter(meta) + entry + "\n");
+		return { action: "created", file: filePath };
+	}
+
+	// Append to existing file
+	const existing = readFileSync(filePath, "utf-8");
+	const { meta, body } = parseFrontmatter(existing);
+	const existingConfidences = extractEntryConfidences(body);
+	const newOverall = recalcOverallConfidence(existingConfidences, confidence);
+
+	meta.updated = today;
+	meta.confidence = newOverall;
+	meta.entries = ((meta.entries as number) || 0) + 1;
+
+	if (tags.length > 0) {
+		const existingTags = (meta.tags as string[]) || [];
+		meta.tags = [...new Set([...existingTags, ...tags])];
+	}
+
+	writeFileSync(filePath, formatFrontmatter(meta) + body + entry + "\n");
+	return { action: "appended", file: filePath, entries: meta.entries as number };
+}
+
+// ── Memory extraction (LLM-assisted) ───────────────────────────────────────
+
+/**
+ * Reads the content of a session file, or empty string if missing.
+ */
+export function readSessionContent(filePath: string): string {
+	if (!existsSync(filePath)) return "";
+	return readFileSync(filePath, "utf-8");
+}
+
+/**
+ * Builds the LLM prompt that turns session observations into memories.
+ */
+export function buildExtractionPrompt(sessionContent: string): string {
+	return [
+		"You are extracting durable memories from a coding session log.",
+		"Analyze the observations below and identify memories worth keeping:",
+		'- rules — coding conventions that should always be followed',
+		'- decisions — architectural or design decisions',
+		'- gotchas — pitfalls, errors, traps',
+		'- lessons — learnings that generalize',
+		'- patterns — recurring code/design patterns',
+		"",
+		"Rules:",
+		"- Only extract memories with confidence >= 0.5.",
+		"- Same context = same file: if a topic already appears, reuse the context key.",
+		"- Write rich, self-contained markdown content — not atomic notes.",
+		"- scope 'global' only for things that apply to ALL projects.",
+		"- scope 'project' for things specific to this project.",
+		"",
+		"Respond with JSON only, no markdown fences:",
+		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "scope": "global|project", "confidence": 0.5, "tags": ["tag"]}]}',
+		"",
+		"<session>",
+		sessionContent,
+		"</session>",
+	].join("\n");
+}
+
+/**
+ * One extracted memory proposed by the LLM.
+ */
+export interface ExtractedMemory {
+	type: string;
+	context: string;
+	title: string;
+	content: string;
+	scope: "global" | "project";
+	confidence?: number;
+	tags?: string[];
+}
+
+/**
+ * Parses the LLM extraction response into memories.
+ * Handles markdown code fences and filters incomplete entries.
+ */
+export function parseExtractionResult(jsonText: string): ExtractedMemory[] {
+	try {
+		const cleaned = jsonText
+			.replace(/^```(?:json)?\s*/m, "")
+			.replace(/\s*```$/m, "")
+			.trim();
+		const parsed = JSON.parse(cleaned) as { memories?: unknown };
+		if (!Array.isArray(parsed.memories)) return [];
+
+		return parsed.memories.filter((m): m is ExtractedMemory => {
+			if (!m || typeof m !== "object") return false;
+			const mem = m as Record<string, unknown>;
+			return (
+				typeof mem.type === "string" &&
+				typeof mem.context === "string" &&
+				typeof mem.title === "string" &&
+				typeof mem.content === "string" &&
+				(mem.scope === "global" || mem.scope === "project")
+			);
+		});
+	} catch {
+		return [];
+	}
+}
 		

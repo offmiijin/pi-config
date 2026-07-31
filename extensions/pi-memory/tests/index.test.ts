@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 
 import {
 	applyDecay,
+	buildExtractionPrompt,
 	countObservations,
 	ensureDirectories,
 	ensureFileDir,
@@ -34,10 +35,12 @@ import {
 	MEMORY_TYPES,
 	moveToSupersedes,
 	OBSERVATION_THRESHOLD,
+	parseExtractionResult,
 	parseFrontmatter,
 	readFileConfidence,
 	recalcOverallConfidence,
 	sanitizeFilename,
+	saveMemory,
 	searchMemories,
 } from "../utils.ts";
 
@@ -1275,5 +1278,185 @@ describe("moveToSupersedes", () => {
 		expect(content).toContain("superseded_reason: test decay");
 		expect(content).toContain("confidence: 0");
 		expect(content).toContain("## [2025-01-01] Old rule");
+	});
+});
+
+// ── Memory extraction ──────────────────────────────────────────────────────
+
+describe("buildExtractionPrompt", () => {
+	it("includes session content", () => {
+		const prompt = buildExtractionPrompt("## Obs #1\nUser: fix bug");
+		expect(prompt).toContain("## Obs #1");
+		expect(prompt).toContain("fix bug");
+	});
+
+	it("includes extraction rules", () => {
+		const prompt = buildExtractionPrompt("content");
+		expect(prompt).toContain("confidence >= 0.5");
+		expect(prompt).toContain("Same context = same file");
+		expect(prompt).toContain("JSON only");
+	});
+
+	it("mentions all 5 memory types", () => {
+		const prompt = buildExtractionPrompt("content");
+		expect(prompt).toContain("gotchas");
+		expect(prompt).toContain("_rules");
+		expect(prompt).toContain("decisions");
+		expect(prompt).toContain("lessons");
+		expect(prompt).toContain("patterns");
+	});
+
+	it("explains scope rules", () => {
+		const prompt = buildExtractionPrompt("content");
+		expect(prompt).toContain("global");
+		expect(prompt).toContain("project");
+	});
+});
+
+describe("parseExtractionResult", () => {
+	it("parses valid JSON with memories", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "nextjs",
+					title: "params is Promise",
+					content: "In Next.js...",
+					scope: "project",
+					confidence: 0.7,
+					tags: ["nextjs"],
+				},
+			],
+		});
+		const result = parseExtractionResult(json);
+		expect(result).toHaveLength(1);
+		expect(result[0].context).toBe("nextjs");
+		expect(result[0].type).toBe("gotchas");
+		expect(result[0].scope).toBe("project");
+		expect(result[0].confidence).toBe(0.7);
+		expect(result[0].tags).toEqual(["nextjs"]);
+	});
+
+	it("handles markdown code fences", () => {
+		const json = '```json\n{"memories": [{"type": "lessons", "context": "c", "title": "t", "content": "x", "scope": "global"}]}\n```';
+		const result = parseExtractionResult(json);
+		expect(result).toHaveLength(1);
+		expect(result[0].context).toBe("c");
+	});
+
+	it("returns empty for invalid JSON", () => {
+		expect(parseExtractionResult("not json at all")).toEqual([]);
+	});
+
+	it("returns empty when memories key missing", () => {
+		expect(parseExtractionResult(JSON.stringify({ foo: "bar" }))).toEqual([]);
+	});
+
+	it("filters out incomplete memories", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "ok",
+					title: "complete",
+					content: "full",
+					scope: "project",
+				},
+				{ type: "gotchas", context: "missing content" },
+				{ type: "gotchas", context: "c", title: "t", content: "x", scope: "invalid" },
+			],
+		});
+		const result = parseExtractionResult(json);
+		expect(result).toHaveLength(1);
+		expect(result[0].context).toBe("ok");
+	});
+
+	it("handles whitespace around JSON", () => {
+		const json = `\n\n  {"memories": []}  \n`;
+		expect(parseExtractionResult(json)).toEqual([]);
+	});
+});
+
+describe("saveMemory (shared by memory_save/memory_extract)", () => {
+	let testProjectId: string;
+
+	beforeAll(async () => {
+		testProjectId = `__test_savemem_${Date.now()}`;
+	});
+
+	afterAll(async () => {
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+	});
+
+	it("creates a new memory file", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "test-ctx",
+			title: "Test memory",
+			content: "Some rich content",
+			scope: "project",
+			confidence: 0.7,
+		});
+
+		expect(result.action).toBe("created");
+		expect(existsSync(result.file)).toBeTrue();
+
+		const content = readFileSync(result.file, "utf-8");
+		expect(content).toContain("context: test-ctx");
+		expect(content).toContain("## ");
+		expect(content).toContain("Some rich content");
+	});
+
+	it("appends to existing memory file", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "test-ctx",
+			title: "Second entry",
+			content: "More content",
+			scope: "project",
+			confidence: 0.6,
+		});
+
+		expect(result.action).toBe("appended");
+		expect(result.entries).toBe(2);
+
+		const content = readFileSync(result.file, "utf-8");
+		expect(content).toContain("Second entry");
+		expect(content).toContain("entries: 2");
+	});
+
+	it("handles supersedes", async () => {
+		// Create a superseded memory first
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "old-ctx",
+			title: "Old info",
+			content: "Outdated",
+			scope: "project",
+		});
+
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "new-ctx",
+			title: "New info",
+			content: "Better",
+			scope: "project",
+			supersedes: "old-ctx",
+		});
+
+		expect(result.action).toBe("created");
+
+		// Old file should be in .supersedes now
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const supPath = join(
+			MEMORIES_ROOT,
+			".supersedes",
+			"projects",
+			testProjectId,
+			"gotchas",
+			"old-ctx.md",
+		);
+		expect(existsSync(supPath)).toBeTrue();
 	});
 });
