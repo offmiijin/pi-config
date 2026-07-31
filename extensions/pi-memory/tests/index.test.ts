@@ -30,8 +30,10 @@ import {
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
 	parseFrontmatter,
+	readFileConfidence,
 	recalcOverallConfidence,
 	sanitizeFilename,
+	searchMemories,
 } from "../utils.ts";
 
 import {
@@ -948,5 +950,151 @@ describe("memory_save integration", () => {
 		expect(supContent).toContain("superseded_by: new-context");
 		expect(supContent).toContain("confidence: 0");
 		expect(supContent).toContain("## [2025-01-01] Old info");
+	});
+});
+
+// ── Memory search ──────────────────────────────────────────────────────────
+
+describe("readFileConfidence", () => {
+	let tmpDir: string;
+
+	beforeAll(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), "pi-memory-rfc-"));
+	});
+
+	afterAll(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("returns undefined for non-existent file", () => {
+		expect(readFileConfidence(join(tmpDir, "none.md"))).toBeUndefined();
+	});
+
+	it("returns confidence from frontmatter", () => {
+		const fp = join(tmpDir, "test.md");
+		writeFileSync(fp, "---\nconfidence: 0.7\n---\n\ncontent");
+		expect(readFileConfidence(fp)).toBe(0.7);
+	});
+
+	it("returns undefined when no confidence in frontmatter", () => {
+		const fp = join(tmpDir, "noconf.md");
+		writeFileSync(fp, "---\ncontext: test\n---\n\ncontent");
+		expect(readFileConfidence(fp)).toBeUndefined();
+	});
+
+	it("returns undefined for file without frontmatter", () => {
+		const fp = join(tmpDir, "plain.md");
+		writeFileSync(fp, "# just content");
+		expect(readFileConfidence(fp)).toBeUndefined();
+	});
+});
+
+describe("searchMemories", () => {
+	let testProjectId: string;
+
+	beforeAll(async () => {
+		testProjectId = `__test_search_${Date.now()}`;
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+
+		// Write a test file to the real MEMORIES_ROOT under a temp project
+		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "test-memory.md");
+		ensureFileDir(fp);
+		writeFileSync(
+			fp,
+			[
+				"---",
+				"context: test-memory",
+				"type: gotchas",
+				"confidence: 0.7",
+				"---",
+				"",
+				"## [2025-01-15] Test Memory",
+				"confidence: 0.7",
+				"",
+				"This is a test memory about unicorns and rainbows.",
+			].join("\n"),
+		);
+
+		// Also a global file
+		const globalFp = join(MEMORIES_ROOT, "_global", "_rules", "test-global.md");
+		ensureFileDir(globalFp);
+		writeFileSync(
+			globalFp,
+			[
+				"---",
+				"context: test-global",
+				"type: _rules",
+				"confidence: 0.8",
+				"---",
+				"",
+				"## [2025-01-10] Global Rule",
+				"",
+				"Always test memory search functions.",
+			].join("\n"),
+		);
+	});
+
+	afterAll(async () => {
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const testDir = join(MEMORIES_ROOT, "projects", testProjectId);
+		if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
+
+		const globalFile = join(MEMORIES_ROOT, "_global", "_rules", "test-global.md");
+		if (existsSync(globalFile)) rmSync(globalFile);
+	});
+
+	it("returns empty array for non-matching query", () => {
+		const results = searchMemories({ query: "zzzxyznonexistent_12345", limit: 5 });
+		expect(results).toEqual([]);
+	});
+
+	it("finds by keyword in all scopes", () => {
+		const results = searchMemories({ query: "unicorns", limit: 10 });
+		expect(results.length).toBeGreaterThanOrEqual(1);
+		const match = results.find((r) => r.file.includes("test-memory.md"));
+		expect(match).toBeDefined();
+		expect(match!.lines.some((l) => l.includes("unicorns"))).toBeTrue();
+	});
+
+	it("filters by scope=global", () => {
+		const results = searchMemories({ query: "test-global", scope: "global", limit: 10 });
+		expect(results.length).toBeGreaterThanOrEqual(1);
+		for (const r of results) {
+			expect(r.file).toContain("_global");
+		}
+	});
+
+	it("filters by scope=project", () => {
+		const results = searchMemories({ query: "unicorns", scope: "project", limit: 10 });
+		expect(results.length).toBeGreaterThanOrEqual(1);
+		for (const r of results) {
+			expect(r.file).toContain("projects");
+		}
+	});
+
+	it("filters by type", () => {
+		const results = searchMemories({ query: ".*", type: "gotchas", limit: 10 });
+		for (const r of results) {
+			expect(r.file).toContain("gotchas");
+		}
+	});
+
+	it("filters by minConfidence", () => {
+		const results = searchMemories({ query: "unicorns", minConfidence: 0.9, limit: 10 });
+		// test memory has confidence 0.7, so should be filtered out
+		const match = results.find((r) => r.file.includes("test-memory.md"));
+		expect(match).toBeUndefined();
+	});
+
+	it("respects limit", () => {
+		const results = searchMemories({ query: "test", limit: 1 });
+		expect(results.length).toBeLessThanOrEqual(1);
+	});
+
+	it("excludes .supersedes/ files", () => {
+		const results = searchMemories({ query: "old memory", limit: 10 });
+		for (const r of results) {
+			expect(r.file).not.toContain(".supersedes");
+		}
 	});
 });

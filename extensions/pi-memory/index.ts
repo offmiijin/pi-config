@@ -23,8 +23,10 @@
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+	countObservations,
 	ensureDirectories,
 	ensureFileDir,
+	extractEntryConfidences,
 	extractTextContent,
 	extractToolCallNames,
 	formatFrontmatter,
@@ -33,14 +35,14 @@ import {
 	formatSessionHeader,
 	generateSessionHash,
 	getMemoryFilePath,
+	getSessionFilePath,
 	getSupersedesPath,
 	hashSessionFile,
 	identifyProject,
 	parseFrontmatter,
 	recalcOverallConfidence,
-	extractEntryConfidences,
+	searchMemories,
 } from "./utils.ts";
-import { countObservations, getSessionFilePath } from "./utils.ts";
 import {
 	DecaySchema,
 	ExtractSchema,
@@ -256,16 +258,49 @@ export default function (pi: ExtensionAPI) {
 			"memory_search: Search past memories via ripgrep",
 		parameters: SearchSchema,
 
-		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
-			return {
-				content: [
-					{
-						type: "text",
-						text: "memory_search not yet implemented",
-					},
-				],
-				details: { implemented: false },
-			};
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			try {
+				const results = searchMemories({
+					query: params.query,
+					scope: params.scope ?? "all",
+					type: params.type,
+					minConfidence: params.min_confidence,
+					limit: params.limit,
+				});
+
+				if (results.length === 0) {
+					return {
+						content: [{ type: "text", text: "No memories found matching your query." }],
+						details: { count: 0 },
+					};
+				}
+
+				// Format results as text for the LLM
+				const lines: string[] = [`Found ${results.length} result(s):`, ""];
+				for (const r of results) {
+					// Show relative path from MEMORIES_ROOT
+					const displayPath = r.file.replace(/^.*\/memories\//, "memories/");
+					lines.push(`  ${displayPath}`);
+					for (const l of r.lines.slice(0, 5)) {
+						lines.push(`    ${l}`);
+					}
+					if (r.lines.length > 5) {
+						lines.push(`    ... ${r.lines.length - 5} more matches`);
+					}
+					lines.push("");
+				}
+
+				return {
+					content: [{ type: "text", text: lines.join("\n") }],
+					details: { count: results.length, results },
+				};
+			} catch (e: unknown) {
+				const msg = (e as Error).message ?? String(e);
+				return {
+					content: [{ type: "text", text: `Search failed: ${msg}` }],
+					details: { error: msg },
+				};
+			}
 		},
 	});
 

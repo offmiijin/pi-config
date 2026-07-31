@@ -2,7 +2,7 @@
  * pi-memory — Internal helpers (pure functions, no PI dependency).
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -380,3 +380,133 @@ export function recalcOverallConfidence(
 	const sum = all.reduce((a, b) => a + b, 0);
 	return Math.round((sum / all.length) * 100) / 100;
 }
+
+// ── Memory search ─────────────────────────────────────────────────────────
+
+/**
+ * Reads the frontmatter confidence from a memory file.
+ * Returns undefined if file can't be read or has no confidence.
+ */
+export function readFileConfidence(filePath: string): number | undefined {
+	try {
+		if (!existsSync(filePath)) return undefined;
+		const content = readFileSync(filePath, "utf-8");
+		const { meta } = parseFrontmatter(content);
+		const conf = meta.confidence;
+		return typeof conf === "number" ? conf : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Results from a memory search.
+ */
+export interface SearchResult {
+	/** Absolute path to the memory file */
+	file: string;
+	/** Matched line(s) with line numbers */
+	lines: string[];
+}
+
+/**
+ * Parameters for searchMemories.
+ */
+export interface SearchOptions {
+	query: string;
+	scope?: "global" | "project" | "all";
+	type?: string;
+	minConfidence?: number;
+	limit?: number;
+}
+
+/**
+ * Searches memories via ripgrep.
+ * Returns matching file paths with context lines.
+ */
+export function searchMemories(options: SearchOptions): SearchResult[] {
+	const { query, scope = "all", type, minConfidence, limit = 10 } = options;
+
+	// Build rg arguments
+	// rg globs are ORed — a single glob must express all path constraints
+	const rgArgs: string[] = [
+		"--no-heading",
+		"--line-number",
+		"-i",
+	];
+
+	// Build combined glob pattern
+	// rg multiple --globs are ORed, so a single glob must encode all path constraints
+	let glob: string;
+	if (scope === "global") {
+		glob = type ? `**/_global/${type}/*.md` : "**/_global/**/*.md";
+	} else if (scope === "project") {
+		glob = type ? `**/projects/**/${type}/*.md` : "**/projects/**/*.md";
+	} else {
+		// all scopes
+		glob = type ? `**/${type}/*.md` : "*.md";
+	}
+
+	rgArgs.push("--glob", glob, "--glob", "!.supersedes/**");
+
+	rgArgs.push("--", query, MEMORIES_ROOT);
+
+	let stdout: string;
+	try {
+		const result = spawnSync("rg", rgArgs, {
+			encoding: "utf-8",
+			stdio: "pipe",
+			timeout: 10000,
+		});
+		if (result.error) throw result.error;
+		if (result.status === null) throw new Error("rg process failed to spawn");
+		if (result.status === 1) return []; // no matches (rg exit code 1)
+		if (result.status !== 0) {
+			throw new Error(`rg exited ${result.status}: ${result.stderr}`);
+		}
+		stdout = result.stdout ?? "";
+	} catch (e: unknown) {
+		// rg not installed?
+		const msg = (e as Error).message ?? String(e);
+		if (msg.includes("ENOENT")) throw new Error("rg (ripgrep) not found — install with: apt install ripgrep");
+		if (msg.includes("rg exited")) throw e;
+		if ((e as { status?: number }).status === 1) return [];
+		throw e;
+	}
+
+	if (!stdout.trim()) return [];
+
+	// Parse output: file:line:content
+	// Group by file
+	const fileMap = new Map<string, string[]>();
+	for (const line of stdout.trim().split("\n")) {
+		const idx = line.indexOf(":");
+		if (idx === -1) continue;
+		const filePath = line.slice(0, idx);
+		const rest = line.slice(idx + 1);
+
+		// The rest may have multiple colons (line:content)
+		const lineEnd = rest.indexOf(":");
+		if (lineEnd === -1) continue;
+		const fileLine = rest.slice(0, lineEnd);
+		const content = rest.slice(lineEnd + 1);
+
+		if (!fileMap.has(filePath)) {
+			fileMap.set(filePath, []);
+		}
+		fileMap.get(filePath)!.push(`L${fileLine}: ${content.trim()}`);
+	}
+
+	// Build results, filter by confidence, sort, limit
+	const results: SearchResult[] = [];
+	for (const [file, lines] of fileMap) {
+		if (minConfidence !== undefined) {
+			const conf = readFileConfidence(file);
+			if (conf === undefined || conf < minConfidence) continue;
+		}
+		results.push({ file, lines });
+	}
+
+	return results.slice(0, limit);
+}
+		
