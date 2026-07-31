@@ -297,6 +297,10 @@ export default function (pi: ExtensionAPI) {
 			"Use when you need past context about a topic.",
 		promptSnippet:
 			"memory_search: Search past memories via ripgrep",
+		promptGuidelines: [
+			"Before searching the codebase or web for information about a topic, use memory_search FIRST — past learnings, decisions, patterns and gotchas may already be stored in memories.",
+			"Use memory_search when you need past context about a topic, pattern, decision, or gotcha.",
+		],
 		parameters: SearchSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {

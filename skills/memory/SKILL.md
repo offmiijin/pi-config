@@ -14,7 +14,7 @@ Sistema de memória persistente. Memórias são arquivos markdown organizados po
 | `memory_status` | Verificar contagem de observações da sessão. Chame periodicamente. |
 | `memory_extract` | Processar o session file e transformar observações em memórias. Quando ~50 observações acumuladas. |
 | `memory_save` | Salvar/atualizar uma memória diretamente, quando já sabe exatamente o que salvar. |
-| `memory_search` | Buscar memórias passadas sobre um tópico (via ripgrep). |
+| `memory_search` | Buscar memórias passadas sobre um tópico (via ripgrep). **Chame ANTES de buscar no código** — aprendizados passados podem já existir. |
 | `memory_decay` | Reduzir confiança de uma memória ou movê-la para `.supersedes/`. |
 
 ## Fluxo de Extração
