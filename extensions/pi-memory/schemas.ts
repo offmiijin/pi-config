@@ -49,7 +49,13 @@ export const SaveSchema = Type.Object({
 // ─── memory_search ────────────────────────────────────────────────────────
 
 export const SearchSchema = Type.Object({
-	query: Type.String({ description: "Text or regex (ripgrep syntax)" }),
+	query: Type.Array(
+		Type.String({ description: "Keyword to search for (OR semantics — any term matches)" }),
+		{
+			description:
+				"One or more keywords. Pack synonyms/alternatives in one call (e.g. ['cache', 'invalidation']).",
+		},
+	),
 	scope: Type.Optional(SearchScopeEnum),
 	type: Type.Optional(MemoryTypeEnum),
 	min_confidence: Type.Optional(

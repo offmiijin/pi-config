@@ -14,7 +14,7 @@ Sistema de memória persistente. Memórias são arquivos markdown organizados po
 | `memory_status` | Verificar contagem de observações da sessão. Chame periodicamente. |
 | `memory_extract` | Processar o session file e transformar observações em memórias. Quando ~50 observações acumuladas. |
 | `memory_save` | Salvar/atualizar uma memória diretamente, quando já sabe exatamente o que salvar. |
-| `memory_search` | Buscar memórias passadas sobre um tópico (via ripgrep). **Chame ANTES de buscar no código** — aprendizados passados podem já existir. |
+| `memory_search` | Buscar memórias passadas sobre um tópico (via ripgrep). `query` aceita múltiplas keywords (OR). **Chame ANTES de buscar no código** — aprendizados passados podem já existir. Máximo 3 buscas consecutivas sem resultado — depois, abandone e procure no código. |
 | `memory_decay` | Reduzir confiança de uma memória ou movê-la para `.supersedes/`. |
 
 ## Fluxo de Extração
@@ -85,12 +85,14 @@ memory_save {
 ### Buscar memórias
 ```
 memory_search {
-  query: "nextjs params",
+  query: ["nextjs", "params"],
   scope: "all",
   min_confidence: 0.5,
   limit: 10
 }
 ```
+
+**Regra de limite:** máx 3 buscas consecutivas sem resultado. Ache algo → pode continuar buscando. 3 vazias → abandone a busca em memórias e procure no código.
 
 ### Substituir memória antiga
 ```

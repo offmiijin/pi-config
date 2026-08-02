@@ -11,6 +11,7 @@ import { execSync } from "node:child_process";
 import {
 	applyDecay,
 	buildExtractionPrompt,
+	buildSearchPattern,
 	countObservations,
 	ensureDirectories,
 	ensureFileDir,
@@ -34,6 +35,7 @@ import {
 	getSupersedesPath,
 	hashSessionFile,
 	identifyProject,
+	MAX_MEMORY_SEARCH_ATTEMPTS,
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
 	moveToSupersedes,
@@ -806,8 +808,13 @@ describe("memory_search schema", () => {
 		expect(propIsOptional(SearchSchema, "limit")).toBeTrue();
 	});
 
-	it("query is string type", () => {
-		expect(propHasType(SearchSchema, "query", "string")).toBeTrue();
+	it("query is an array of strings", () => {
+		expect(propHasType(SearchSchema, "query", "array")).toBeTrue();
+		const s = SearchSchema as Record<string, unknown>;
+		const props = s.properties as Record<string, unknown>;
+		const q = props.query as Record<string, unknown>;
+		const items = q.items as Record<string, unknown>;
+		expect(items.type).toBe("string");
 	});
 });
 
@@ -1183,6 +1190,30 @@ describe("readFileConfidence", () => {
 		const fp = join(tmpDir, "plain.md");
 		writeFileSync(fp, "# just content");
 		expect(readFileConfidence(fp)).toBeUndefined();
+	});
+});
+
+describe("buildSearchPattern", () => {
+	it("joins terms with | (OR semantics)", () => {
+		expect(buildSearchPattern(["cache", "invalidation"])).toBe("cache|invalidation");
+	});
+
+	it("escapes regex metacharacters for literal matching", () => {
+		expect(buildSearchPattern(["C++", "a.b"])).toBe("C\\+\\+|a\\.b");
+	});
+
+	it("filters empty and whitespace-only terms", () => {
+		expect(buildSearchPattern(["", "foo", " "])).toBe("foo");
+	});
+
+	it("returns empty string for empty input", () => {
+		expect(buildSearchPattern([])).toBe("");
+	});
+});
+
+describe("MAX_MEMORY_SEARCH_ATTEMPTS", () => {
+	it("is 3", () => {
+		expect(MAX_MEMORY_SEARCH_ATTEMPTS).toBe(3);
 	});
 });
 

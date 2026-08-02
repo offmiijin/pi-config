@@ -26,6 +26,9 @@ export const OBSERVATION_TOKEN_BUDGETS = {
 /** Approximate chars per token for size estimation (English-centric heuristic). */
 export const CHARS_PER_TOKEN = 4;
 
+/** Max consecutive memory_search calls with no results before the model abandons. */
+export const MAX_MEMORY_SEARCH_ATTEMPTS = 3;
+
 export const MEMORY_TYPES = ["_rules", "decisions", "gotchas", "lessons", "patterns"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
@@ -621,6 +624,19 @@ export interface SearchOptions {
 	type?: string;
 	minConfidence?: number;
 	limit?: number;
+}
+
+/**
+ * Builds a ripgrep pattern from a list of terms (OR semantics).
+ * Each term is regex-escaped so plain keywords match literally
+ * (e.g. "C++" matches "C++", not the regex quantifier).
+ * Returns "" for empty input.
+ */
+export function buildSearchPattern(terms: string[]): string {
+	const escaped = terms
+		.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+		.filter((t) => t.trim().length > 0);
+	return escaped.join("|");
 }
 
 /**

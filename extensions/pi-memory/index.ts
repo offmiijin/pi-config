@@ -28,6 +28,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	applyDecay,
 	buildExtractionPrompt,
+	buildSearchPattern,
 	countObservations,
 	ensureDirectories,
 	ensureFileDir,
@@ -44,6 +45,7 @@ import {
 	getSessionFilePath,
 	hashSessionFile,
 	identifyProject,
+	MAX_MEMORY_SEARCH_ATTEMPTS,
 	MEMORIES_ROOT,
 	moveToSupersedes,
 	OBSERVATION_THRESHOLD,
@@ -72,6 +74,8 @@ export default function (pi: ExtensionAPI) {
 	// Auto-extraction trigger state
 	let lastPromptedBucket = -1;
 	let extractionDueCount = 0;
+	// Memory search policy state (consecutive empty searches)
+	let consecutiveEmptySearches = 0;
 	// Buffer de resultados de tools do turno atual (toolCallId → observação)
 	const toolResultsBuffer = new Map<string, ToolObservation>();
 
@@ -102,6 +106,8 @@ export default function (pi: ExtensionAPI) {
 		// Reset auto-extraction trigger state
 		lastPromptedBucket = -1;
 		extractionDueCount = 0;
+		// Reset memory search policy state
+		consecutiveEmptySearches = 0;
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -110,6 +116,8 @@ export default function (pi: ExtensionAPI) {
 		// Reset trigger state on branch navigation
 		lastPromptedBucket = -1;
 		extractionDueCount = 0;
+		// Reset memory search policy state
+		consecutiveEmptySearches = 0;
 	});
 
 	// ── Append observations at turn_end ────────────────────────────────────
@@ -299,20 +307,43 @@ export default function (pi: ExtensionAPI) {
 		name: "memory_search",
 		label: "Memory Search",
 		description:
-			"Searches memories via ripgrep. " +
-			"Use when you need past context about a topic.",
+			"Searches memories via ripgrep. query accepts multiple keywords (OR semantics — any term matches). " +
+			"Use when you need past context about a topic. " +
+			`Max ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results — then abandon and search the code instead.`,
 		promptSnippet:
-			"memory_search: Search past memories via ripgrep",
+			"memory_search: Search past memories (multi-term; max 3 empty tries)",
 		promptGuidelines: [
 			"Before searching the codebase or web for information about a topic, use memory_search FIRST — past learnings, decisions, patterns and gotchas may already be stored in memories.",
 			"Use memory_search when you need past context about a topic, pattern, decision, or gotcha.",
+			"Pass multiple keywords as an array — OR semantics (e.g. query: ['cache', 'invalidation']). Pack synonyms/alternatives in one call.",
+			`After ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches with no results, stop searching memories and continue searching the code instead.`,
 		],
 		parameters: SearchSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			try {
+				if (!params.query || params.query.length === 0) {
+					return {
+						content: [{ type: "text", text: "Error: query must contain at least one term." }],
+						details: { error: "empty_query" },
+					};
+				}
+				if (consecutiveEmptySearches >= MAX_MEMORY_SEARCH_ATTEMPTS) {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`Memory search limit reached (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results). ` +
+									"Stop searching memories and continue searching the code instead.",
+							},
+						],
+						details: { error: "limit_reached", consecutive_empty: consecutiveEmptySearches },
+					};
+				}
+
 				const results = searchMemories({
-					query: params.query,
+					query: buildSearchPattern(params.query),
 					scope: params.scope ?? "all",
 					type: params.type,
 					minConfidence: params.min_confidence,
@@ -320,11 +351,35 @@ export default function (pi: ExtensionAPI) {
 				});
 
 				if (results.length === 0) {
+					consecutiveEmptySearches++;
+					if (consecutiveEmptySearches >= MAX_MEMORY_SEARCH_ATTEMPTS) {
+						return {
+							content: [
+								{
+									type: "text",
+									text:
+										`No memories found. Memory search limit reached (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results) — ` +
+										"stop searching memories and continue searching the code instead.",
+								},
+							],
+							details: { count: 0, limit_reached: true, consecutive_empty: consecutiveEmptySearches },
+						};
+					}
+					const remaining = MAX_MEMORY_SEARCH_ATTEMPTS - consecutiveEmptySearches;
 					return {
-						content: [{ type: "text", text: "No memories found matching your query." }],
-						details: { count: 0 },
+						content: [
+							{
+								type: "text",
+								text:
+									`No memories found matching your query. Attempts remaining before abandoning memory search: ${remaining}.`,
+							},
+						],
+						details: { count: 0, consecutive_empty: consecutiveEmptySearches },
 					};
 				}
+
+				// Achou resultado — reset contador de buscas vazias (pode continuar buscando)
+				consecutiveEmptySearches = 0;
 
 				// Format results as text for the LLM
 				const lines: string[] = [`Found ${results.length} result(s):`, ""];
