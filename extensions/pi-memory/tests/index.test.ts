@@ -14,6 +14,7 @@ import {
 	countObservations,
 	ensureDirectories,
 	ensureFileDir,
+	estimateTokens,
 	extractEntryConfidences,
 	findMemoryFile,
 	extractTextContent,
@@ -46,6 +47,7 @@ import {
 	saveMemory,
 	searchMemories,
 	shouldPromptExtraction,
+	truncateToTokens,
 } from "../utils.ts";
 
 import {
@@ -452,25 +454,80 @@ describe("formatObservation", () => {
 		expect(result).toContain("Agent: (no response)");
 	});
 
-	it("truncates long user prompt to 1000 chars", () => {
-		const longPrompt = "x".repeat(2000);
+	it("truncates long user prompt to token budget", () => {
+		const longPrompt = "x".repeat(20000); // ~5000 tokens
 		const result = formatObservation(1, longPrompt, [], "ok");
 		const userLine = result.split("\n").find((l) => l.startsWith("User:"));
-		expect(userLine?.length).toBeLessThan(2000);
+		expect(userLine?.length).toBeLessThan(20000);
+		expect(userLine?.length).toBeGreaterThan(4000); // budget 1000 tokens ≈ 4000 chars
+		expect(userLine).toContain("[truncated");
 	});
 
-	it("truncates long agent response to 2000 chars", () => {
-		const longResponse = "y".repeat(3000);
+	it("truncates long agent response to token budget", () => {
+		const longResponse = "y".repeat(20000); // ~5000 tokens
 		const result = formatObservation(1, "hi", [], longResponse);
 		const agentLine = result.split("\n").find((l) => l.startsWith("Agent:"));
-		expect(agentLine?.length).toBeLessThan(3000);
+		expect(agentLine?.length).toBeLessThan(20000);
+		expect(agentLine?.length).toBeGreaterThan(8000); // budget 2000 tokens ≈ 8000 chars
+		expect(agentLine).toContain("[truncated");
 	});
 
-	it("truncates long tool results to 500 chars", () => {
-		const longResult = "z".repeat(1000);
+	it("truncates long tool results to token budget", () => {
+		const longResult = "z".repeat(10000); // ~2500 tokens
 		const result = formatObservation(1, "hi", [{ name: "bash", result: longResult }], "ok");
 		const toolLine = result.split("\n").find((l) => l.includes("bash →"));
-		expect(toolLine?.length).toBeLessThan(1000);
+		expect(toolLine?.length).toBeLessThan(10000);
+		expect(toolLine?.length).toBeGreaterThan(2000); // budget 500 tokens ≈ 2000 chars
+		expect(toolLine).toContain("[truncated");
+	});
+
+	it("does not truncate content within token budget", () => {
+		const short = "abc".repeat(100); // ~75 tokens
+		const result = formatObservation(1, short, [{ name: "read", result: short }], short);
+		expect(result).toContain("abc".repeat(100));
+		expect(result).not.toContain("[truncated");
+	});
+});
+
+describe("estimateTokens", () => {
+	it("estimates ~4 chars per token", () => {
+		expect(estimateTokens("abcd")).toBe(1);
+		expect(estimateTokens("a".repeat(100))).toBe(25);
+	});
+
+	it("returns 0 for empty string", () => {
+		expect(estimateTokens("")).toBe(0);
+	});
+
+	it("rounds up partial tokens", () => {
+		expect(estimateTokens("abc")).toBe(1);
+		expect(estimateTokens("a")).toBe(1);
+	});
+});
+
+describe("truncateToTokens", () => {
+	it("returns text unchanged when within budget", () => {
+		const text = "short text";
+		expect(truncateToTokens(text, 100)).toBe(text);
+	});
+
+	it("appends truncation marker when over budget", () => {
+		const text = "x".repeat(4000); // ~1000 tokens
+		const result = truncateToTokens(text, 250); // budget 250 tokens ≈ 1000 chars
+		expect(result).toContain("[truncated:");
+		expect(result).toContain("tokens omitted]");
+		expect(result.length).toBeGreaterThan(1000);
+		expect(result.length).toBeLessThan(4000);
+	});
+
+	it("reports approximate omitted token count", () => {
+		const text = "x".repeat(8000); // ~2000 tokens
+		const result = truncateToTokens(text, 1000); // keeps ~1000 tokens
+		expect(result).toMatch(/truncated: ~\d+ tokens omitted/);
+	});
+
+	it("handles empty string", () => {
+		expect(truncateToTokens("", 10)).toBe("");
 	});
 });
 
@@ -1275,7 +1332,9 @@ describe("resetSessionFile", () => {
 		resetSessionFile(fp, "resethash");
 
 		const content = readFileSync(fp, "utf-8");
-		expect(content).toBe("# Session resethash — 2026-07-31\n");
+		// resetSessionFile writes the header with today's date
+		const today = new Date().toISOString().slice(0, 10);
+		expect(content).toBe(`# Session resethash — ${today}\n`);
 		expect(countObservations(fp)).toBe(0);
 
 		rmSync(join(MEMORIES_ROOT, "projects", "__reset_test"), { recursive: true, force: true });

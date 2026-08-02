@@ -13,6 +13,19 @@ import { dirname, join } from "node:path";
 export const MEMORIES_ROOT = join(homedir(), ".pi", "agent", "memories");
 export const OBSERVATION_THRESHOLD = 50;
 
+/**
+ * Token budgets for observation fields (approx, ~4 chars/token).
+ * Equivalent to ~4000 chars prompt, ~8000 chars response, ~2000 chars per tool result.
+ */
+export const OBSERVATION_TOKEN_BUDGETS = {
+	prompt: 1000,
+	response: 2000,
+	toolResult: 500,
+} as const;
+
+/** Approximate chars per token for size estimation (English-centric heuristic). */
+export const CHARS_PER_TOKEN = 4;
+
 export const MEMORY_TYPES = ["_rules", "decisions", "gotchas", "lessons", "patterns"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
@@ -214,6 +227,28 @@ export function extractToolResultText(result: unknown): string {
 }
 
 /**
+ * Estimates the token count of a text using a chars-per-token heuristic.
+ * Approximation — not a real tokenizer (~4 chars/token budget heuristic).
+ */
+export function estimateTokens(text: string): number {
+	return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+/**
+ * Truncates text to a maximum token budget (estimated).
+ * Appends a truncation marker so the LLM knows data was cut.
+ */
+export function truncateToTokens(text: string, maxTokens: number): string {
+	const tokens = estimateTokens(text);
+	if (tokens <= maxTokens) return text;
+
+	const keepChars = Math.floor(maxTokens * CHARS_PER_TOKEN);
+	const kept = text.slice(0, keepChars);
+	const omittedTokens = tokens - estimateTokens(kept);
+	return `${kept}… [truncated: ~${omittedTokens} tokens omitted]`;
+}
+
+/**
  * Formats a single observation entry for appending to a session file.
  */
 export function formatObservation(
@@ -225,9 +260,10 @@ export function formatObservation(
 ): string {
 	const time = formatTimestamp(timestamp);
 
-	// Truncate long texts to keep the session file readable
-	const promptPreview = userPrompt.slice(0, 1000);
-	const responsePreview = agentResponse.slice(0, 2000);
+	// Truncate long texts to keep the session file readable.
+	// Token-based, with a marker so the LLM knows data was cut.
+	const promptPreview = truncateToTokens(userPrompt, OBSERVATION_TOKEN_BUDGETS.prompt);
+	const responsePreview = truncateToTokens(agentResponse, OBSERVATION_TOKEN_BUDGETS.response);
 
 	const lines = [
 		"",
@@ -240,7 +276,9 @@ export function formatObservation(
 	} else {
 		lines.push("Tools:");
 		for (const t of tools) {
-			const resultPreview = t.result ? t.result.slice(0, 500) : "";
+			const resultPreview = t.result
+				? truncateToTokens(t.result, OBSERVATION_TOKEN_BUDGETS.toolResult)
+				: "";
 			const errorMark = t.isError ? "[error] " : "";
 			if (resultPreview) {
 				lines.push(`  ${t.name} → ${errorMark}"${resultPreview}"`);
@@ -789,6 +827,7 @@ export function buildExtractionPrompt(sessionContent: string): string {
 		"- Write rich, self-contained markdown content — not atomic notes.",
 		"- scope 'global' only for things that apply to ALL projects.",
 		"- scope 'project' for things specific to this project.",
+		"- '[truncated: ~N tokens omitted]' markers mean data was cut for size — treat the observation as partial; never fabricate content beyond the marker.",
 		"",
 		"Respond with JSON only, no markdown fences:",
 		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "scope": "global|project", "confidence": 0.5, "tags": ["tag"]}]}',
