@@ -47,6 +47,10 @@ Sistema de memória persistente. Memórias são arquivos markdown organizados po
 - `global` → vale para TODOS os projetos. Use com parcimônia.
 - `project` → específico do projeto atual. Use por padrão.
 
+### Idioma
+- **Sempre PT-BR.** Título, conteúdo e tags de toda memória em português brasileiro.
+- Buscas em `memory_search` devem usar termos em português (memórias são armazenadas em PT-BR).
+
 ### Tipo
 - `_rules` — convenções que devem ser sempre seguidas
 - `decisions` — decisões arquiteturais/design

@@ -30,10 +30,10 @@ export type SearchScope = (typeof SearchScopeEnum.static)[number];
 export const SaveSchema = Type.Object({
 	type: MemoryTypeEnum,
 	context: Type.String({ description: "Grouping key — same context = same file" }),
-	title: Type.String({ description: "Descriptive title for this entry" }),
-	content: Type.String({ description: "Rich markdown content" }),
+	title: Type.String({ description: "Descriptive title for this entry (PT-BR)" }),
+	content: Type.String({ description: "Rich markdown content (PT-BR)" }),
 	scope: ScopeEnum,
-	tags: Type.Optional(Type.Array(Type.String(), { description: "Tags for search" })),
+	tags: Type.Optional(Type.Array(Type.String(), { description: "Tags for search (PT-BR)" })),
 	confidence: Type.Optional(
 		Type.Number({
 			description: "0.1-0.9 (default 0.5, minimum 0.5)",
@@ -78,7 +78,9 @@ export const DecaySchema = Type.Object({
 	move_to_supersedes: Type.Optional(
 		Type.Boolean({ description: "Move to .supersedes/ immediately" }),
 	),
-	reason: Type.Optional(Type.String({ description: "Why this memory is being decayed" })),
+	reason: Type.Optional(
+		Type.String({ description: "Why this memory is being decayed (PT-BR)" }),
+	),
 });
 
 // ─── memory_extract ───────────────────────────────────────────────────────

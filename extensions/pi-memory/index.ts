@@ -47,6 +47,7 @@ import {
 	identifyProject,
 	MAX_MEMORY_SEARCH_ATTEMPTS,
 	MEMORIES_ROOT,
+	MEMORY_LANGUAGE_RULE,
 	moveToSupersedes,
 	OBSERVATION_THRESHOLD,
 	parseExtractionResult,
@@ -323,6 +324,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet:
 			"memory_save: Save/update a memory (same context = same file)",
 		promptGuidelines: [
+			MEMORY_LANGUAGE_RULE,
 			"After durable learnings — non-obvious bug fix, architectural decision, recurring gotcha, reusable pattern — call memory_save directly instead of waiting for memory_extract.",
 			"Reuse existing context keys for related topics (same context = same file).",
 			"Use supersedes to replace a memory that new information contradicts.",
@@ -366,6 +368,7 @@ export default function (pi: ExtensionAPI) {
 			"Before searching the codebase or web for information about a topic, use memory_search FIRST — past learnings, decisions, patterns and gotchas may already be stored in memories.",
 			"Use memory_search when you need past context about a topic, pattern, decision, or gotcha.",
 			"Pass multiple keywords as an array — OR semantics (e.g. query: ['cache', 'invalidation']). Pack synonyms/alternatives in one call.",
+			"Memories are stored in PT-BR — use Portuguese terms in your queries.",
 			`After ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches with no results, stop searching memories and continue searching the code instead.`,
 		],
 		parameters: SearchSchema,
@@ -555,7 +558,8 @@ export default function (pi: ExtensionAPI) {
 		label: "Memory Extract",
 		description:
 			"Processes session observations into organized memories. " +
-			"Reads the session file, identifies contexts, and saves memories via memory_save.",
+			"Reads the session file, identifies contexts, and saves memories via memory_save. " +
+			"Memories are written in PT-BR.",
 		promptSnippet:
 			"memory_extract: Process session observations into memories",
 		parameters: ExtractSchema,

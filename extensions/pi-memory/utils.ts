@@ -843,6 +843,10 @@ export function readSessionContent(filePath: string): string {
 /**
  * Builds the LLM prompt that turns session observations into memories.
  */
+/** Memory content language rule — memories are stored in PT-BR. */
+export const MEMORY_LANGUAGE_RULE =
+	"Write all memory content (title, content, tags) in PT-BR (Brazilian Portuguese).";
+
 export function buildExtractionPrompt(sessionContent: string): string {
 	return [
 		"You are extracting durable memories from a coding session log.",
@@ -854,6 +858,7 @@ export function buildExtractionPrompt(sessionContent: string): string {
 		'- patterns — recurring code/design patterns',
 		"",
 		"Rules:",
+		`- ${MEMORY_LANGUAGE_RULE}`,
 		"- Only extract memories with confidence >= 0.5.",
 		"- Same context = same file: if a topic already appears, reuse the context key.",
 		"- Write rich, self-contained markdown content — not atomic notes.",

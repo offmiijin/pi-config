@@ -1654,6 +1654,12 @@ describe("buildExtractionPrompt", () => {
 		expect(prompt).toContain("global");
 		expect(prompt).toContain("project");
 	});
+
+	it("requires PT-BR memory content", () => {
+		const prompt = buildExtractionPrompt("content");
+		expect(prompt).toContain("PT-BR");
+		expect(prompt).toContain("Brazilian Portuguese");
+	});
 });
 
 describe("parseExtractionResult", () => {
