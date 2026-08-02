@@ -33,3 +33,5 @@ mcp-cache.json
 # Rust build artifacts (gen-seccomp)
 extensions/dev-sandbox/gen-seccomp/target/
 extensions/dev-sandbox/gen-seccomp-bin
+# Memory store (runtime data from pi-memory extension)
+memories/
