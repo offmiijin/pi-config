@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 
 import {
 	applyDecay,
+	archiveSessionFile,
 	buildExtractionPrompt,
 	buildSearchPattern,
 	countObservations,
@@ -991,6 +992,18 @@ describe("parseFrontmatter", () => {
 		expect(meta.active).toBeTrue();
 		expect(meta.done).toBeFalse();
 	});
+
+	it("parses quoted string values", () => {
+		const fm = ["---", 'reason: "substituída pela v15"', "---", ""].join("\n");
+		const { meta } = parseFrontmatter(fm);
+		expect(meta.reason).toBe("substituída pela v15");
+	});
+
+	it("keeps quoted numbers as strings", () => {
+		const fm = ["---", 'version: "2025-01-15"', "---", ""].join("\n");
+		const { meta } = parseFrontmatter(fm);
+		expect(meta.version).toBe("2025-01-15");
+	});
 });
 
 describe("formatFrontmatter", () => {
@@ -998,8 +1011,8 @@ describe("formatFrontmatter", () => {
 		
 		const result = formatFrontmatter({ context: "test", type: "gotcha" });
 		expect(result.startsWith("---\n")).toBeTrue();
-		expect(result).toContain("context: test");
-		expect(result).toContain("type: gotcha");
+		expect(result).toContain("context: \"test\"");
+		expect(result).toContain("type: \"gotcha\"");
 		expect(result.endsWith("---\n")).toBeTrue();
 	});
 
@@ -1014,6 +1027,18 @@ describe("formatFrontmatter", () => {
 		const result = formatFrontmatter({ confidence: 0.7, entries: 3 });
 		expect(result).toContain("confidence: 0.7");
 		expect(result).toContain("entries: 3");
+	});
+
+	it("quotes strings containing colons", () => {
+		const result = formatFrontmatter({ reason: "substituída pela v15" });
+		expect(result).toContain("reason: \"substituída pela v15\"");
+	});
+
+	it("round-trips strings with colons, quotes and newlines", () => {
+		const meta = { reason: 'API "v15": substituída\nnova linha' };
+		const fm = formatFrontmatter(meta);
+		const { meta: parsed } = parseFrontmatter(fm + "\nbody");
+		expect(parsed.reason).toBe('API "v15": substituída\nnova linha');
 	});
 });
 
@@ -1096,7 +1121,7 @@ describe("memory_save integration", () => {
 
 		expect(existsSync(fp)).toBeTrue();
 		const content = readFileSync(fp, "utf-8");
-		expect(content).toContain("context: my-context");
+		expect(content).toContain("context: \"my-context\"");
 		expect(content).toContain("## [2025-01-15] Test Title");
 		expect(content).toContain("Test content");
 	});
@@ -1152,8 +1177,8 @@ describe("memory_save integration", () => {
 
 		expect(existsSync(supPath)).toBeTrue();
 		const supContent = readFileSync(supPath, "utf-8");
-		expect(supContent).toContain("superseded_at: 2025-01-15");
-		expect(supContent).toContain("superseded_by: new-context");
+		expect(supContent).toContain("superseded_at: \"2025-01-15\"");
+		expect(supContent).toContain("superseded_by: \"new-context\"");
 		expect(supContent).toContain("confidence: 0");
 		expect(supContent).toContain("## [2025-01-01] Old info");
 	});
@@ -1306,6 +1331,21 @@ describe("searchMemories", () => {
 				"Always test memory search functions.",
 			].join("\n"),
 		);
+
+		// Session file com keyword única (não deve aparecer nos resultados)
+		const sessionFp = join(
+			MEMORIES_ROOT,
+			"projects",
+			testProjectId,
+			"sessions",
+			"2026-08-02",
+			"sesstest-hash.md",
+		);
+		ensureFileDir(sessionFp);
+		writeFileSync(
+			sessionFp,
+			'# Session sesstest\n\n## Obs #1\nUser: "busca-session-exclusiva-xyz"\n',
+		);
 	});
 
 	afterAll(async () => {
@@ -1363,6 +1403,24 @@ describe("searchMemories", () => {
 	it("respects limit", () => {
 		const results = searchMemories({ query: "test", limit: 1 });
 		expect(results.length).toBeLessThanOrEqual(1);
+	});
+
+	it("excludes session files from search", () => {
+		const results = searchMemories({
+			query: "busca-session-exclusiva-xyz",
+			scope: "project",
+			limit: 10,
+		});
+		const match = results.find((r) => r.file.includes("sessions"));
+		expect(match).toBeUndefined();
+	});
+
+	it("excludes session files from all-scope search", () => {
+		const results = searchMemories({
+			query: "busca-session-exclusiva-xyz",
+			limit: 10,
+		});
+		expect(results).toEqual([]);
 	});
 
 	it("excludes .supersedes/ files", () => {
@@ -1425,6 +1483,37 @@ describe("getObservationStatus", () => {
 		// cleanup: arquivo + diretórios do projeto de teste
 		rmSync(fp, { force: true });
 		rmSync(join(MEMORIES_ROOT, "projects", "__status_test"), { recursive: true, force: true });
+	});
+});
+
+	describe("archiveSessionFile", () => {
+	it("copies session file to archive dir, keeping original intact", () => {
+		const date = "2026-08-02";
+		const fp = getSessionFilePath("__archive_test", "archhash", date);
+		ensureFileDir(fp);
+		writeFileSync(fp, "# Session archhash\n\n## Obs #1\nUser: \"x\"\n");
+
+		const archivePath = archiveSessionFile(fp);
+
+		expect(archivePath).toContain("archive");
+		expect(existsSync(archivePath)).toBeTrue();
+		expect(readFileSync(archivePath, "utf-8")).toContain("## Obs #1");
+		expect(readFileSync(fp, "utf-8")).toContain("## Obs #1"); // original intacto
+
+		rmSync(join(MEMORIES_ROOT, "projects", "__archive_test"), {
+			recursive: true,
+			force: true,
+		});
+	});
+
+	it("returns archive path even when file is missing", () => {
+		const fp = getSessionFilePath("__archive_test2", "h", "2026-08-02");
+		const archivePath = archiveSessionFile(fp);
+		expect(archivePath).toContain("archive");
+		rmSync(join(MEMORIES_ROOT, "projects", "__archive_test2"), {
+			recursive: true,
+			force: true,
+		});
 	});
 });
 
@@ -1661,9 +1750,9 @@ describe("moveToSupersedes", () => {
 
 		// Content preserved with metadata
 		const content = readFileSync(supPath, "utf-8");
-		expect(content).toContain("context: decayme");
+		expect(content).toContain("context: \"decayme\"");
 		expect(content).toContain("superseded_at:");
-		expect(content).toContain("superseded_reason: test decay");
+		expect(content).toContain("superseded_reason: \"test decay\"");
 		expect(content).toContain("confidence: 0");
 		expect(content).toContain("## [2025-01-01] Old rule");
 	});
@@ -1864,7 +1953,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(existsSync(result.file)).toBeTrue();
 
 		const content = readFileSync(result.file, "utf-8");
-		expect(content).toContain("context: test-ctx");
+		expect(content).toContain("context: \"test-ctx\"");
 		expect(content).toContain("## ");
 		expect(content).toContain("Some rich content");
 	});
@@ -1902,6 +1991,38 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		const content = readFileSync(result.file, "utf-8");
 		expect(content).toContain("Second entry");
 		expect(content).toContain("entries: 2");
+	});
+
+	it("preserves decayed confidence on append", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "decay-persist",
+			title: "First",
+			content: "content",
+			scope: "project",
+			confidence: 0.7,
+		});
+		expect(result.action).toBe("created");
+
+		// Simula decay: reduz confidence do frontmatter para 0.4
+		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "decay-persist.md");
+		const { meta, body } = parseFrontmatter(readFileSync(fp, "utf-8"));
+		meta.confidence = 0.4;
+		writeFileSync(fp, formatFrontmatter(meta) + body);
+
+		// Append novo com 0.5 — média deve ser (0.4 + 0.5) / 2 = 0.45
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "decay-persist",
+			title: "Second",
+			content: "more",
+			scope: "project",
+			confidence: 0.5,
+		});
+
+		const updated = readFileSync(fp, "utf-8");
+		const { meta: meta2 } = parseFrontmatter(updated);
+		expect(meta2.confidence).toBe(0.45);
 	});
 
 	it("handles supersedes", async () => {

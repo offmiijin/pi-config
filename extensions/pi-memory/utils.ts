@@ -4,9 +4,9 @@
 
 import { execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -390,6 +390,19 @@ export function formatSessionHeader(sessionHash: string, date?: string): string 
 }
 
 /**
+ * Archives the current session file content before a reset, preserving raw
+ * observations for later re-extraction. Returns the archive path.
+ */
+export function archiveSessionFile(filePath: string): string {
+	const archivePath = join(dirname(filePath), "archive", basename(filePath));
+	ensureFileDir(archivePath);
+	if (existsSync(filePath)) {
+		copyFileSync(filePath, archivePath);
+	}
+	return archivePath;
+}
+
+/**
  * Resets a session file to a fresh state (header only, zero observations).
  * Keeps the same file path and session hash.
  */
@@ -560,6 +573,17 @@ export function parseFrontmatter(content: string): {
 				.slice(1, -1)
 				.split(",")
 				.map((s) => s.trim().replace(/^"(.*)"$/, "$1"));
+		} else if (
+			typeof value === "string" &&
+			value.startsWith('"') &&
+			value.endsWith('"')
+		) {
+			// String entre aspas — desescapa (\n, \", \\)
+			value = value
+				.slice(1, -1)
+				.replace(/\\n/g, "\n")
+				.replace(/\\"/g, '"')
+				.replace(/\\\\/g, "\\");
 		} else if (value === "true") value = true;
 		else if (value === "false") value = false;
 		else if (typeof value === "string" && !isNaN(Number(value))) value = Number(value);
@@ -568,6 +592,11 @@ export function parseFrontmatter(content: string): {
 	}
 
 	return { meta, body };
+}
+
+/** Escapes a string as a YAML double-quoted scalar. */
+function yamlQuoteString(value: string): string {
+	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
 /**
@@ -583,7 +612,8 @@ export function formatFrontmatter(meta: Record<string, unknown>): string {
 		} else if (typeof value === "boolean") {
 			lines.push(`${key}: ${value}`);
 		} else {
-			lines.push(`${key}: ${value}`);
+			// Strings sempre entre aspas — valores com ":" ou "\n" não quebram o YAML
+			lines.push(`${key}: ${yamlQuoteString(String(value))}`);
 		}
 	}
 	lines.push("---");
@@ -719,7 +749,7 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 		glob = type ? `**/${type}/*.md` : "*.md";
 	}
 
-	rgArgs.push("--glob", glob, "--glob", "!.supersedes/**");
+	rgArgs.push("--glob", glob, "--glob", "!.supersedes/**", "--glob", "!**/sessions/**");
 
 	rgArgs.push("--", query, MEMORIES_ROOT);
 
@@ -859,8 +889,10 @@ export function saveMemory(
 	// Append to existing file
 	const existing = readFileSync(filePath, "utf-8");
 	const { meta, body } = parseFrontmatter(existing);
-	const existingConfidences = extractEntryConfidences(body);
-	const newOverall = recalcOverallConfidence(existingConfidences, confidence);
+	// Média do confidence ATUAL do arquivo (pode ter sido decaído) com o novo.
+	// Recalcular a partir das entradas históricas faria o decay evaporar no próximo append.
+	const currentConf = typeof meta.confidence === "number" ? meta.confidence : 0.5;
+	const newOverall = Math.round(((currentConf + confidence) / 2) * 100) / 100;
 
 	meta.updated = today;
 	meta.confidence = newOverall;

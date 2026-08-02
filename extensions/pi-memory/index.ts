@@ -27,6 +27,7 @@ import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	applyDecay,
+	archiveSessionFile,
 	buildExtractionPrompt,
 	buildSearchPattern,
 	countObservations,
@@ -686,7 +687,8 @@ export default function (pi: ExtensionAPI) {
 				saved.push({ context: mem.context, action: result.action });
 			}
 
-			// 4. Reset session file (mesmo hash, zero observações) — só após sucesso
+			// 4. Archive + reset session file (mesmo hash, zero observações) — só após sucesso
+			const archivePath = archiveSessionFile(sessionFile);
 			resetSessionFile(sessionFile, currentSessionHash);
 			lastPromptedBucket = -1; // reinicia ciclo de trigger (próximo trigger às 50)
 
@@ -705,6 +707,7 @@ export default function (pi: ExtensionAPI) {
 					count: saved.length,
 					saved,
 					session_file: sessionFile,
+					archive_file: archivePath,
 					reset: true,
 				},
 			};
