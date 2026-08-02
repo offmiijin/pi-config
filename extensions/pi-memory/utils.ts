@@ -358,6 +358,29 @@ export function shouldPromptExtraction(
 	};
 }
 
+/** Tools that indicate a code change in the turn (trigger for save reminders). */
+export const CODE_CHANGE_TOOLS = ["edit", "write", "apply_patch"] as const;
+
+/** Min observations between save reminders (cooldown to avoid noise). */
+export const SAVE_REMINDER_COOLDOWN = 5;
+
+/**
+ * Decides whether a save reminder should be emitted for the current observation.
+ * True when the turn changed code (edit/write/apply_patch) and enough observations
+ * passed since the last reminder.
+ */
+export function shouldRemindSave(
+	toolNames: string[],
+	obsNumber: number,
+	lastReminderObs: number,
+	cooldown: number = SAVE_REMINDER_COOLDOWN,
+): boolean {
+	const changedCode = toolNames.some((n) =>
+		(CODE_CHANGE_TOOLS as readonly string[]).includes(n),
+	);
+	return changedCode && obsNumber - lastReminderObs >= cooldown;
+}
+
 /**
  * Builds the initial session file header.
  */

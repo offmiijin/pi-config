@@ -49,6 +49,7 @@ import {
 	saveMemory,
 	searchMemories,
 	shouldPromptExtraction,
+	shouldRemindSave,
 	truncateToTokens,
 } from "../utils.ts";
 
@@ -1473,6 +1474,32 @@ describe("shouldPromptExtraction", () => {
 		const r = shouldPromptExtraction(0, -1);
 		expect(r.prompt).toBeFalse();
 		expect(r.bucket).toBe(0);
+	});
+});
+
+describe("shouldRemindSave", () => {
+	it("does not remind when no code change tools used", () => {
+		expect(shouldRemindSave(["read", "bash"], 1, 0)).toBeFalse();
+	});
+
+	it("reminds on edit/write/apply_patch", () => {
+		expect(shouldRemindSave(["edit"], 5, 0)).toBeTrue();
+		expect(shouldRemindSave(["write"], 5, 0)).toBeTrue();
+		expect(shouldRemindSave(["apply_patch"], 5, 0)).toBeTrue();
+	});
+
+	it("respects cooldown", () => {
+		expect(shouldRemindSave(["edit"], 3, 1)).toBeFalse(); // 3-1=2 < 5
+		expect(shouldRemindSave(["edit"], 6, 1)).toBeTrue(); // 6-1=5 >= 5
+	});
+
+	it("accepts custom cooldown", () => {
+		expect(shouldRemindSave(["edit"], 2, 0, 3)).toBeFalse(); // 2-0=2 < 3
+		expect(shouldRemindSave(["edit"], 3, 0, 3)).toBeTrue(); // 3-0=3 >= 3
+	});
+
+	it("reminds even if other tools called alongside", () => {
+		expect(shouldRemindSave(["read", "edit", "bash"], 5, 0)).toBeTrue();
 	});
 });
 

@@ -54,8 +54,10 @@ import {
 	readSessionContent,
 	resetSessionFile,
 	saveMemory,
+	SAVE_REMINDER_COOLDOWN,
 	searchMemories,
 	shouldPromptExtraction,
+	shouldRemindSave,
 } from "./utils.ts";
 import {
 	DecaySchema,
@@ -76,6 +78,9 @@ export default function (pi: ExtensionAPI) {
 	let extractionDueCount = 0;
 	// Memory search policy state (consecutive empty searches)
 	let consecutiveEmptySearches = 0;
+	// Save reminder state (code-changing turns)
+	let saveReminderDue = false;
+	let lastSaveReminderObs = 0;
 	// Buffer de resultados de tools do turno atual (toolCallId → observação)
 	const toolResultsBuffer = new Map<string, ToolObservation>();
 
@@ -108,6 +113,9 @@ export default function (pi: ExtensionAPI) {
 		extractionDueCount = 0;
 		// Reset memory search policy state
 		consecutiveEmptySearches = 0;
+		// Reset save reminder state
+		saveReminderDue = false;
+		lastSaveReminderObs = 0;
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -118,6 +126,9 @@ export default function (pi: ExtensionAPI) {
 		extractionDueCount = 0;
 		// Reset memory search policy state
 		consecutiveEmptySearches = 0;
+		// Reset save reminder state
+		saveReminderDue = false;
+		lastSaveReminderObs = 0;
 	});
 
 	// ── Append observations at turn_end ────────────────────────────────────
@@ -209,6 +220,28 @@ export default function (pi: ExtensionAPI) {
 				extractionDueCount = count;
 			}
 		}
+
+		// ── Memory save reminder ──
+		// Turno alterou código e passou o cooldown → lembra o LLM de salvar
+		// aprendizagem durável diretamente via memory_save (sem esperar extract).
+		if (
+			shouldRemindSave(
+				toolResults.map((t) => t.name),
+				obsNumber,
+				lastSaveReminderObs,
+				SAVE_REMINDER_COOLDOWN,
+			)
+		) {
+			lastSaveReminderObs = obsNumber;
+			try {
+				pi.sendUserMessage(
+					"[pi-memory] This turn changed code. If it involved a durable learning (bug cause, decision, gotcha, pattern), call memory_save now. Otherwise ignore.",
+				{ deliverAs: "followUp" },
+				);
+			} catch {
+				saveReminderDue = true;
+			}
+		}
 	});
 
 	// ── Inject extraction prompt at next user turn ────────────────────────
@@ -223,6 +256,17 @@ export default function (pi: ExtensionAPI) {
 						`[pi-memory] Session reached ${count} observations ` +
 						`(threshold ${OBSERVATION_THRESHOLD}). ` +
 						"Call memory_extract to process observations into memories.",
+					display: true,
+				},
+			};
+		}
+		if (saveReminderDue) {
+			saveReminderDue = false;
+			return {
+				message: {
+					customType: "pi-memory",
+					content:
+						"[pi-memory] A recent turn changed code. If it involved a durable learning (bug cause, decision, gotcha, pattern), call memory_save now. Otherwise ignore.",
 					display: true,
 				},
 			};
@@ -278,6 +322,12 @@ export default function (pi: ExtensionAPI) {
 			"Use supersedes to mark an old memory as replaced.",
 		promptSnippet:
 			"memory_save: Save/update a memory (same context = same file)",
+		promptGuidelines: [
+			"After durable learnings — non-obvious bug fix, architectural decision, recurring gotcha, reusable pattern — call memory_save directly instead of waiting for memory_extract.",
+			"Reuse existing context keys for related topics (same context = same file).",
+			"Use supersedes to replace a memory that new information contradicts.",
+			"Only save with confidence >= 0.5.",
+		],
 		parameters: SaveSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
