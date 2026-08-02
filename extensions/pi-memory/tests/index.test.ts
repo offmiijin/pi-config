@@ -35,6 +35,7 @@ import {
 	getSupersedesPath,
 	hashSessionFile,
 	identifyProject,
+	listMemoryContexts,
 	MAX_MEMORY_SEARCH_ATTEMPTS,
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
@@ -1160,6 +1161,50 @@ describe("memory_save integration", () => {
 
 // ── Memory search ──────────────────────────────────────────────────────────
 
+describe("listMemoryContexts", () => {
+	let testProjectId: string;
+
+	beforeAll(() => {
+		testProjectId = `__test_ctx_${Date.now()}`;
+		// Memória de projeto
+		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "proj-gotcha.md");
+		ensureFileDir(fp);
+		writeFileSync(fp, "---\ncontext: proj-gotcha\n---\n\ncontent");
+		// Memória global
+		const gfp = join(MEMORIES_ROOT, "_global", "lessons", "glob-lesson.md");
+		ensureFileDir(gfp);
+		writeFileSync(gfp, "---\ncontext: glob-lesson\n---\n\ncontent");
+	});
+
+	afterAll(() => {
+		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+		rmSync(join(MEMORIES_ROOT, "_global", "lessons", "glob-lesson.md"), { force: true });
+	});
+
+	it("lists project context keys", () => {
+		const ctx = listMemoryContexts(testProjectId);
+		expect(ctx.project).toContain("proj-gotcha");
+	});
+
+	it("lists global context keys", () => {
+		const ctx = listMemoryContexts(testProjectId);
+		expect(ctx.global).toContain("glob-lesson");
+	});
+
+	it("returns sorted keys", () => {
+		const ctx = listMemoryContexts(testProjectId);
+		expect([...ctx.global].sort()).toEqual(ctx.global);
+		expect([...ctx.project].sort()).toEqual(ctx.project);
+	});
+
+	it("does not include session files", () => {
+		const ctx = listMemoryContexts(testProjectId);
+		for (const k of [...ctx.global, ...ctx.project]) {
+			expect(k).not.toMatch(/^sessions/);
+		}
+	});
+});
+
 describe("readFileConfidence", () => {
 	let tmpDir: string;
 
@@ -1636,7 +1681,7 @@ describe("buildExtractionPrompt", () => {
 	it("includes extraction rules", () => {
 		const prompt = buildExtractionPrompt("content");
 		expect(prompt).toContain("confidence >= 0.5");
-		expect(prompt).toContain("Same context = same file");
+		expect(prompt).toContain("Reuse existing context keys");
 		expect(prompt).toContain("JSON only");
 	});
 
@@ -1659,6 +1704,21 @@ describe("buildExtractionPrompt", () => {
 		const prompt = buildExtractionPrompt("content");
 		expect(prompt).toContain("PT-BR");
 		expect(prompt).toContain("Brazilian Portuguese");
+	});
+
+	it("includes existing context keys when provided", () => {
+		const prompt = buildExtractionPrompt("content", {
+			global: ["auth"],
+			project: ["nextjs-router"],
+		});
+		expect(prompt).toContain("Existing memory context keys");
+		expect(prompt).toContain("auth");
+		expect(prompt).toContain("nextjs-router");
+	});
+
+	it("mentions supersedes for existing memories", () => {
+		const prompt = buildExtractionPrompt("content");
+		expect(prompt).toContain("supersedes");
 	});
 });
 
@@ -1684,6 +1744,24 @@ describe("parseExtractionResult", () => {
 		expect(result[0].scope).toBe("project");
 		expect(result[0].confidence).toBe(0.7);
 		expect(result[0].tags).toEqual(["nextjs"]);
+	});
+
+	it("preserves supersedes field", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "new-key",
+					title: "New info",
+					content: "Better version",
+					scope: "project",
+					supersedes: "old-key",
+				},
+			],
+		});
+		const result = parseExtractionResult(json);
+		expect(result).toHaveLength(1);
+		expect(result[0].supersedes).toBe("old-key");
 	});
 
 	it("handles markdown code fences", () => {
@@ -1713,6 +1791,39 @@ describe("parseExtractionResult", () => {
 				},
 				{ type: "gotchas", context: "missing content" },
 				{ type: "gotchas", context: "c", title: "t", content: "x", scope: "invalid" },
+			],
+		});
+		const result = parseExtractionResult(json);
+		expect(result).toHaveLength(1);
+		expect(result[0].context).toBe("ok");
+	});
+
+	it("filters memories with non-canonical type", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "ok",
+					title: "t",
+					content: "c",
+					scope: "project",
+				},
+				// singular — criaria diretório "gotcha/" no lugar de "gotchas/"
+				{
+					type: "gotcha",
+					context: "bad-singular",
+					title: "t",
+					content: "c",
+					scope: "project",
+				},
+				// sem underscore
+				{
+					type: "rules",
+					context: "bad-rules",
+					title: "t",
+					content: "c",
+					scope: "project",
+				},
 			],
 		});
 		const result = parseExtractionResult(json);
@@ -1756,6 +1867,23 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(content).toContain("context: test-ctx");
 		expect(content).toContain("## ");
 		expect(content).toContain("Some rich content");
+	});
+
+	it("rejects non-canonical type without creating a directory", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotcha", // singular — criaria diretório errado
+			context: "bad-type",
+			title: "T",
+			content: "C",
+			scope: "project",
+		});
+
+		expect(result.action).toBe("error");
+		expect(result.error).toBeDefined();
+
+		// Nenhum diretório singular deve ter sido criado
+		const bogusDir = join(MEMORIES_ROOT, "projects", testProjectId, "gotcha");
+		expect(existsSync(bogusDir)).toBeFalse();
 	});
 
 	it("appends to existing memory file", () => {

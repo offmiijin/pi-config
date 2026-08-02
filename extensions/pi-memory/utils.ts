@@ -4,7 +4,7 @@
 
 import { execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -492,6 +492,36 @@ export function findMemoryFile(
 }
 
 /**
+ * Lists existing memory context keys for a project (global + project scopes).
+ * Used by memory_extract so the LLM can reuse existing keys and supersede.
+ */
+export function listMemoryContexts(projectId: string): {
+	global: string[];
+	project: string[];
+} {
+	const globalKeys: string[] = [];
+	const projectKeys: string[] = [];
+
+	for (const type of MEMORY_TYPES) {
+		for (const dir of [
+			join(MEMORIES_ROOT, "_global", type),
+			join(MEMORIES_ROOT, "projects", projectId, type),
+		]) {
+			if (!existsSync(dir)) continue;
+			const isGlobal = dir.includes("_global");
+			for (const f of readdirSync(dir)) {
+				if (!f.endsWith(".md")) continue;
+				const key = f.slice(0, -3);
+				if (isGlobal) globalKeys.push(key);
+				else projectKeys.push(key);
+			}
+		}
+	}
+
+	return { global: globalKeys.sort(), project: projectKeys.sort() };
+}
+
+/**
  * Applies a decay delta to a confidence value, clamped at 0.
  * Delta is treated as a reduction regardless of sign.
  */
@@ -778,9 +808,24 @@ export interface SaveMemoryParams {
 export function saveMemory(
 	projectId: string,
 	params: SaveMemoryParams,
-): { action: "created" | "appended"; file: string; entries?: number } {
+): {
+	action: "created" | "appended" | "error";
+	file: string;
+	entries?: number;
+	error?: string;
+} {
 	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes } = params;
 	const today = new Date().toISOString().slice(0, 10);
+
+	// Guard defensivo: type inválido criaria um diretório novo no lugar errado
+	// (ex.: "gotcha" singular em vez de "gotchas") e geraria memórias órfãs.
+	if (!(MEMORY_TYPES as readonly string[]).includes(type)) {
+		return {
+			action: "error",
+			file: "",
+			error: `Invalid memory type "${type}" (expected one of: ${MEMORY_TYPES.join(", ")})`,
+		};
+	}
 
 	// Handle supersede: move old memory to .supersedes/
 	if (supersedes) {
@@ -847,7 +892,20 @@ export function readSessionContent(filePath: string): string {
 export const MEMORY_LANGUAGE_RULE =
 	"Write all memory content (title, content, tags) in PT-BR (Brazilian Portuguese).";
 
-export function buildExtractionPrompt(sessionContent: string): string {
+export function buildExtractionPrompt(
+	sessionContent: string,
+	existingContexts?: { global: string[]; project: string[] },
+): string {
+	const contextLines: string[] = [];
+	if (existingContexts) {
+		contextLines.push(
+			"",
+			"Existing memory context keys (reuse them — do NOT create new keys for the same topic):",
+			`global: ${existingContexts.global.join(", ") || "(none)"}`,
+			`project: ${existingContexts.project.join(", ") || "(none)"}`,
+		);
+	}
+
 	return [
 		"You are extracting durable memories from a coding session log.",
 		"Analyze the observations below and identify memories worth keeping:",
@@ -860,14 +918,16 @@ export function buildExtractionPrompt(sessionContent: string): string {
 		"Rules:",
 		`- ${MEMORY_LANGUAGE_RULE}`,
 		"- Only extract memories with confidence >= 0.5.",
-		"- Same context = same file: if a topic already appears, reuse the context key.",
+		"- Reuse existing context keys when the topic already has a memory (see 'Existing memory context keys' below).",
+		"- If new information contradicts an existing memory, pass its context key in 'supersedes'.",
 		"- Write rich, self-contained markdown content — not atomic notes.",
 		"- scope 'global' only for things that apply to ALL projects.",
 		"- scope 'project' for things specific to this project.",
 		"- '[truncated: ~N tokens omitted]' markers mean data was cut for size — treat the observation as partial; never fabricate content beyond the marker.",
 		"",
 		"Respond with JSON only, no markdown fences:",
-		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "scope": "global|project", "confidence": 0.5, "tags": ["tag"]}]}',
+		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "scope": "global|project", "confidence": 0.5, "tags": ["tag"], "supersedes": "existing-context-key (optional)"}]}',
+		...contextLines,
 		"",
 		"<session>",
 		sessionContent,
@@ -886,6 +946,7 @@ export interface ExtractedMemory {
 	scope: "global" | "project";
 	confidence?: number;
 	tags?: string[];
+	supersedes?: string;
 }
 
 /**
@@ -906,6 +967,7 @@ export function parseExtractionResult(jsonText: string): ExtractedMemory[] {
 			const mem = m as Record<string, unknown>;
 			return (
 				typeof mem.type === "string" &&
+				(MEMORY_TYPES as readonly string[]).includes(mem.type) &&
 				typeof mem.context === "string" &&
 				typeof mem.title === "string" &&
 				typeof mem.content === "string" &&

@@ -45,6 +45,7 @@ import {
 	getSessionFilePath,
 	hashSessionFile,
 	identifyProject,
+	listMemoryContexts,
 	MAX_MEMORY_SEARCH_ATTEMPTS,
 	MEMORIES_ROOT,
 	MEMORY_LANGUAGE_RULE,
@@ -325,8 +326,8 @@ export default function (pi: ExtensionAPI) {
 			"memory_save: Save/update a memory (same context = same file)",
 		promptGuidelines: [
 			MEMORY_LANGUAGE_RULE,
+			"Before saving, call memory_search on the topic — reuse the existing context key if a memory already exists, or use supersedes if the new information contradicts it.",
 			"After durable learnings — non-obvious bug fix, architectural decision, recurring gotcha, reusable pattern — call memory_save directly instead of waiting for memory_extract.",
-			"Reuse existing context keys for related topics (same context = same file).",
 			"Use supersedes to replace a memory that new information contradicts.",
 			"Only save with confidence >= 0.5.",
 		],
@@ -341,6 +342,13 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const result = saveMemory(projectId, params);
+
+			if (result.action === "error") {
+				return {
+					content: [{ type: "text", text: `Error saving memory: ${result.error}` }],
+					details: result,
+				};
+			}
 
 			const text =
 				result.action === "created"
@@ -612,7 +620,8 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const prompt = buildExtractionPrompt(sessionContent);
+			const existingContexts = listMemoryContexts(projectId);
+			const prompt = buildExtractionPrompt(sessionContent, existingContexts);
 
 			let responseText: string;
 			try {
@@ -672,6 +681,7 @@ export default function (pi: ExtensionAPI) {
 					scope: mem.scope,
 					confidence: mem.confidence ?? 0.5,
 					tags: mem.tags ?? [],
+					supersedes: mem.supersedes,
 				});
 				saved.push({ context: mem.context, action: result.action });
 			}
