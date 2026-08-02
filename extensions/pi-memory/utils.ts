@@ -305,17 +305,10 @@ export function countObservations(filePath: string): number {
 	if (!existsSync(filePath)) return 0;
 
 	const content = readFileSync(filePath, "utf-8");
-	let count = 0;
-	let pos = 0;
-
-	while (true) {
-		const idx = content.indexOf("## Obs #", pos);
-		if (idx === -1) break;
-		count++;
-		pos = idx + 8; // move past "## Obs #"
-	}
-
-	return count;
+	// Anchored to line start + numeric — content containing "## Obs #"
+	// (e.g. pasted markdown in user/tool text) must not inflate the count.
+	const matches = content.match(/^## Obs #\d+/gm);
+	return matches ? matches.length : 0;
 }
 
 /**

@@ -671,6 +671,53 @@ describe("countObservations", () => {
 		);
 		expect(countObservations(f)).toBe(2);
 	});
+
+	it("does not count '## Obs #' inside observation content", () => {
+		const f = join(tmpDir, "content-collision.md");
+		writeFileSync(
+			f,
+			[
+				"# Session abc — 2025-01-15",
+				"",
+				"## Obs #1 (10:00:00)",
+				'User: "vi ## Obs #3 no arquivo e ## Obs #7"',
+				'Agent: "mencionei ## Obs #99 aqui"',
+				"",
+			].join("\n"),
+		);
+		expect(countObservations(f)).toBe(1);
+	});
+
+	it("does not count indented '## Obs #' lines (tool results)", () => {
+		const f = join(tmpDir, "indented-collision.md");
+		writeFileSync(
+			f,
+			[
+				"# Session abc — 2025-01-15",
+				"",
+				"## Obs #1 (10:00:00)",
+				'Agent: "veja:"',
+				"  ## Obs #2 (isto é conteúdo, não cabeçalho)",
+				"",
+			].join("\n"),
+		);
+		expect(countObservations(f)).toBe(1);
+	});
+
+	it("ignores '## Obs #' without number", () => {
+		const f = join(tmpDir, "no-number.md");
+		writeFileSync(
+			f,
+			[
+				"# Session abc — 2025-01-15",
+				"",
+				"## Obs #1 (10:00:00)",
+				"## Obs # (formato inválido)",
+				"",
+			].join("\n"),
+		),
+			expect(countObservations(f)).toBe(1);
+	});
 });
 
 // ── ensureFileDir ──────────────────────────────────────────────────────────
