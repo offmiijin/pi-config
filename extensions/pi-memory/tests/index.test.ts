@@ -2078,4 +2078,40 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		);
 		expect(existsSync(supPath)).toBeTrue();
 	});
+
+	it("supersedes across different type and scope", async () => {
+		// Old memory lives in _global/_rules (type+scope diferentes do novo save)
+		saveMemory(testProjectId, {
+			type: "_rules",
+			context: "cache-rule",
+			title: "Regra antiga",
+			content: "Cache deve ser invalidado manualmente",
+			scope: "global",
+		});
+
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "cache-gotcha",
+			title: "Gotcha novo",
+			content: "Cache invalida sozinho",
+			scope: "project",
+			supersedes: "cache-rule",
+		});
+
+		expect(result.action).toBe("created");
+
+		// Old file should be in .supersedes with _global/_rules structure
+		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const supPath = join(
+			MEMORIES_ROOT,
+			".supersedes",
+			"_global",
+			"_rules",
+			"cache-rule.md",
+		);
+		expect(existsSync(supPath)).toBeTrue();
+
+		// Original must be gone
+		expect(existsSync(join(MEMORIES_ROOT, "_global", "_rules", "cache-rule.md"))).toBeFalse();
+	});
 });

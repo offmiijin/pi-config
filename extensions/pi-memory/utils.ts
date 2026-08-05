@@ -868,9 +868,12 @@ export function saveMemory(
 	}
 
 	// Handle supersede: move old memory to .supersedes/
+	// Busca em TODOS os types/scopes (findMemoryFile) — a contradição
+	// normalmente cruza type (ex.: lesson supersede pattern). Olhar só o
+	// type+scope do novo save resultaria em no-op silencioso.
 	if (supersedes) {
-		const oldPath = getMemoryFilePath(projectId, type, supersedes, scope);
-		if (existsSync(oldPath)) {
+		const oldPath = findMemoryFile(projectId, supersedes);
+		if (oldPath) {
 			moveToSupersedes(oldPath, { superseded_by: context });
 		}
 	}
