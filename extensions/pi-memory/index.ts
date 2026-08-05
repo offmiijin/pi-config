@@ -93,8 +93,9 @@ export default function (pi: ExtensionAPI) {
 	// Save reminder state (code-changing turns)
 	let saveReminderDue = false;
 	let lastSaveReminderObs = 0;
-	// Session memory index (injected once per session)
-	let memoryIndexInjected = false;
+	// Session memory index — injetado no SYSTEM PROMPT (cache por sessão,
+	// invalidado em memory_save/memory_extract/memory_decay)
+	let cachedIndexText: string | null = null;
 	// Dedup de turnos (harness pode disparar turn_end 2x p/ o mesmo turno)
 	let turnDedupState = createTurnDedupState();
 	// Buffer de resultados de tools do turno atual (toolCallId → observação)
@@ -132,8 +133,8 @@ export default function (pi: ExtensionAPI) {
 		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
-		// Reset session memory index flag
-		memoryIndexInjected = false;
+		// Reset session memory index cache
+		cachedIndexText = null;
 		// Reset turn dedup state
 		turnDedupState = createTurnDedupState();
 	});
@@ -149,8 +150,8 @@ export default function (pi: ExtensionAPI) {
 		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
-		// Reset session memory index flag
-		memoryIndexInjected = false;
+		// Reset session memory index cache
+		cachedIndexText = null;
 		// Reset turn dedup state
 		turnDedupState = createTurnDedupState();
 	});
@@ -280,12 +281,24 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	// ── Inject extraction prompt at next user turn ────────────────────────
+	// ── Inject extraction prompt + memory index at next user turn ───────────
 	pi.on("before_agent_start", async (event, ctx) => {
+		// Índice de memórias no SYSTEM PROMPT (reconstruído por turno — não
+		// polui o histórico de mensagens como a mensagem customType fazia).
+		// Cache por sessão, invalidado nas escritas (memory_save/extract/decay).
+		const withIndex = (prompt: string): string => {
+			if (!projectId) return prompt;
+			if (cachedIndexText === null) {
+				cachedIndexText = formatMemoryIndexText(listMemoryIndex(projectId));
+			}
+			return `${prompt}\n\n${cachedIndexText}`;
+		};
+
 		if (extractionDueCount > 0) {
 			const count = extractionDueCount;
 			extractionDueCount = 0;
 			return {
+				systemPrompt: withIndex(event.systemPrompt),
 				message: {
 					customType: "pi-memory",
 					content:
@@ -299,6 +312,7 @@ export default function (pi: ExtensionAPI) {
 		if (saveReminderDue) {
 			saveReminderDue = false;
 			return {
+				systemPrompt: withIndex(event.systemPrompt),
 				message: {
 					customType: "pi-memory",
 					content:
@@ -308,18 +322,7 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		// Session memory index — injeta UMA vez por sessão (sempre, mesmo com 0
-		// memórias), para o modelo saber que a extensão de memória existe.
-		if (!memoryIndexInjected && projectId) {
-			memoryIndexInjected = true;
-			return {
-				message: {
-					customType: "pi-memory",
-					content: formatMemoryIndexText(listMemoryIndex(projectId)),
-					display: true,
-				},
-			};
-		}
+		return { systemPrompt: withIndex(event.systemPrompt) };
 	});
 
 	// ── Tools ──────────────────────────────────────────────────────────────
@@ -385,6 +388,8 @@ export default function (pi: ExtensionAPI) {
 		parameters: SaveSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			// Escrita altera o índice de memórias → invalida cache do system prompt
+			cachedIndexText = null;
 			if (!projectId) {
 				return {
 					content: [{ type: "text", text: "Error: no active project" }],
@@ -546,6 +551,8 @@ export default function (pi: ExtensionAPI) {
 		parameters: DecaySchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			// Escrita altera o índice de memórias → invalida cache do system prompt
+			cachedIndexText = null;
 			if (!projectId) {
 				return {
 					content: [{ type: "text", text: "Error: no active project" }],
@@ -637,6 +644,8 @@ export default function (pi: ExtensionAPI) {
 		parameters: ExtractSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			// Escrita altera o índice de memórias → invalida cache do system prompt
+			cachedIndexText = null;
 			if (!projectId || !currentSessionHash) {
 				return {
 					content: [{ type: "text", text: "Error: no active session" }],
