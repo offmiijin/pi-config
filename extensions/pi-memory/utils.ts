@@ -902,14 +902,17 @@ export function saveMemory(
 	// Append to existing file
 	const existing = readFileSync(filePath, "utf-8");
 	const { meta, body } = parseFrontmatter(existing);
-	// Média do confidence ATUAL do arquivo (pode ter sido decaído) com o novo.
-	// Recalcular a partir das entradas históricas faria o decay evaporar no próximo append.
+	// Média ponderada real: currentConf é a média das `entries` atuais (e já
+	// reflete decays). (currentConf * N + nova) / (N+1) converge para a média
+	// exata — a média sucessiva (a+b)/2 distorceria em direção à entrada mais
+	// recente. Recalcular a partir do body faria o decay evaporar no append.
 	const currentConf = typeof meta.confidence === "number" ? meta.confidence : 0.5;
-	const newOverall = Math.round(((currentConf + confidence) / 2) * 100) / 100;
+	const currentEntries = (meta.entries as number) || extractEntryConfidences(body).length || 1;
+	const newOverall = Math.round(((currentConf * currentEntries + confidence) / (currentEntries + 1)) * 100) / 100;
 
 	meta.updated = today;
 	meta.confidence = newOverall;
-	meta.entries = ((meta.entries as number) || 0) + 1;
+	meta.entries = currentEntries + 1;
 
 	if (tags.length > 0) {
 		const existingTags = (meta.tags as string[]) || [];

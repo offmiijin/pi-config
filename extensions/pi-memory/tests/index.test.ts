@@ -2013,6 +2013,80 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(content).toContain("entries: 2");
 	});
 
+	it("computes real average across multiple entries (not successive-mean distortion)", () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "multi-avg",
+			title: "First",
+			content: "content",
+			scope: "project",
+			confidence: 0.7,
+		});
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "multi-avg",
+			title: "Second",
+			content: "content",
+			scope: "project",
+			confidence: 0.6,
+		});
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "multi-avg",
+			title: "Third",
+			content: "content",
+			scope: "project",
+			confidence: 0.5,
+		});
+
+		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "multi-avg.md");
+		const { meta } = parseFrontmatter(readFileSync(fp, "utf-8"));
+		expect(meta.confidence).toBe(0.6); // média real (0.7+0.6+0.5)/3 — sucessiva daria 0.575
+		expect(meta.entries).toBe(3);
+	});
+
+	it("preserves decay across multiple entries", () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "decay-multi",
+			title: "First",
+			content: "content",
+			scope: "project",
+			confidence: 0.7,
+		});
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "decay-multi",
+			title: "Second",
+			content: "content",
+			scope: "project",
+			confidence: 0.6,
+		});
+		// conf agora 0.65, entries 2
+
+		// Simula decay: reduz confidence do frontmatter para 0.3
+		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "decay-multi.md");
+		const { meta, body } = parseFrontmatter(readFileSync(fp, "utf-8"));
+		meta.confidence = 0.3;
+		writeFileSync(fp, formatFrontmatter(meta) + body);
+
+		// O decay deve pesar sobre todas as entradas: (0.3*2 + 0.5)/3 = 0.3666... → 0.37
+		// (média sucessiva daria 0.4)
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "decay-multi",
+			title: "Third",
+			content: "content",
+			scope: "project",
+			confidence: 0.5,
+		});
+
+		const updated = readFileSync(fp, "utf-8");
+		const { meta: meta2 } = parseFrontmatter(updated);
+		expect(meta2.confidence).toBe(0.37);
+		expect(meta2.entries).toBe(3);
+	});
+
 	it("preserves decayed confidence on append", () => {
 		const result = saveMemory(testProjectId, {
 			type: "gotchas",
