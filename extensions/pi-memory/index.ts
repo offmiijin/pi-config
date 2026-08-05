@@ -671,40 +671,89 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// 3. Save each memory
-			const saved: { context: string; action: string }[] = [];
+			// 3. Save each memory — coleta falhas, não aborta no primeiro erro
+			const saved: { context: string; action: string; error?: string }[] = [];
+			const failures: string[] = [];
 			for (const mem of memories) {
-				const result = saveMemory(projectId, {
-					type: mem.type,
-					context: mem.context,
-					title: mem.title,
-					content: mem.content,
-					scope: mem.scope,
-					confidence: mem.confidence ?? 0.5,
-					tags: mem.tags ?? [],
-					supersedes: mem.supersedes,
-				});
-				saved.push({ context: mem.context, action: result.action });
+				try {
+					const result = saveMemory(projectId, {
+						type: mem.type,
+						context: mem.context,
+						title: mem.title,
+						content: mem.content,
+						scope: mem.scope,
+						confidence: mem.confidence ?? 0.5,
+						tags: mem.tags ?? [],
+						supersedes: mem.supersedes,
+					});
+					saved.push({
+						context: mem.context,
+						action: result.action,
+						...(result.error ? { error: result.error } : {}),
+					});
+					if (result.action === "error") {
+						failures.push(`${mem.context}: ${result.error}`);
+					}
+				} catch (e: unknown) {
+					const msg = (e as Error).message ?? String(e);
+					saved.push({ context: mem.context, action: "error", error: msg });
+					failures.push(`${mem.context}: ${msg}`);
+				}
 			}
 
-			// 4. Archive + reset session file (mesmo hash, zero observações) — só após sucesso
+			// Falha total — nenhuma memória salva: preserva observações para
+			// re-tentativa limpa (sem risco de duplicar nada).
+			if (saved.length > 0 && saved.every((s) => s.action === "error")) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`Extraction failed for all ${saved.length} memory(ies):\n` +
+								`- ${failures.join("\n- ")}\n` +
+								"Session observations preserved — fix the parameters and call memory_extract again.",
+						},
+					],
+					details: {
+						count: 0,
+						saved,
+						failures,
+						reset: false,
+					},
+				};
+			}
+
+			// 4. Archive + reset session file (mesmo hash, zero observações).
+			// Falha parcial: archive preserva as observações cruas — recuperação
+			// via memory_extract(session_file=<archive>) sem duplicar as salvas.
 			const archivePath = archiveSessionFile(sessionFile);
 			resetSessionFile(sessionFile, currentSessionHash);
 			lastPromptedBucket = -1; // reinicia ciclo de trigger (próximo trigger às 50)
 
 			const summary = saved
+				.filter((s) => s.action !== "error")
 				.map((s) => `- ${s.action}: ${s.context}`)
 				.join("\n");
+
+			const failureNote =
+				failures.length > 0
+					? `\n\n${failures.length} memory(ies) FAILED (not saved):\n` +
+						`- ${failures.join("\n- ")}\n` +
+						`Raw observations archived at ${archivePath}.\n` +
+						`Fix the parameters and re-run memory_extract with session_file=${archivePath} to recover them.`
+					: "";
 
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Extracted ${saved.length} memory(ies) from ${sessionFile}:\n${summary}\nSession observations reset.`,
+						text:
+							`Extracted ${saved.length - failures.length} memory(ies) from ${sessionFile}:\n${summary}${failureNote}\nSession observations reset.`,
 					},
 				],
 				details: {
-					count: saved.length,
+					count: saved.length - failures.length,
+					failures,
 					saved,
 					session_file: sessionFile,
 					archive_file: archivePath,
