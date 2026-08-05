@@ -39,6 +39,7 @@ import {
 	findMemoryFile,
 	type ToolObservation,
 	formatFrontmatter,
+	formatMemoryIndexText,
 	formatObservation,
 	formatSessionHeader,
 	generateSessionHash,
@@ -47,6 +48,7 @@ import {
 	hashSessionFile,
 	identifyProject,
 	listMemoryContexts,
+	listMemoryIndex,
 	MAX_MEMORY_SEARCH_ATTEMPTS,
 	MEMORIES_ROOT,
 	MEMORY_LANGUAGE_RULE,
@@ -64,6 +66,7 @@ import {
 	shouldPromptExtraction,
 	shouldRemindSave,
 	splitObservations,
+	summarizeExistingMemories,
 } from "./utils.ts";
 import {
 	DecaySchema,
@@ -87,6 +90,8 @@ export default function (pi: ExtensionAPI) {
 	// Save reminder state (code-changing turns)
 	let saveReminderDue = false;
 	let lastSaveReminderObs = 0;
+	// Session memory index (injected once per session)
+	let memoryIndexInjected = false;
 	// Buffer de resultados de tools do turno atual (toolCallId → observação)
 	const toolResultsBuffer = new Map<string, ToolObservation>();
 
@@ -122,6 +127,8 @@ export default function (pi: ExtensionAPI) {
 		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
+		// Reset session memory index flag
+		memoryIndexInjected = false;
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -135,6 +142,8 @@ export default function (pi: ExtensionAPI) {
 		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
+		// Reset session memory index flag
+		memoryIndexInjected = false;
 	});
 
 	// ── Append observations at turn_end ────────────────────────────────────
@@ -277,6 +286,19 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		}
+
+		// Session memory index — injeta UMA vez por sessão (sempre, mesmo com 0
+		// memórias), para o modelo saber que a extensão de memória existe.
+		if (!memoryIndexInjected && projectId) {
+			memoryIndexInjected = true;
+			return {
+				message: {
+					customType: "pi-memory",
+					content: formatMemoryIndexText(listMemoryIndex(projectId)),
+					display: true,
+				},
+			};
+		}
 	});
 
 	// ── Tools ──────────────────────────────────────────────────────────────
@@ -326,6 +348,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Saves or updates a memory. Same context key = same file. " +
 			"mode 'append' (default) adds a dated entry; mode 'consolidate' rewrites the memory, archiving the old version to .supersedes/ (merge-in-place). " +
+			"Provide 'summary' (1-2 sentences, PT-BR) describing the CURRENT state — it is persisted and updated on every append/consolidate. " +
 			"Use supersedes to mark a memory under a DIFFERENT context key as replaced.",
 		promptSnippet:
 			"memory_save: Save/update a memory (same context = same file)",
@@ -335,6 +358,7 @@ export default function (pi: ExtensionAPI) {
 			"After durable learnings — non-obvious bug fix, architectural decision, recurring gotcha, reusable pattern — call memory_save directly instead of waiting for memory_extract.",
 			"Use supersedes to replace a memory that new information contradicts.",
 			"Use mode='consolidate' when the new content updates/contradicts the existing memory with the SAME context key (old version is archived to .supersedes/). Use supersedes to replace a memory under a DIFFERENT context key.",
+			"Always provide 'summary' (1-2 sentences in PT-BR) describing the CURRENT state of the knowledge — it replaces the previous summary and is used by memory_extract for dedup.",
 			"Only save with confidence >= 0.5.",
 		],
 		parameters: SaveSchema,
@@ -654,8 +678,8 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const existingContexts = listMemoryContexts(projectId);
-			const prompt = buildExtractionPrompt(sessionContent, existingContexts);
+			const existingMemories = summarizeExistingMemories(projectId);
+			const prompt = buildExtractionPrompt(sessionContent, existingMemories);
 
 			let responseText: string;
 			try {
@@ -719,6 +743,7 @@ export default function (pi: ExtensionAPI) {
 						tags: mem.tags ?? [],
 						supersedes: mem.supersedes,
 						mode: mem.mode,
+						summary: mem.summary,
 					});
 					saved.push({
 						context: mem.context,

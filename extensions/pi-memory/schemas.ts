@@ -47,6 +47,13 @@ export const SaveSchema = Type.Object({
 	supersedes: Type.Optional(
 		Type.String({ description: "Context key of memory this replaces" }),
 	),
+	summary: Type.Optional(
+		Type.String({
+			description:
+				"Resumo de 1-2 frases em PT-BR do estado ATUAL da memória. " +
+				"Sobrescreve o anterior no append/consolidate; usado pelo memory_extract para dedup.",
+		}),
+	),
 	mode: Type.Optional(
 		Type.Union(
 			[Type.Literal("append"), Type.Literal("consolidate")],

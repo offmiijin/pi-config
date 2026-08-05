@@ -550,6 +550,153 @@ export function listMemoryContexts(projectId: string): {
 	return { global: globalKeys.sort(), project: projectKeys.sort() };
 }
 
+// ── Memory index & summaries (#3 session index, #4 extract dedup) ──────────
+
+/**
+ * One memory entry in the session index / extract dedup context.
+ */
+export interface MemoryIndexEntry {
+	scope: "global" | "project";
+	type: MemoryType;
+	context: string;
+	/** Title of the most recent entry in the body. */
+	title: string;
+	confidence: number;
+	updated: string;
+	/** Persisted summary (frontmatter), if any. */
+	summary?: string;
+	/** Raw excerpt from the end of the body (fallback when no summary). */
+	excerpt: string;
+}
+
+/** Extracts the title of the LAST entry from a memory body. */
+function extractLastEntryTitle(body: string): string | undefined {
+	const matches = [...body.matchAll(/^## \[[^\]]+\]\s+(.+)$/gm)];
+	if (matches.length === 0) return undefined;
+	return matches[matches.length - 1][1].trim();
+}
+
+/** Raw excerpt from the end of the body (append adds newest entries last). */
+function extractExcerpt(body: string, maxChars = 150): string {
+	const clean = body
+		.replace(/^## \[[^\]]+\][^\n]*\n/g, "")
+		.replace(/^confidence:.*$/gm, "")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+	if (clean.length <= maxChars) return clean;
+	return clean.slice(-maxChars).trimStart() + "…";
+}
+
+/**
+ * Lists all memories (global + project) with metadata, sorted by updated desc.
+ * Reads frontmatter (confidence, updated, summary) + last entry title.
+ */
+export function listMemoryIndex(projectId: string): MemoryIndexEntry[] {
+	const entries: MemoryIndexEntry[] = [];
+	for (const scope of ["global", "project"] as const) {
+		for (const type of MEMORY_TYPES) {
+			const dir =
+				scope === "global"
+					? join(MEMORIES_ROOT, "_global", type)
+					: join(MEMORIES_ROOT, "projects", projectId, type);
+			if (!existsSync(dir)) continue;
+			for (const f of readdirSync(dir)) {
+				if (!f.endsWith(".md")) continue;
+				const context = f.slice(0, -3);
+				const filePath = join(dir, f);
+				try {
+					const content = readFileSync(filePath, "utf-8");
+					const { meta, body } = parseFrontmatter(content);
+					entries.push({
+						scope,
+						type,
+						context,
+						title: extractLastEntryTitle(body) ?? context,
+						confidence: typeof meta.confidence === "number" ? meta.confidence : 0.5,
+						updated: typeof meta.updated === "string" ? meta.updated : "",
+						...(typeof meta.summary === "string" ? { summary: meta.summary } : {}),
+						excerpt: extractExcerpt(body),
+					});
+				} catch {
+					// Arquivo corrompido — ignora, não derruba o índice.
+				}
+			}
+		}
+	}
+	return entries.sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
+}
+
+/** Formats per-scope counts by type in fixed MEMORY_TYPES order, never omitting 0. */
+function formatCountsByScope(entries: MemoryIndexEntry[]): string[] {
+	const lines: string[] = [];
+	for (const scope of ["global", "project"] as const) {
+		const counts = MEMORY_TYPES.map((t) => {
+			const n = entries.filter((e) => e.scope === scope && e.type === t).length;
+			return `${t} (${n} memories)`;
+		});
+		lines.push(`  ${scope === "global" ? "_global" : "project"}: ${counts.join(", ")}`);
+	}
+	return lines;
+}
+
+/**
+ * Formats the memory index injected once per session (before_agent_start).
+ * Total always; 15 most recent; rest summarized by scope+type; full counts.
+ */
+export function formatMemoryIndexText(entries: MemoryIndexEntry[]): string {
+	const total = entries.length;
+	const lines: string[] = [];
+	lines.push(`[pi-memory] Memory index (total: ${total} — call memory_search for details):`);
+	lines.push("");
+	lines.push("Most recent 15:");
+
+	const recent = entries.slice(0, 15);
+	if (recent.length === 0) {
+		lines.push("  (none yet — call memory_save when you learn something durable)");
+	} else {
+		for (const e of recent) {
+			lines.push(
+				`  ${e.scope}/${e.type}/${e.context} (${e.confidence}, ${e.updated}): "${e.title}"`,
+			);
+		}
+	}
+
+	const rest = entries.slice(15);
+	if (rest.length > 0) {
+		lines.push("");
+		lines.push(`${rest.length} not shown — by scope:`);
+		lines.push(...formatCountsByScope(rest));
+	}
+
+	lines.push("");
+	lines.push("Counts by scope (all):");
+	lines.push(...formatCountsByScope(entries));
+	return lines.join("\n");
+}
+
+/**
+ * Builds the 'Existing memories' block for the extraction prompt (#4).
+ * Uses the persisted summary when available; falls back to title + excerpt.
+ */
+export function summarizeExistingMemories(projectId: string): string {
+	const entries = listMemoryIndex(projectId);
+	const lines: string[] = [
+		"Existing memories (reuse context keys; 'mode: consolidate' if new info updates/contradicts the SAME key; 'supersedes' if it replaces a DIFFERENT key):",
+		"",
+	];
+	if (entries.length === 0) {
+		lines.push("  (none)");
+		return lines.join("\n");
+	}
+	for (const e of entries) {
+		const text = e.summary ? e.summary : `${e.title} — ${e.excerpt}`;
+		lines.push(
+			`  ${e.scope}/${e.type}/${e.context} (${e.confidence}, updated ${e.updated}): "${text}"`,
+		);
+	}
+	return lines.join("\n");
+}
+
 /**
  * Applies a decay delta to a confidence value, clamped at 0.
  * Delta is treated as a reduction regardless of sign.
@@ -852,6 +999,12 @@ export interface SaveMemoryParams {
 	confidence?: number;
 	supersedes?: string;
 	/**
+	 * Concise summary (1-2 sentences, PT-BR) of the CURRENT state of the
+	 * memory. Persisted in the frontmatter and overwritten on every
+	 * append/consolidate when provided. Used by memory_extract for dedup.
+	 */
+	summary?: string;
+	/**
 	 * append (default): adds a dated entry to the file (backward compatible).
 	 * consolidate: rewrites the memory — archives the current version to
 	 * .supersedes/ and creates a fresh file (use when the new content updates
@@ -879,7 +1032,7 @@ export function saveMemory(
 	entries?: number;
 	error?: string;
 } {
-	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes, mode = "append" } = params;
+	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes, mode = "append", summary } = params;
 	const now = formatDateTime();
 	const today = now.slice(0, 10);
 
@@ -935,6 +1088,7 @@ export function saveMemory(
 			entries: 1,
 		};
 		if (tags.length > 0) meta.tags = tags;
+		if (summary) meta.summary = summary;
 
 		writeFileSync(filePath, formatFrontmatter(meta) + entry + "\n");
 		return {
@@ -962,6 +1116,9 @@ export function saveMemory(
 		const existingTags = (meta.tags as string[]) || [];
 		meta.tags = [...new Set([...existingTags, ...tags])];
 	}
+
+	// Summary sempre reflete o estado ATUAL — sobrescreve o anterior.
+	if (summary) meta.summary = summary;
 
 	writeFileSync(filePath, formatFrontmatter(meta) + body + entry + "\n");
 	return { action: "appended", file: filePath, entries: meta.entries as number };
@@ -1034,16 +1191,11 @@ export const MEMORY_LANGUAGE_RULE =
 
 export function buildExtractionPrompt(
 	sessionContent: string,
-	existingContexts?: { global: string[]; project: string[] },
+	existingMemories?: string,
 ): string {
-	const contextLines: string[] = [];
-	if (existingContexts) {
-		contextLines.push(
-			"",
-			"Existing memory context keys (reuse them — do NOT create new keys for the same topic):",
-			`global: ${existingContexts.global.join(", ") || "(none)"}`,
-			`project: ${existingContexts.project.join(", ") || "(none)"}`,
-		);
+	const memoryLines: string[] = [];
+	if (existingMemories) {
+		memoryLines.push("", existingMemories);
 	}
 
 	return [
@@ -1058,18 +1210,19 @@ export function buildExtractionPrompt(
 		"Rules:",
 		`- ${MEMORY_LANGUAGE_RULE}`,
 		"- Only extract memories with confidence >= 0.5.",
-		"- Reuse existing context keys when the topic already has a memory (see 'Existing memory context keys' below).",
+		"- Reuse existing context keys when the topic already has a memory (see 'Existing memories' below).",
 		"- If new information contradicts an existing memory, pass its context key in 'supersedes'.",
 		"- If a new memory UPDATES or CONTRADICTS an existing memory with the SAME context key, set 'mode': 'consolidate' — the old version is archived to .supersedes/ and the memory is rewritten fresh (merge-in-place, no append growth).",
 		"- If a new memory merely COMPLEMENTS an existing one, omit 'mode' (defaults to append).",
+		"- For each memory provide a concise 'summary' (1-2 sentences in PT-BR) describing the CURRENT state of the knowledge — it is persisted in the memory frontmatter and used for future dedup.",
 		"- Write rich, self-contained markdown content — not atomic notes.",
 		"- scope 'global' only for things that apply to ALL projects.",
 		"- scope 'project' for things specific to this project.",
 		"- '[truncated: ~N tokens omitted]' markers mean data was cut for size — treat the observation as partial; never fabricate content beyond the marker.",
 		"",
 		"Respond with JSON only, no markdown fences:",
-		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "scope": "global|project", "confidence": 0.5, "tags": ["tag"], "mode": "append|consolidate (optional)", "supersedes": "existing-context-key (optional)"}]}',
-		...contextLines,
+		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "summary": "1-2 sentence summary (PT-BR)", "scope": "global|project", "confidence": 0.5, "tags": ["tag"], "mode": "append|consolidate (optional)", "supersedes": "existing-context-key (optional)"}]}',
+		...memoryLines,
 		"",
 		"<session>",
 		sessionContent,
@@ -1089,6 +1242,7 @@ export interface ExtractedMemory {
 	confidence?: number;
 	tags?: string[];
 	supersedes?: string;
+	summary?: string;
 	/** append (default) | consolidate — merge-in-place on same context key. */
 	mode?: "append" | "consolidate";
 }
@@ -1117,6 +1271,7 @@ export function parseExtractionResult(jsonText: string): ExtractedMemory[] {
 				typeof mem.title === "string" &&
 				typeof mem.content === "string" &&
 				(mem.scope === "global" || mem.scope === "project") &&
+				(mem.summary === undefined || typeof mem.summary === "string") &&
 				(mode === undefined || mode === "append" || mode === "consolidate")
 			);
 		});

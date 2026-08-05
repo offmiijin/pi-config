@@ -38,6 +38,9 @@ import {
 	hashSessionFile,
 	identifyProject,
 	listMemoryContexts,
+	listMemoryIndex,
+	formatMemoryIndexText,
+	summarizeExistingMemories,
 	MAX_MEMORY_SEARCH_ATTEMPTS,
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
@@ -1909,12 +1912,12 @@ describe("buildExtractionPrompt", () => {
 		expect(prompt).toContain("Brazilian Portuguese");
 	});
 
-	it("includes existing context keys when provided", () => {
-		const prompt = buildExtractionPrompt("content", {
-			global: ["auth"],
-			project: ["nextjs-router"],
-		});
-		expect(prompt).toContain("Existing memory context keys");
+	it("includes existing memories when provided", () => {
+		const prompt = buildExtractionPrompt(
+			"content",
+			"global/_rules/auth (0.8, updated 2026-07-20): \"Tokens expiram em 24h\"\nproject/gotchas/nextjs-router (0.7, updated 2026-08-01): \"params é Promise\"",
+		);
+		expect(prompt).toContain("Existing memories");
 		expect(prompt).toContain("auth");
 		expect(prompt).toContain("nextjs-router");
 	});
@@ -2522,5 +2525,295 @@ describe("removeProcessedObservations", () => {
 		writeFileSync(fp, "# Session abc — 2025-01-15\n");
 		removeProcessedObservations(fp, 5);
 		expect(readFileSync(fp, "utf-8")).toBe("# Session abc — 2025-01-15\n");
+	});
+});
+
+// ── Summary persistido (#4) ─────────────────────────────────────────────────
+
+describe("saveMemory summary", () => {
+	let testProjectId: string;
+
+	beforeAll(async () => {
+		testProjectId = `__test_summary_${Date.now()}`;
+	});
+
+	afterAll(async () => {
+		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+	});
+
+	it("stores summary in frontmatter on create", () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "sum-ctx",
+			title: "t",
+			content: "conteúdo",
+			scope: "project",
+			summary: "Resumo do estado atual",
+		});
+		const content = readFileSync(
+			join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "sum-ctx.md"),
+			"utf-8",
+		);
+		expect(content).toContain('summary: "Resumo do estado atual"');
+	});
+
+	it("overwrites summary on append", () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "sum-ctx",
+			title: "t2",
+			content: "mais conteúdo",
+			scope: "project",
+			summary: "Resumo atualizado após append",
+		});
+		const content = readFileSync(
+			join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "sum-ctx.md"),
+			"utf-8",
+		);
+		expect(content).toContain('summary: "Resumo atualizado após append"');
+		expect(content).not.toContain('summary: "Resumo do estado atual"');
+	});
+
+	it("keeps previous summary when append omits it", () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "sum-ctx",
+			title: "t3",
+			content: "sem summary novo",
+			scope: "project",
+		});
+		const content = readFileSync(
+			join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "sum-ctx.md"),
+			"utf-8",
+		);
+		expect(content).toContain('summary: "Resumo atualizado após append"');
+	});
+
+	it("stores summary on consolidate (fresh file)", () => {
+		saveMemory(testProjectId, {
+			type: "lessons",
+			context: "sum-cons",
+			title: "v1",
+			content: "antigo",
+			scope: "project",
+			summary: "antigo resumo",
+		});
+		const result = saveMemory(testProjectId, {
+			type: "lessons",
+			context: "sum-cons",
+			title: "v2",
+			content: "novo",
+			scope: "project",
+			mode: "consolidate",
+			summary: "resumo consolidado",
+		});
+		expect(result.action).toBe("consolidated");
+		const content = readFileSync(result.file, "utf-8");
+		expect(content).toContain('summary: "resumo consolidado"');
+		expect(content).not.toContain("antigo resumo");
+	});
+});
+
+describe("parseExtractionResult summary", () => {
+	it("accepts summary string", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "c",
+					title: "t",
+					content: "x",
+					scope: "project",
+					summary: "resumo",
+				},
+			],
+		});
+		const result = parseExtractionResult(json);
+		expect(result).toHaveLength(1);
+		expect(result[0].summary).toBe("resumo");
+	});
+
+	it("rejects non-string summary", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "c",
+					title: "t",
+					content: "x",
+					scope: "project",
+					summary: 42,
+				},
+			],
+		});
+		expect(parseExtractionResult(json)).toEqual([]);
+	});
+});
+
+describe("memory_save schema summary", () => {
+	it("has optional summary field", () => {
+		expect(propIsOptional(SaveSchema, "summary")).toBeTrue();
+	});
+});
+
+// ── Memory index (#3) ───────────────────────────────────────────────────────
+
+describe("listMemoryIndex", () => {
+	let testProjectId: string;
+
+	beforeAll(() => {
+		testProjectId = `__test_index_${Date.now()}`;
+		// 2 global + 2 project, updated diferentes, 1 com summary
+		ensureFileDir(join(MEMORIES_ROOT, "_global", "gotchas", "old-global.md"));
+		writeFileSync(
+			join(MEMORIES_ROOT, "_global", "gotchas", "old-global.md"),
+			"---\ncontext: old-global\ntype: gotchas\nconfidence: 0.6\nupdated: 2026-01-01\n---\n\n## [2026-01-01 10:00:00] Global antiga\n\nconteúdo antigo\n",
+		);
+		ensureFileDir(join(MEMORIES_ROOT, "_global", "_rules", "new-global.md"));
+		writeFileSync(
+			join(MEMORIES_ROOT, "_global", "_rules", "new-global.md"),
+			"---\ncontext: new-global\ntype: _rules\nconfidence: 0.9\nupdated: 2026-08-05\nsummary: \"Resumo global\"\n---\n\n## [2026-08-05 10:00:00] Global nova\n\nconteúdo novo\n",
+		);
+		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "proj-a.md"));
+		writeFileSync(
+			join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "proj-a.md"),
+			"---\ncontext: proj-a\ntype: lessons\nconfidence: 0.7\nupdated: 2026-07-15\n---\n\n## [2026-07-15 10:00:00] Lição A\n\nlição A\n",
+		);
+		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "proj-b.md"));
+		writeFileSync(
+			join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "proj-b.md"),
+			"---\ncontext: proj-b\ntype: gotchas\nconfidence: 0.5\nupdated: 2026-05-20\n---\n\n## [2026-05-20 10:00:00] Gotcha B\n\n" + "y".repeat(300) + "\n",
+		);
+	});
+
+	afterAll(() => {
+		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+		rmSync(join(MEMORIES_ROOT, "_global", "gotchas", "old-global.md"), { force: true });
+		rmSync(join(MEMORIES_ROOT, "_global", "_rules", "new-global.md"), { force: true });
+	});
+
+	it("lists all memories with metadata (global + project)", () => {
+		const entries = listMemoryIndex(testProjectId);
+		const mine = entries.filter((e) =>
+			["new-global", "old-global", "proj-a", "proj-b"].includes(e.context),
+		);
+		expect(mine).toHaveLength(4);
+		const byContext = Object.fromEntries(mine.map((e) => [e.context, e]));
+		expect(byContext["new-global"].scope).toBe("global");
+		expect(byContext["new-global"].type).toBe("_rules");
+		expect(byContext["new-global"].confidence).toBe(0.9);
+		expect(byContext["new-global"].title).toBe("Global nova");
+		expect(byContext["new-global"].summary).toBe("Resumo global");
+		expect(byContext["proj-a"].scope).toBe("project");
+		expect(byContext["proj-b"].excerpt.length).toBeLessThan(300);
+	});
+
+	it("sorts by updated desc", () => {
+		const entries = listMemoryIndex(testProjectId);
+		const mine = entries.filter((e) =>
+			["new-global", "old-global", "proj-a", "proj-b"].includes(e.context),
+		);
+		expect(mine[0].context).toBe("new-global"); // 2026-08-05
+		expect(mine[1].context).toBe("proj-a"); // 2026-07-15
+		expect(mine[2].context).toBe("proj-b"); // 2026-05-20
+		expect(mine[3].context).toBe("old-global"); // 2026-01-01
+	});
+});
+
+describe("formatMemoryIndexText", () => {
+	it("shows total, recent, rest by scope and full counts (never omits 0)", () => {
+		const entries: MemoryIndexEntry[] = [];
+		for (let i = 1; i <= 20; i++) {
+			entries.push({
+				scope: i % 2 === 0 ? "project" : "global",
+				type: MEMORY_TYPES[i % MEMORY_TYPES.length],
+				context: `ctx-${i}`,
+				title: `Título ${i}`,
+				confidence: 0.5 + (i % 4) * 0.1,
+				updated: `2026-07-${String(i).padStart(2, "0")}`,
+				excerpt: "",
+			});
+		}
+		const text = formatMemoryIndexText(entries);
+		expect(text).toContain("total: 20");
+		expect(text).toContain("Most recent 15:");
+		// 15 recentes + 5 restantes
+		expect(text).toContain("ctx-1"); // mais recente (updated 07-20)
+		expect(text).toContain("5 not shown");
+		expect(text).toContain("Counts by scope (all):");
+		expect(text).toContain("_global: ");
+		expect(text).toContain("project: ");
+		// nunca omite tipos com 0
+		expect(text).toContain("(0 memories)");
+		// ordem fixa dos tipos
+		const gl = text.match(/_global: (.*)/)![1];
+		const types = gl.split(", ").map((s) => s.split(" ")[0]);
+		expect(types).toEqual(["_rules", "decisions", "gotchas", "lessons", "patterns"]);
+	});
+
+	it("handles empty index (still injects, with zeros)", () => {
+		const text = formatMemoryIndexText([]);
+		expect(text).toContain("total: 0");
+		expect(text).toContain("(none yet");
+		expect(text).toContain("Counts by scope (all):");
+		expect(text).toContain("_global: _rules (0 memories)");
+		expect(text).toContain("project: _rules (0 memories)");
+		expect(text).not.toContain("not shown");
+	});
+
+	it("omits rest block when total <= 15", () => {
+		const entries = Array.from({ length: 10 }, (_, i) => ({
+			scope: "project" as const,
+			type: "gotchas" as const,
+			context: `c${i}`,
+			title: `T${i}`,
+			confidence: 0.5,
+			updated: `2026-07-${String(i + 1).padStart(2, "0")}`,
+			excerpt: "",
+		}));
+		const text = formatMemoryIndexText(entries);
+		expect(text).not.toContain("not shown");
+		expect(text).toContain("Counts by scope (all):");
+	});
+});
+
+describe("summarizeExistingMemories", () => {
+	let testProjectId: string;
+
+	beforeAll(() => {
+		testProjectId = `__test_summarize_${Date.now()}`;
+		// com summary
+		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "com-summary.md"));
+		writeFileSync(
+			join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "com-summary.md"),
+			"---\ncontext: com-summary\ntype: gotchas\nconfidence: 0.8\nupdated: 2026-08-05\nsummary: \"Resumo curado pelo LLM\"\n---\n\n## [2026-08-05 10:00:00] Título\n\nconteúdo\n",
+		);
+		// sem summary → fallback título + excerpt
+		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "sem-summary.md"));
+		writeFileSync(
+			join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "sem-summary.md"),
+			"---\ncontext: sem-summary\ntype: lessons\nconfidence: 0.6\nupdated: 2026-08-01\n---\n\n## [2026-08-01 10:00:00] Lição sem resumo\n\n" + "conteúdo extenso ".repeat(30) + "\n",
+		);
+	});
+
+	afterAll(() => {
+		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+	});
+
+	it("uses persisted summary when available", () => {
+		const text = summarizeExistingMemories(testProjectId);
+		expect(text).toContain('com-summary (0.8, updated 2026-08-05): "Resumo curado pelo LLM"');
+	});
+
+	it("falls back to title + excerpt without summary", () => {
+		const text = summarizeExistingMemories(testProjectId);
+		expect(text).toContain("sem-summary");
+		expect(text).toContain("Lição sem resumo");
+		expect(text).toContain("conteúdo extenso"); // excerpt
+	});
+
+	it("includes updated metadata in entries", () => {
+		const text = summarizeExistingMemories(testProjectId);
+		expect(text).toContain("sem-summary (0.6, updated 2026-08-01)");
 	});
 });
