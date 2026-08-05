@@ -174,6 +174,15 @@ export function formatTimestamp(date?: Date): string {
 }
 
 /**
+ * Formats the current local datetime as YYYY-MM-DD HH:MM:SS.
+ */
+export function formatDateTime(date?: Date): string {
+	const d = date ?? new Date();
+	const pad = (n: number) => String(n).padStart(2, "0");
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/**
  * A tool call with its result, as recorded in an observation.
  */
 export interface ToolObservation {
@@ -845,7 +854,8 @@ export function saveMemory(
 	error?: string;
 } {
 	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes } = params;
-	const today = new Date().toISOString().slice(0, 10);
+	const now = formatDateTime();
+	const today = now.slice(0, 10);
 
 	// Guard defensivo: type inválido criaria um diretório novo no lugar errado
 	// (ex.: "gotcha" singular em vez de "gotchas") e geraria memórias órfãs.
@@ -868,7 +878,7 @@ export function saveMemory(
 	const filePath = getMemoryFilePath(projectId, type, context, scope);
 	ensureFileDir(filePath);
 
-	const entry = formatMemoryEntry(today, title, content, confidence);
+	const entry = formatMemoryEntry(now, title, content, confidence);
 
 	if (!existsSync(filePath)) {
 		// Create new file

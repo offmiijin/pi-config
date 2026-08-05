@@ -27,6 +27,7 @@ import {
 	formatMemoryEntry,
 	formatObservation,
 	formatSessionHeader,
+	formatDateTime,
 	formatTimestamp,
 	generateSessionHash,
 	getMemoryDirectories,
@@ -411,6 +412,25 @@ describe("formatTimestamp", () => {
 	it("uses current time when no date provided", () => {
 		const result = formatTimestamp();
 		expect(result).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+	});
+});
+
+// ── formatDateTime ────────────────────────────────────────────────────────
+
+describe("formatDateTime", () => {
+	it("returns YYYY-MM-DD HH:MM:SS format", () => {
+		const result = formatDateTime(new Date(2025, 0, 15, 9, 5, 3));
+		expect(result).toBe("2025-01-15 09:05:03");
+	});
+
+	it("pads single digits with zero", () => {
+		const result = formatDateTime(new Date(2025, 11, 1, 22, 16, 14));
+		expect(result).toBe("2025-12-01 22:16:14");
+	});
+
+	it("uses current datetime when no date provided", () => {
+		const result = formatDateTime();
+		expect(result).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 	});
 });
 
