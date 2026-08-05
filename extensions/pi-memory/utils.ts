@@ -245,6 +245,55 @@ export function extractToolResultText(result: unknown): string {
 	return "";
 }
 
+// ── Turn dedup (turn_end duplication guard) ─────────────────────────────────
+
+/**
+ * Persistent state for turn dedup (reset per session).
+ */
+export interface TurnDedupState {
+	lastTurnIndex: number | undefined;
+	lastFingerprint: string;
+}
+
+export function createTurnDedupState(): TurnDedupState {
+	return { lastTurnIndex: undefined, lastFingerprint: "" };
+}
+
+/**
+ * Builds a fingerprint of an assistant message: sorted tool call ids + text.
+ * Re-emitted turn_end events for the same turn produce the same fingerprint.
+ */
+export function buildTurnFingerprint(content: unknown): string {
+	const ids = extractToolCalls(content)
+		.map((tc) => tc.id)
+		.sort()
+		.join(",");
+	return `${ids}|${extractTextContent(content)}`;
+}
+
+/**
+ * Decides whether a turn_end event is a duplicate of the last processed turn.
+ * Uses event.turnIndex (unique per turn) when available; falls back to the
+ * content fingerprint otherwise. Functional — returns the updated state.
+ */
+export function nextTurnDedup(
+	turnIndex: number | undefined,
+	fingerprint: string,
+	state: TurnDedupState,
+): { skip: boolean; state: TurnDedupState } {
+	if (turnIndex !== undefined) {
+		if (state.lastTurnIndex === turnIndex) return { skip: true, state };
+		return {
+			skip: false,
+			state: { lastTurnIndex: turnIndex, lastFingerprint: fingerprint },
+		};
+	}
+	if (fingerprint !== "" && fingerprint === state.lastFingerprint) {
+		return { skip: true, state };
+	}
+	return { skip: false, state: { ...state, lastFingerprint: fingerprint } };
+}
+
 /**
  * Estimates the token count of a text using a chars-per-token heuristic.
  * Approximation — not a real tokenizer (~4 chars/token budget heuristic).

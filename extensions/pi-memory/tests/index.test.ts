@@ -13,7 +13,9 @@ import {
 	archiveSessionFile,
 	buildExtractionPrompt,
 	buildSearchPattern,
+	buildTurnFingerprint,
 	countObservations,
+	createTurnDedupState,
 	ensureDirectories,
 	ensureFileDir,
 	estimateTokens,
@@ -45,6 +47,7 @@ import {
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
 	moveToSupersedes,
+	nextTurnDedup,
 	OBSERVATION_THRESHOLD,
 	parseExtractionResult,
 	parseFrontmatter,
@@ -2815,5 +2818,81 @@ describe("summarizeExistingMemories", () => {
 	it("includes updated metadata in entries", () => {
 		const text = summarizeExistingMemories(testProjectId);
 		expect(text).toContain("sem-summary (0.6, updated 2026-08-01)");
+	});
+});
+
+// ── Turn dedup (bug de duplicação do turn_end) ──────────────────────────────
+
+describe("buildTurnFingerprint", () => {
+	it("includes sorted tool call ids and text", () => {
+		const content = [
+			{ type: "toolCall", id: "call_b", name: "edit" },
+			{ type: "text", text: "resposta" },
+			{ type: "toolCall", id: "call_a", name: "read" },
+		];
+		expect(buildTurnFingerprint(content)).toBe("call_a,call_b|resposta");
+	});
+
+	it("is stable for identical content", () => {
+		const content = [{ type: "text", text: "hello" }];
+		expect(buildTurnFingerprint(content)).toBe(buildTurnFingerprint(content));
+	});
+
+	it("differs when text differs", () => {
+		expect(buildTurnFingerprint([{ type: "text", text: "a" }])).not.toBe(
+			buildTurnFingerprint([{ type: "text", text: "b" }]),
+		);
+	});
+
+	it("handles empty content", () => {
+		expect(buildTurnFingerprint([])).toBe("|");
+	});
+});
+
+describe("nextTurnDedup", () => {
+	it("skips the same turnIndex (duplicated turn_end)", () => {
+		let state = createTurnDedupState();
+		const first = nextTurnDedup(3, "fp1", state);
+		expect(first.skip).toBeFalse();
+		state = first.state;
+
+		const dup = nextTurnDedup(3, "fp1", state);
+		expect(dup.skip).toBeTrue();
+	});
+
+	it("processes a new turnIndex", () => {
+		let state = createTurnDedupState();
+		state = nextTurnDedup(3, "fp1", state).state;
+		const next = nextTurnDedup(4, "fp2", state);
+		expect(next.skip).toBeFalse();
+	});
+
+	it("allows identical content across different turnIndexes (legit turns)", () => {
+		let state = createTurnDedupState();
+		state = nextTurnDedup(3, "same", state).state;
+		// turnIndex disponível → confia no índice, não no fingerprint
+		const next = nextTurnDedup(4, "same", state);
+		expect(next.skip).toBeFalse();
+	});
+
+	it("falls back to fingerprint when turnIndex is undefined", () => {
+		let state = createTurnDedupState();
+		const first = nextTurnDedup(undefined, "fpX", state);
+		expect(first.skip).toBeFalse();
+		state = first.state;
+
+		const dup = nextTurnDedup(undefined, "fpX", state);
+		expect(dup.skip).toBeTrue();
+
+		const diff = nextTurnDedup(undefined, "fpY", state);
+		expect(diff.skip).toBeFalse();
+	});
+
+	it("never skips empty fingerprint", () => {
+		let state = createTurnDedupState();
+		const first = nextTurnDedup(undefined, "", state);
+		expect(first.skip).toBeFalse();
+		state = first.state;
+		expect(nextTurnDedup(undefined, "", state).skip).toBeFalse();
 	});
 });

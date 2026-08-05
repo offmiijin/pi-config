@@ -30,7 +30,9 @@ import {
 	archiveSessionFile,
 	buildExtractionPrompt,
 	buildSearchPattern,
+	buildTurnFingerprint,
 	countObservations,
+	createTurnDedupState,
 	ensureDirectories,
 	ensureFileDir,
 	extractTextContent,
@@ -53,6 +55,7 @@ import {
 	MEMORIES_ROOT,
 	MEMORY_LANGUAGE_RULE,
 	moveToSupersedes,
+	nextTurnDedup,
 	OBSERVATION_THRESHOLD,
 	parseExtractionResult,
 	parseFrontmatter,
@@ -92,6 +95,8 @@ export default function (pi: ExtensionAPI) {
 	let lastSaveReminderObs = 0;
 	// Session memory index (injected once per session)
 	let memoryIndexInjected = false;
+	// Dedup de turnos (harness pode disparar turn_end 2x p/ o mesmo turno)
+	let turnDedupState = createTurnDedupState();
 	// Buffer de resultados de tools do turno atual (toolCallId → observação)
 	const toolResultsBuffer = new Map<string, ToolObservation>();
 
@@ -129,6 +134,8 @@ export default function (pi: ExtensionAPI) {
 		lastSaveReminderObs = 0;
 		// Reset session memory index flag
 		memoryIndexInjected = false;
+		// Reset turn dedup state
+		turnDedupState = createTurnDedupState();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -144,6 +151,8 @@ export default function (pi: ExtensionAPI) {
 		lastSaveReminderObs = 0;
 		// Reset session memory index flag
 		memoryIndexInjected = false;
+		// Reset turn dedup state
+		turnDedupState = createTurnDedupState();
 	});
 
 	// ── Append observations at turn_end ────────────────────────────────────
@@ -152,6 +161,20 @@ export default function (pi: ExtensionAPI) {
 
 		const assistantMsg = event.message;
 		if (!assistantMsg) return;
+
+		const agentResponse = extractTextContent(assistantMsg.content);
+
+		// ── Dedup de turno ──
+		// O harness pode disparar turn_end mais de uma vez para o MESMO turno
+		// (observado em sessões com followUps: obs duplicadas, count inflado,
+		// reminders/triggers re-disparados). Dedup por event.turnIndex (índice
+		// único por turno); fallback por fingerprint de conteúdo quando o
+		// turnIndex não está disponível.
+		const fingerprint = buildTurnFingerprint(assistantMsg.content);
+		const turnIndex = (event as { turnIndex?: number }).turnIndex;
+		const { skip, state: nextState } = nextTurnDedup(turnIndex, fingerprint, turnDedupState);
+		turnDedupState = nextState;
+		if (skip) return;
 
 		const branch = ctx.sessionManager.getBranch();
 
@@ -203,8 +226,6 @@ export default function (pi: ExtensionAPI) {
 					: extractToolCallNames(assistantMsg.content).map((n) => ({ name: n }));
 		}
 		toolResultsBuffer.clear();
-
-		const agentResponse = extractTextContent(assistantMsg.content);
 
 		const sessionFile = getSessionFilePath(projectId, currentSessionHash);
 		ensureFileDir(sessionFile);
