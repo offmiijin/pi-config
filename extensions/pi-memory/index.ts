@@ -55,12 +55,15 @@ import {
 	parseExtractionResult,
 	parseFrontmatter,
 	readSessionContent,
+	removeProcessedObservations,
 	resetSessionFile,
 	saveMemory,
 	SAVE_REMINDER_COOLDOWN,
 	searchMemories,
+	selectObservationsBatch,
 	shouldPromptExtraction,
 	shouldRemindSave,
+	splitObservations,
 } from "./utils.ts";
 import {
 	DecaySchema,
@@ -321,8 +324,9 @@ export default function (pi: ExtensionAPI) {
 		name: "memory_save",
 		label: "Memory Save",
 		description:
-			"Saves or updates a memory. Same context key = same file (entry is appended). " +
-			"Use supersedes to mark an old memory as replaced.",
+			"Saves or updates a memory. Same context key = same file. " +
+			"mode 'append' (default) adds a dated entry; mode 'consolidate' rewrites the memory, archiving the old version to .supersedes/ (merge-in-place). " +
+			"Use supersedes to mark a memory under a DIFFERENT context key as replaced.",
 		promptSnippet:
 			"memory_save: Save/update a memory (same context = same file)",
 		promptGuidelines: [
@@ -330,6 +334,7 @@ export default function (pi: ExtensionAPI) {
 			"Before saving, call memory_search on the topic — reuse the existing context key if a memory already exists, or use supersedes if the new information contradicts it.",
 			"After durable learnings — non-obvious bug fix, architectural decision, recurring gotcha, reusable pattern — call memory_save directly instead of waiting for memory_extract.",
 			"Use supersedes to replace a memory that new information contradicts.",
+			"Use mode='consolidate' when the new content updates/contradicts the existing memory with the SAME context key (old version is archived to .supersedes/). Use supersedes to replace a memory under a DIFFERENT context key.",
 			"Only save with confidence >= 0.5.",
 		],
 		parameters: SaveSchema,
@@ -354,7 +359,9 @@ export default function (pi: ExtensionAPI) {
 			const text =
 				result.action === "created"
 					? `Created memory: ${params.scope}/${params.type}/${params.context}`
-					: `Appended to memory: ${params.scope}/${params.type}/${params.context} (entries: ${result.entries})`;
+					: result.action === "consolidated"
+						? `Consolidated memory (old version archived to .supersedes/): ${params.scope}/${params.type}/${params.context}`
+						: `Appended to memory: ${params.scope}/${params.type}/${params.context} (entries: ${result.entries})`;
 
 			return {
 				content: [{ type: "text", text }],
@@ -576,8 +583,9 @@ export default function (pi: ExtensionAPI) {
 		name: "memory_extract",
 		label: "Memory Extract",
 		description:
-			"Processes session observations into organized memories. " +
+			"Processes session observations into organized memories (incremental — one batch per call). " +
 			"Reads the session file, identifies contexts, and saves memories via memory_save. " +
+			"If observations remain after the call, call memory_extract again to drain the backlog. " +
 			"Memories are written in PT-BR.",
 		promptSnippet:
 			"memory_extract: Process session observations into memories",
@@ -601,13 +609,28 @@ export default function (pi: ExtensionAPI) {
 				sessionFile = getSessionFilePath(projectId, currentSessionHash);
 			}
 
-			const sessionContent = readSessionContent(sessionFile);
-			if (!sessionContent.trim()) {
+			const rawContent = readSessionContent(sessionFile);
+			if (!rawContent.trim()) {
 				return {
 					content: [{ type: "text", text: "Session file is empty or missing." }],
 					details: { error: "empty_session", session_file: sessionFile },
 				};
 			}
+
+			// Extração incremental: processa só o maior lote de observações que
+			// cabe no orçamento de tokens. As não processadas permanecem no
+			// arquivo — o LLM pode chamar memory_extract de novo até drenar.
+			const observations = splitObservations(rawContent);
+			if (observations.length === 0) {
+				return {
+					content: [
+						{ type: "text", text: "Session file has no observations to extract." },
+					],
+					details: { error: "no_observations", session_file: sessionFile },
+				};
+			}
+			const { batch, remaining } = selectObservationsBatch(observations);
+			const sessionContent = batch.join("\n");
 
 			// 2. Call LLM to analyze observations
 			const model = ctx.model;
@@ -695,6 +718,7 @@ export default function (pi: ExtensionAPI) {
 						confidence: mem.confidence ?? 0.5,
 						tags: mem.tags ?? [],
 						supersedes: mem.supersedes,
+						mode: mem.mode,
 					});
 					saved.push({
 						context: mem.context,
@@ -711,8 +735,8 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			// Falha total — nenhuma memória salva: preserva observações para
-			// re-tentativa limpa (sem risco de duplicar nada).
+			// Falha total — nenhuma memória salva: preserva TODAS as observações
+			// do lote para re-tentativa limpa (sem risco de duplicar nada).
 			if (saved.length > 0 && saved.every((s) => s.action === "error")) {
 				return {
 					content: [
@@ -733,12 +757,11 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// 4. Archive + reset session file (mesmo hash, zero observações).
-			// Falha parcial: archive preserva as observações cruas — recuperação
-			// via memory_extract(session_file=<archive>) sem duplicar as salvas.
-			const archivePath = archiveSessionFile(sessionFile);
-			resetSessionFile(sessionFile, currentSessionHash);
-			lastPromptedBucket = -1; // reinicia ciclo de trigger (próximo trigger às 50)
+			// 4. Remove as observações processadas do arquivo de sessão.
+			// Invariante: o arquivo só contém observações NÃO processadas —
+			// re-extract nunca duplica. Falha parcial remove o lote mesmo assim
+			// (memórias falhadas podem ser re-salvas via memory_save manual).
+			removeProcessedObservations(sessionFile, batch.length);
 
 			const summary = saved
 				.filter((s) => s.action !== "error")
@@ -749,9 +772,39 @@ export default function (pi: ExtensionAPI) {
 				failures.length > 0
 					? `\n\n${failures.length} memory(ies) FAILED (not saved):\n` +
 						`- ${failures.join("\n- ")}\n` +
-						`Raw observations archived at ${archivePath}.\n` +
-						`Fix the parameters and re-run memory_extract with session_file=${archivePath} to recover them.`
+						"Save them manually via memory_save with the corrected parameters."
 					: "";
+
+			// Backlog restante: não reseta — observações continuam no arquivo
+			// para a próxima chamada. Trigger reinicia (próximo aos 50).
+			if (remaining.length > 0) {
+				lastPromptedBucket = -1;
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`Extracted ${saved.length - failures.length} memory(ies) from ${batch.length}/${observations.length} observations:\n${summary}${failureNote}\n` +
+								`${remaining.length} observation(s) remaining — call memory_extract again to process the rest.`,
+						},
+					],
+					details: {
+						count: saved.length - failures.length,
+						failures,
+						saved,
+						session_file: sessionFile,
+						processed: batch.length,
+						remaining: remaining.length,
+						reset: false,
+					},
+				};
+			}
+
+			// Sessão drenada: archive preserva o registro cru, reseta o arquivo
+			// (mesmo hash, zero observações).
+			const archivePath = archiveSessionFile(sessionFile);
+			resetSessionFile(sessionFile, currentSessionHash);
+			lastPromptedBucket = -1; // reinicia ciclo de trigger (próximo trigger às 50)
 
 			return {
 				content: [

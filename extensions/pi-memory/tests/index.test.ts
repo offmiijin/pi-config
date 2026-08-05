@@ -47,12 +47,15 @@ import {
 	parseFrontmatter,
 	readFileConfidence,
 	recalcOverallConfidence,
+	removeProcessedObservations,
 	resetSessionFile,
 	sanitizeFilename,
 	saveMemory,
 	searchMemories,
+	selectObservationsBatch,
 	shouldPromptExtraction,
 	shouldRemindSave,
+	splitObservations,
 	truncateToTokens,
 } from "../utils.ts";
 
@@ -800,6 +803,17 @@ describe("memory_save schema", () => {
 		expect(propIsOptional(SaveSchema, "tags")).toBeTrue();
 		expect(propIsOptional(SaveSchema, "confidence")).toBeTrue();
 		expect(propIsOptional(SaveSchema, "supersedes")).toBeTrue();
+	});
+
+	it("has optional mode field (append|consolidate)", () => {
+		expect(propIsOptional(SaveSchema, "mode")).toBeTrue();
+		const s = SaveSchema as Record<string, unknown>;
+		const props = s.properties as Record<string, unknown>;
+		const mode = props.mode as Record<string, unknown>;
+		const variants = (mode.anyOf ?? mode.oneOf ?? []) as Array<Record<string, unknown>>;
+		const values = variants.map((v) => v.const);
+		expect(values).toContain("append");
+		expect(values).toContain("consolidate");
 	});
 
 	it("type field is a union of literal strings", () => {
@@ -1909,6 +1923,12 @@ describe("buildExtractionPrompt", () => {
 		const prompt = buildExtractionPrompt("content");
 		expect(prompt).toContain("supersedes");
 	});
+
+	it("mentions mode consolidate for updates on same context", () => {
+		const prompt = buildExtractionPrompt("content");
+		expect(prompt).toContain("consolidate");
+		expect(prompt).toContain("SAME context key");
+	});
 });
 
 describe("parseExtractionResult", () => {
@@ -1951,6 +1971,40 @@ describe("parseExtractionResult", () => {
 		const result = parseExtractionResult(json);
 		expect(result).toHaveLength(1);
 		expect(result[0].supersedes).toBe("old-key");
+	});
+
+	it("accepts mode consolidate", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "c",
+					title: "t",
+					content: "x",
+					scope: "project",
+					mode: "consolidate",
+				},
+			],
+		});
+		const result = parseExtractionResult(json);
+		expect(result).toHaveLength(1);
+		expect(result[0].mode).toBe("consolidate");
+	});
+
+	it("rejects invalid mode", () => {
+		const json = JSON.stringify({
+			memories: [
+				{
+					type: "gotchas",
+					context: "c",
+					title: "t",
+					content: "x",
+					scope: "project",
+					mode: "overwrite",
+				},
+			],
+		});
+		expect(parseExtractionResult(json)).toEqual([]);
 	});
 
 	it("handles markdown code fences", () => {
@@ -2270,5 +2324,203 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		// Original must be gone
 		expect(existsSync(join(MEMORIES_ROOT, "_global", "_rules", "cache-rule.md"))).toBeFalse();
+	});
+
+	it("consolidates existing memory (mode=consolidate)", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "consol-ctx",
+			title: "v1",
+			content: "conteúdo antigo",
+			scope: "project",
+			confidence: 0.7,
+		});
+		expect(result.action).toBe("created");
+
+		const consolidated = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "consol-ctx",
+			title: "v2",
+			content: "conteúdo consolidado novo",
+			scope: "project",
+			mode: "consolidate",
+			confidence: 0.8,
+		});
+
+		expect(consolidated.action).toBe("consolidated");
+
+		// Arquivo novo: conteúdo v2, uma entrada, confidence limpo (sem média)
+		const content = readFileSync(consolidated.file, "utf-8");
+		expect(content).toContain("conteúdo consolidado novo");
+		expect(content).not.toContain("conteúdo antigo");
+		expect(content).toContain("entries: 1");
+		expect(content).toContain("confidence: 0.8");
+
+		// Versão antiga arquivada em .supersedes com metadados
+		const supPath = join(
+			MEMORIES_ROOT,
+			".supersedes",
+			"projects",
+			testProjectId,
+			"gotchas",
+			"consol-ctx.md",
+		);
+		expect(existsSync(supPath)).toBeTrue();
+		const supContent = readFileSync(supPath, "utf-8");
+		expect(supContent).toContain("conteúdo antigo");
+		expect(supContent).toContain("superseded_by: \"consol-ctx\"");
+		expect(supContent).toContain("superseded_reason: \"consolidated\"");
+	});
+
+	it("consolidate on non-existent context creates normally", () => {
+		const result = saveMemory(testProjectId, {
+			type: "lessons",
+			context: "consol-new",
+			title: "t",
+			content: "c",
+			scope: "project",
+			mode: "consolidate",
+		});
+		expect(result.action).toBe("created");
+	});
+
+	it("consolidate respects invalid type guard", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotcha", // singular inválido
+			context: "consol-bad",
+			title: "t",
+			content: "c",
+			scope: "project",
+			mode: "consolidate",
+		});
+		expect(result.action).toBe("error");
+	});
+});
+
+// ── Incremental extraction (split / batch / remove) ─────────────────────────
+
+describe("splitObservations", () => {
+	it("divides content into individual observations, ignoring header", () => {
+		const content = [
+			"# Session abc — 2025-01-15",
+			"",
+			"## Obs #1 (10:00:00)",
+			'User: "hi"',
+			"Tools: (none)",
+			'Agent: "hello"',
+			"",
+			"## Obs #2 (10:01:00)",
+			'User: "how"',
+			"Tools: read",
+			'Agent: "ok"',
+			"",
+		].join("\n");
+		const obs = splitObservations(content);
+		expect(obs).toHaveLength(2);
+		expect(obs[0]).toContain('User: "hi"');
+		expect(obs[0]).not.toContain("# Session");
+		expect(obs[1]).toContain('User: "how"');
+	});
+
+	it("returns empty array when no observations", () => {
+		expect(splitObservations("# Session abc — 2025-01-15\n")).toEqual([]);
+	});
+
+	it("handles empty content", () => {
+		expect(splitObservations("")).toEqual([]);
+	});
+});
+
+describe("selectObservationsBatch", () => {
+	it("selects all when within budget", () => {
+		const obs = ['## Obs #1 (10:00:00)\nUser: "a"\n', '## Obs #2 (10:01:00)\nUser: "b"\n'];
+		const { batch, remaining } = selectObservationsBatch(obs, 1000);
+		expect(batch).toHaveLength(2);
+		expect(remaining).toHaveLength(0);
+	});
+
+	it("selects prefix that fits the budget", () => {
+		const obs = ["x".repeat(4000), "y".repeat(4000), "z".repeat(4000)]; // ~1000 tok cada
+		const { batch, remaining } = selectObservationsBatch(obs, 2500); // cabe ~2
+		expect(batch).toHaveLength(2);
+		expect(remaining).toHaveLength(1);
+		expect(batch[0]).toBe(obs[0]);
+		expect(batch[1]).toBe(obs[1]);
+		expect(remaining[0]).toBe(obs[2]);
+	});
+
+	it("guarantees at least one observation even if it overflows the budget", () => {
+		const obs = ["a".repeat(100000)]; // estoura qualquer budget
+		const { batch, remaining } = selectObservationsBatch(obs, 10);
+		expect(batch).toHaveLength(1);
+		expect(remaining).toHaveLength(0);
+	});
+
+	it("returns empty for empty input", () => {
+		const { batch, remaining } = selectObservationsBatch([]);
+		expect(batch).toHaveLength(0);
+		expect(remaining).toHaveLength(0);
+	});
+});
+
+describe("removeProcessedObservations", () => {
+	let tmpDir: string;
+
+	beforeAll(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), "pi-memory-rmproc-"));
+	});
+
+	afterAll(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("removes processed observations, keeping header and remaining", () => {
+		const fp = join(tmpDir, "session.md");
+		writeFileSync(
+			fp,
+			[
+				"# Session abc — 2025-01-15",
+				"",
+				"## Obs #1 (10:00:00)",
+				'User: "a"',
+				"Tools: (none)",
+				'Agent: "a1"',
+				"",
+				"## Obs #2 (10:01:00)",
+				'User: "b"',
+				"Tools: (none)",
+				'Agent: "b1"',
+				"",
+				"## Obs #3 (10:02:00)",
+				'User: "c"',
+				"Tools: (none)",
+				'Agent: "c1"',
+				"",
+			].join("\n"),
+		);
+
+		removeProcessedObservations(fp, 2);
+
+		const updated = readFileSync(fp, "utf-8");
+		expect(updated).toContain("# Session abc — 2025-01-15");
+		expect(updated).not.toContain('User: "a"');
+		expect(updated).not.toContain('User: "b"');
+		expect(updated).toContain('User: "c"');
+		expect(countObservations(fp)).toBe(1);
+	});
+
+	it("handles processed >= observations (keeps header only)", () => {
+		const fp = join(tmpDir, "session2.md");
+		writeFileSync(fp, "# Session abc — 2025-01-15\n\n## Obs #1 (10:00:00)\nUser: \"a\"\n");
+		removeProcessedObservations(fp, 10);
+		expect(countObservations(fp)).toBe(0);
+		expect(readFileSync(fp, "utf-8")).toContain("# Session");
+	});
+
+	it("no-op when file has no observations", () => {
+		const fp = join(tmpDir, "session3.md");
+		writeFileSync(fp, "# Session abc — 2025-01-15\n");
+		removeProcessedObservations(fp, 5);
+		expect(readFileSync(fp, "utf-8")).toBe("# Session abc — 2025-01-15\n");
 	});
 });

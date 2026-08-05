@@ -26,6 +26,13 @@ export const OBSERVATION_TOKEN_BUDGETS = {
 /** Approximate chars per token for size estimation (English-centric heuristic). */
 export const CHARS_PER_TOKEN = 4;
 
+/**
+ * Token budget of observations per memory_extract call (incremental batch).
+ * ~7-8 typical observations (~4K tokens each); total prompt stays ~40K with
+ * overhead, safe for models with >= 64K context.
+ */
+export const EXTRACT_BATCH_TOKEN_BUDGET = 30_000;
+
 /** Max consecutive memory_search calls with no results before the model abandons. */
 export const MAX_MEMORY_SEARCH_ATTEMPTS = 3;
 
@@ -844,6 +851,14 @@ export interface SaveMemoryParams {
 	tags?: string[];
 	confidence?: number;
 	supersedes?: string;
+	/**
+	 * append (default): adds a dated entry to the file (backward compatible).
+	 * consolidate: rewrites the memory — archives the current version to
+	 * .supersedes/ and creates a fresh file (use when the new content updates
+	 * or contradicts the existing memory with the SAME context key; to replace
+	 * a memory under a DIFFERENT context key, use supersedes).
+	 */
+	mode?: "append" | "consolidate";
 }
 
 /**
@@ -852,17 +867,19 @@ export interface SaveMemoryParams {
  * - New context → creates file with frontmatter + first entry
  * - Existing context → appends entry, updates frontmatter (entries, confidence, tags)
  * - supersedes → moves old memory to .supersedes/ first
+ * - mode "consolidate" → archives the current version of the SAME context to
+ *   .supersedes/ and creates a fresh file (merge-in-place, no append growth)
  */
 export function saveMemory(
 	projectId: string,
 	params: SaveMemoryParams,
 ): {
-	action: "created" | "appended" | "error";
+	action: "created" | "appended" | "consolidated" | "error";
 	file: string;
 	entries?: number;
 	error?: string;
 } {
-	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes } = params;
+	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes, mode = "append" } = params;
 	const now = formatDateTime();
 	const today = now.slice(0, 10);
 
@@ -887,6 +904,21 @@ export function saveMemory(
 		}
 	}
 
+	// Consolidate: arquiva a versão atual do MESMO contexto antes de criar a
+	// nova — merge-in-place via .supersedes (histórico preservado, arquivo
+	// sempre limpo, confidence sem distorção de médias acumuladas).
+	let consolidated = false;
+	if (mode === "consolidate") {
+		const ownPath = getMemoryFilePath(projectId, type, context, scope);
+		if (existsSync(ownPath)) {
+			moveToSupersedes(ownPath, {
+				superseded_by: context,
+				superseded_reason: "consolidated",
+			});
+			consolidated = true;
+		}
+	}
+
 	const filePath = getMemoryFilePath(projectId, type, context, scope);
 	ensureFileDir(filePath);
 
@@ -905,7 +937,10 @@ export function saveMemory(
 		if (tags.length > 0) meta.tags = tags;
 
 		writeFileSync(filePath, formatFrontmatter(meta) + entry + "\n");
-		return { action: "created", file: filePath };
+		return {
+			action: consolidated ? "consolidated" : "created",
+			file: filePath,
+		};
 	}
 
 	// Append to existing file
@@ -943,6 +978,54 @@ export function readSessionContent(filePath: string): string {
 }
 
 /**
+ * Splits a session file content into individual observations.
+ * The header (everything before the first "## Obs #") is dropped.
+ */
+export function splitObservations(content: string): string[] {
+	return content
+		.split(/^(?=## Obs #)/gm)
+		.map((p) => p.trim())
+		.filter((p) => p.startsWith("## Obs #"));
+}
+
+/**
+ * Selects the largest prefix of observations that fits the token budget,
+ * guaranteeing at least one observation. Used for incremental extraction.
+ */
+export function selectObservationsBatch(
+	observations: string[],
+	maxTokens: number = EXTRACT_BATCH_TOKEN_BUDGET,
+): { batch: string[]; remaining: string[] } {
+	let total = 0;
+	let idx = 0;
+	for (const obs of observations) {
+		const t = estimateTokens(obs);
+		if (total + t > maxTokens) break;
+		total += t;
+		idx++;
+	}
+	// Nunca retorna lote vazio quando há observações (uma obs gigante não pode
+	// ser quebrada em pedaços menores sem perder a estrutura do arquivo).
+	if (idx === 0 && observations.length > 0) idx = 1;
+	return { batch: observations.slice(0, idx), remaining: observations.slice(idx) };
+}
+
+/**
+ * Rewrites a session file without the first `processed` observations,
+ * keeping the header and the remaining (unprocessed) ones.
+ * No-op when the file has no observations.
+ */
+export function removeProcessedObservations(filePath: string, processed: number): void {
+	const content = readFileSync(filePath, "utf-8");
+	const obsStart = content.search(/^## Obs #/m);
+	if (obsStart === -1) return;
+	const header = content.slice(0, obsStart);
+	const parts = content.slice(obsStart).split(/^(?=## Obs #)/gm);
+	const keep = parts.slice(Math.min(processed, parts.length));
+	writeFileSync(filePath, header + keep.join(""));
+}
+
+/**
  * Builds the LLM prompt that turns session observations into memories.
  */
 /** Memory content language rule — memories are stored in PT-BR. */
@@ -977,13 +1060,15 @@ export function buildExtractionPrompt(
 		"- Only extract memories with confidence >= 0.5.",
 		"- Reuse existing context keys when the topic already has a memory (see 'Existing memory context keys' below).",
 		"- If new information contradicts an existing memory, pass its context key in 'supersedes'.",
+		"- If a new memory UPDATES or CONTRADICTS an existing memory with the SAME context key, set 'mode': 'consolidate' — the old version is archived to .supersedes/ and the memory is rewritten fresh (merge-in-place, no append growth).",
+		"- If a new memory merely COMPLEMENTS an existing one, omit 'mode' (defaults to append).",
 		"- Write rich, self-contained markdown content — not atomic notes.",
 		"- scope 'global' only for things that apply to ALL projects.",
 		"- scope 'project' for things specific to this project.",
 		"- '[truncated: ~N tokens omitted]' markers mean data was cut for size — treat the observation as partial; never fabricate content beyond the marker.",
 		"",
 		"Respond with JSON only, no markdown fences:",
-		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "scope": "global|project", "confidence": 0.5, "tags": ["tag"], "supersedes": "existing-context-key (optional)"}]}',
+		'{"memories": [{"type": "gotchas|_rules|decisions|lessons|patterns", "context": "short-key", "title": "concise title", "content": "rich markdown", "scope": "global|project", "confidence": 0.5, "tags": ["tag"], "mode": "append|consolidate (optional)", "supersedes": "existing-context-key (optional)"}]}',
 		...contextLines,
 		"",
 		"<session>",
@@ -1004,6 +1089,8 @@ export interface ExtractedMemory {
 	confidence?: number;
 	tags?: string[];
 	supersedes?: string;
+	/** append (default) | consolidate — merge-in-place on same context key. */
+	mode?: "append" | "consolidate";
 }
 
 /**
@@ -1022,13 +1109,15 @@ export function parseExtractionResult(jsonText: string): ExtractedMemory[] {
 		return parsed.memories.filter((m): m is ExtractedMemory => {
 			if (!m || typeof m !== "object") return false;
 			const mem = m as Record<string, unknown>;
+			const mode = mem.mode;
 			return (
 				typeof mem.type === "string" &&
 				(MEMORY_TYPES as readonly string[]).includes(mem.type) &&
 				typeof mem.context === "string" &&
 				typeof mem.title === "string" &&
 				typeof mem.content === "string" &&
-				(mem.scope === "global" || mem.scope === "project")
+				(mem.scope === "global" || mem.scope === "project") &&
+				(mode === undefined || mode === "append" || mode === "consolidate")
 			);
 		});
 	} catch {
