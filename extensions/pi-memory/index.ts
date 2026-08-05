@@ -93,6 +93,9 @@ export default function (pi: ExtensionAPI) {
 	// Save reminder state (code-changing turns)
 	let saveReminderDue = false;
 	let lastSaveReminderObs = 0;
+	// Flag: reminder enviado neste turno de usuário (máx 1x por turno —
+	// turn_end pode disparar várias vezes dentro do mesmo turno com edits)
+	let saveReminderSent = false;
 	// Session memory index — injetado no SYSTEM PROMPT (cache por sessão,
 	// invalidado em memory_save/memory_extract/memory_decay)
 	let cachedIndexText: string | null = null;
@@ -133,6 +136,7 @@ export default function (pi: ExtensionAPI) {
 		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
+		saveReminderSent = false;
 		// Reset session memory index cache
 		cachedIndexText = null;
 		// Reset turn dedup state
@@ -150,6 +154,7 @@ export default function (pi: ExtensionAPI) {
 		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
+		saveReminderSent = false;
 		// Reset session memory index cache
 		cachedIndexText = null;
 		// Reset turn dedup state
@@ -261,7 +266,11 @@ export default function (pi: ExtensionAPI) {
 		// ── Memory save reminder ──
 		// Turno alterou código e passou o cooldown → lembra o LLM de salvar
 		// aprendizagem durável diretamente via memory_save (sem esperar extract).
+		// Máx 1x por turno de usuário: turn_end pode disparar várias vezes no
+		// mesmo turno (sub-turnos com edits) — notificar de novo é irrelevante
+		// (se a 1ª salvou, as demais não salvariam nada novo).
 		if (
+			!saveReminderSent &&
 			shouldRemindSave(
 				toolResults.map((t) => t.name),
 				obsNumber,
@@ -269,6 +278,7 @@ export default function (pi: ExtensionAPI) {
 				SAVE_REMINDER_COOLDOWN,
 			)
 		) {
+			saveReminderSent = true;
 			lastSaveReminderObs = obsNumber;
 			try {
 				pi.sendUserMessage(
@@ -283,6 +293,9 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Inject extraction prompt + memory index at next user turn ───────────
 	pi.on("before_agent_start", async (event, ctx) => {
+		// Novo turno de usuário → permite nova notificação de save (máx 1x/turno)
+		saveReminderSent = false;
+
 		// Índice de memórias no SYSTEM PROMPT (reconstruído por turno — não
 		// polui o histórico de mensagens como a mensagem customType fazia).
 		// Cache por sessão, invalidado nas escritas (memory_save/extract/decay).
