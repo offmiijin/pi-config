@@ -716,6 +716,8 @@ export interface SearchOptions {
 	type?: string;
 	minConfidence?: number;
 	limit?: number;
+	/** Project id — obrigatório quando scope === "project". */
+	projectId?: string;
 }
 
 /**
@@ -738,29 +740,36 @@ export function buildSearchPattern(terms: string[]): string {
 export function searchMemories(options: SearchOptions): SearchResult[] {
 	const { query, scope = "all", type, minConfidence, limit = 10 } = options;
 
-	// Build rg arguments
-	// rg globs are ORed — a single glob must express all path constraints
-	const rgArgs: string[] = [
-		"--no-heading",
-		"--line-number",
-		"-i",
-	];
-
-	// Build combined glob pattern
-	// rg multiple --globs are ORed, so a single glob must encode all path constraints
-	let glob: string;
+	// Paths raiz por escopo — .supersedes/ fica excluído naturalmente (não é
+	// subpath de _global nem projects), sem glob de exclusão frágil.
+	// scope=all = global + projeto ATUAL: memórias de outros projetos são
+	// específicas de cada projeto e não devem vazar para a sessão atual.
+	let searchPaths: string[];
 	if (scope === "global") {
-		glob = type ? `**/_global/${type}/*.md` : "**/_global/**/*.md";
-	} else if (scope === "project") {
-		glob = type ? `**/projects/**/${type}/*.md` : "**/projects/**/*.md";
+		searchPaths = [join(MEMORIES_ROOT, "_global")];
 	} else {
-		// all scopes
-		glob = type ? `**/${type}/*.md` : "*.md";
+		if (!options.projectId) {
+			throw new Error("searchMemories: projectId é obrigatório para scope=project/all");
+		}
+		const projectPath = join(MEMORIES_ROOT, "projects", options.projectId);
+		searchPaths =
+			scope === "all"
+				? [join(MEMORIES_ROOT, "_global"), projectPath]
+				: [projectPath];
 	}
 
-	rgArgs.push("--glob", glob, "--glob", "!.supersedes/**", "--glob", "!**/sessions/**");
+	// Paths inexistentes (projeto novo sem memórias) fariam o rg reclamar no
+	// stderr e sair com status 2 — descartaria resultados válidos dos demais.
+	searchPaths = searchPaths.filter((p) => existsSync(p));
+	if (searchPaths.length === 0) return [];
 
-	rgArgs.push("--", query, MEMORIES_ROOT);
+	// --iglob: case-insensitive também nos globs de path (arquivos criados à
+	// mão podem ter maiúsculas). Sessions é a única exclusão (fica sob projects/).
+	const rgArgs: string[] = ["--no-heading", "--line-number", "-i"];
+	rgArgs.push("--iglob", type ? `**/${type}/*.md` : "**/*.md");
+	rgArgs.push("--glob", "!**/sessions/**");
+
+	rgArgs.push("--", query, ...searchPaths);
 
 	let stdout: string;
 	try {

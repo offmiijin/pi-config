@@ -369,6 +369,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Memory Search",
 		description:
 			"Searches memories via ripgrep. query accepts multiple keywords (OR semantics — any term matches). " +
+			"scope: 'global' (only global), 'project' (only current project), 'all' (default: current project + global). " +
 			"Use when you need past context about a topic. " +
 			`Max ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results — then abandon and search the code instead.`,
 		promptSnippet:
@@ -403,6 +404,14 @@ export default function (pi: ExtensionAPI) {
 						details: { error: "limit_reached", consecutive_empty: consecutiveEmptySearches },
 					};
 				}
+				if (params.scope !== "global" && !projectId) {
+					return {
+						content: [
+							{ type: "text", text: "Error: no active project for scope=project/all" },
+						],
+						details: { error: "no_active_project" },
+					};
+				}
 
 				const results = searchMemories({
 					query: buildSearchPattern(params.query),
@@ -410,6 +419,7 @@ export default function (pi: ExtensionAPI) {
 					type: params.type,
 					minConfidence: params.min_confidence,
 					limit: params.limit,
+					projectId,
 				});
 
 				if (results.length === 0) {

@@ -212,15 +212,16 @@ describe("ensureDirectories", () => {
 	const TEST_PROJECT = "ensure_test";
 
 	afterAll(() => {
-		const dirsToCheck = [
-			MEMORIES_ROOT,
-			...MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "_global", t)),
-			...MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, ".supersedes", "_global", t)),
-			...MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "projects", TEST_PROJECT, t)),
-			join(MEMORIES_ROOT, "projects", TEST_PROJECT, "sessions"),
-			...MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, ".supersedes", "projects", TEST_PROJECT, t)),
+		// Remove APENAS o que o teste cria (projects/ensure_test).
+		// NUNCA remover MEMORIES_ROOT nem _global/<types>: podem conter
+		// memórias reais do usuário. A versão antiga deletava MEMORIES_ROOT
+		// inteiro (recursive) a cada execução do bun test — destruía memórias
+		// globais e de todos os projetos.
+		const testDirs = [
+			join(MEMORIES_ROOT, "projects", TEST_PROJECT),
+			join(MEMORIES_ROOT, ".supersedes", "projects", TEST_PROJECT),
 		];
-		for (const dir of dirsToCheck) {
+		for (const dir of testDirs) {
 			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 		}
 	});
@@ -1378,12 +1379,16 @@ describe("searchMemories", () => {
 	});
 
 	it("returns empty array for non-matching query", () => {
-		const results = searchMemories({ query: "zzzxyznonexistent_12345", limit: 5 });
+		const results = searchMemories({
+			query: "zzzxyznonexistent_12345",
+			projectId: testProjectId,
+			limit: 5,
+		});
 		expect(results).toEqual([]);
 	});
 
 	it("finds by keyword in all scopes", () => {
-		const results = searchMemories({ query: "unicorns", limit: 10 });
+		const results = searchMemories({ query: "unicorns", projectId: testProjectId, limit: 10 });
 		expect(results.length).toBeGreaterThanOrEqual(1);
 		const match = results.find((r) => r.file.includes("test-memory.md"));
 		expect(match).toBeDefined();
@@ -1399,7 +1404,12 @@ describe("searchMemories", () => {
 	});
 
 	it("filters by scope=project", () => {
-		const results = searchMemories({ query: "unicorns", scope: "project", limit: 10 });
+		const results = searchMemories({
+			query: "unicorns",
+			scope: "project",
+			projectId: testProjectId,
+			limit: 10,
+		});
 		expect(results.length).toBeGreaterThanOrEqual(1);
 		for (const r of results) {
 			expect(r.file).toContain("projects");
@@ -1407,28 +1417,60 @@ describe("searchMemories", () => {
 	});
 
 	it("filters by type", () => {
-		const results = searchMemories({ query: ".*", type: "gotchas", limit: 10 });
+		const results = searchMemories({ query: ".*", type: "gotchas", projectId: testProjectId, limit: 10 });
 		for (const r of results) {
 			expect(r.file).toContain("gotchas");
 		}
 	});
 
 	it("filters by minConfidence", () => {
-		const results = searchMemories({ query: "unicorns", minConfidence: 0.9, limit: 10 });
+		const results = searchMemories({
+			query: "unicorns",
+			minConfidence: 0.9,
+			projectId: testProjectId,
+			limit: 10,
+		});
 		// test memory has confidence 0.7, so should be filtered out
 		const match = results.find((r) => r.file.includes("test-memory.md"));
 		expect(match).toBeUndefined();
 	});
 
 	it("respects limit", () => {
-		const results = searchMemories({ query: "test", limit: 1 });
+		const results = searchMemories({ query: "test", projectId: testProjectId, limit: 1 });
 		expect(results.length).toBeLessThanOrEqual(1);
+	});
+
+	it("does not leak memories from other projects in project scope", () => {
+		const otherProject = `__test_search_leak_${Date.now()}`;
+		const otherFp = join(MEMORIES_ROOT, "projects", otherProject, "gotchas", "leak.md");
+		ensureFileDir(otherFp);
+		writeFileSync(
+			otherFp,
+			"---\ncontext: leak\ntype: gotchas\nconfidence: 0.7\n---\n\nunicorns from another project",
+		);
+
+		try {
+			const results = searchMemories({
+				query: "unicorns",
+				scope: "project",
+				projectId: testProjectId,
+				limit: 10,
+			});
+			const leak = results.find((r) => r.file.includes("leak.md"));
+			expect(leak).toBeUndefined();
+		} finally {
+			rmSync(join(MEMORIES_ROOT, "projects", otherProject), {
+				recursive: true,
+				force: true,
+			});
+		}
 	});
 
 	it("excludes session files from search", () => {
 		const results = searchMemories({
 			query: "busca-session-exclusiva-xyz",
 			scope: "project",
+			projectId: testProjectId,
 			limit: 10,
 		});
 		const match = results.find((r) => r.file.includes("sessions"));
@@ -1438,16 +1480,54 @@ describe("searchMemories", () => {
 	it("excludes session files from all-scope search", () => {
 		const results = searchMemories({
 			query: "busca-session-exclusiva-xyz",
+			projectId: testProjectId,
 			limit: 10,
 		});
 		expect(results).toEqual([]);
 	});
 
 	it("excludes .supersedes/ files", () => {
-		const results = searchMemories({ query: "old memory", limit: 10 });
+		const results = searchMemories({
+			query: "old memory",
+			projectId: testProjectId,
+			limit: 10,
+		});
 		for (const r of results) {
 			expect(r.file).not.toContain(".supersedes");
 		}
+	});
+
+	it("scope=all returns current project + global, never other projects", () => {
+		const otherProject = `__test_search_leak_all_${Date.now()}`;
+		const otherFp = join(MEMORIES_ROOT, "projects", otherProject, "gotchas", "leak-all.md");
+		ensureFileDir(otherFp);
+		writeFileSync(
+			otherFp,
+			"---\ncontext: leak-all\ntype: gotchas\nconfidence: 0.7\n---\n\nunicorns from another project",
+		);
+
+		try {
+			const results = searchMemories({
+				query: "unicorns",
+				scope: "all",
+				projectId: testProjectId,
+				limit: 10,
+			});
+			// Encontra a memória do projeto atual
+			expect(results.some((r) => r.file.includes("test-memory.md"))).toBeTrue();
+			// Não vaza memória de outro projeto
+			expect(results.some((r) => r.file.includes("leak-all.md"))).toBeFalse();
+		} finally {
+			rmSync(join(MEMORIES_ROOT, "projects", otherProject), {
+				recursive: true,
+				force: true,
+			});
+		}
+	});
+
+	it("throws without projectId for scope=project/all", () => {
+		expect(() => searchMemories({ query: "x", scope: "project" })).toThrow(/projectId/);
+		expect(() => searchMemories({ query: "x", scope: "all" })).toThrow(/projectId/);
 	});
 });
 
@@ -1957,6 +2037,9 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		const { MEMORIES_ROOT } = await import("../utils.ts");
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), { recursive: true, force: true });
+		// "supersedes across different type and scope" cria cache-rule em
+		// _global/_rules e o move para .supersedes — limpar o resíduo global
+		rmSync(join(MEMORIES_ROOT, ".supersedes", "_global", "_rules", "cache-rule.md"), { force: true });
 	});
 
 	it("creates a new memory file", () => {
