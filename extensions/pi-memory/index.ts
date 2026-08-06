@@ -21,7 +21,7 @@
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -667,11 +667,28 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			// 1. Determine session file and read content
+			// Sandbox: session_file é sempre resolvido dentro do diretório de
+			// sessões do projeto atual. Paths absolutos ou com traversal (../)
+			// são rejeitados — nunca operar em arquivos fora de sessions/.
 			let sessionFile: string;
 			if (params.session_file) {
-				sessionFile = params.session_file.startsWith("/")
-					? params.session_file
-					: join(MEMORIES_ROOT, "projects", projectId, "sessions", params.session_file);
+				const sessionsDir = join(MEMORIES_ROOT, "projects", projectId, "sessions");
+				const resolved = resolve(sessionsDir, params.session_file);
+				if (resolved !== sessionsDir && resolved.startsWith(sessionsDir + "/")) {
+					sessionFile = resolved;
+				} else {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`Error: session_file "${params.session_file}" escapes the sessions directory. ` +
+									"Use a relative path under sessions/ (e.g. '2026-08-05/abc123.md') or omit it to use the current session.",
+							},
+						],
+						details: { error: "path_traversal", session_file: params.session_file },
+					};
+				}
 			} else {
 				sessionFile = getSessionFilePath(projectId, currentSessionHash);
 			}
