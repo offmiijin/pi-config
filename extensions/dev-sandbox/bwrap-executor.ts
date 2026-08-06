@@ -46,8 +46,10 @@ const SAFE_ENV_VARS = new Set([
  * Casamento simples com wildcard `*`.
  * - `*` corresponde a qualquer sequência (exceto `/`).
  * - Sem `*` = igualdade exata.
+ *
+ * Exportado para testes (security scan).
  */
-function matchSimpleGlob(name: string, pattern: string): boolean {
+export function matchSimpleGlob(name: string, pattern: string): boolean {
   if (!pattern.includes("*")) return name === pattern;
   const [prefix, suffix] = pattern.split("*", 2);
   if (prefix && !name.startsWith(prefix)) return false;
@@ -61,8 +63,10 @@ function matchSimpleGlob(name: string, pattern: string): boolean {
  * corresponda a qualquer padrão em `patterns`.
  *
  * Ignora .git, node_modules para performance.
+ *
+ * Exportado para testes (security scan).
  */
-function findDangerousFiles(cwd: string, patterns: string[]): string[] {
+export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   if (patterns.length === 0) return [];
 
   const results: string[] = [];
