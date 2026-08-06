@@ -9,61 +9,65 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import {
-	applyDecay,
+	MAX_MEMORY_SEARCH_ATTEMPTS,
+	MEMORIES_ROOT,
+	MEMORY_TYPES,
+	OBSERVATION_THRESHOLD,
+	ensureDirectories,
+	getMemoryDirectories,
+	identifyProject,
+} from "../constants.ts";
+import {
 	archiveSessionFile,
-	buildExtractionPrompt,
-	buildSearchPattern,
 	buildTurnFingerprint,
 	countObservations,
 	createTurnDedupState,
-	ensureDirectories,
 	ensureFileDir,
 	estimateTokens,
-	extractEntryConfidences,
-	findMemoryFile,
 	extractTextContent,
 	extractToolCallNames,
 	extractToolCalls,
 	extractToolResultText,
-	formatFrontmatter,
-	formatMemoryEntry,
+	formatDateTime,
 	formatObservation,
 	formatSessionHeader,
-	formatDateTime,
 	formatTimestamp,
 	generateSessionHash,
-	getMemoryDirectories,
-	getMemoryFilePath,
 	getObservationStatus,
 	getSessionFilePath,
-	getSupersedesPath,
 	hashSessionFile,
-	identifyProject,
-	listMemoryContexts,
-	listMemoryIndex,
-	formatMemoryIndexText,
-	summarizeExistingMemories,
-	MAX_MEMORY_SEARCH_ATTEMPTS,
-	MEMORIES_ROOT,
-	MEMORY_TYPES,
-	moveToSupersedes,
 	nextTurnDedup,
-	OBSERVATION_THRESHOLD,
-	parseExtractionResult,
-	parseFrontmatter,
-	readFileConfidence,
-	recalcOverallConfidence,
-	removeProcessedObservations,
 	resetSessionFile,
-	sanitizeFilename,
-	saveMemory,
-	searchMemories,
-	selectObservationsBatch,
 	shouldPromptExtraction,
 	shouldRemindSave,
-	splitObservations,
 	truncateToTokens,
-} from "../utils.ts";
+} from "../session.ts";
+import {
+	applyDecay,
+	extractEntryConfidences,
+	findMemoryFile,
+	formatFrontmatter,
+	formatMemoryEntry,
+	formatMemoryIndexText,
+	getMemoryFilePath,
+	getSupersedesPath,
+	listMemoryContexts,
+	listMemoryIndex,
+	moveToSupersedes,
+	parseFrontmatter,
+	recalcOverallConfidence,
+	sanitizeFilename,
+	saveMemory,
+	summarizeExistingMemories,
+} from "../memory.ts";
+import { buildSearchPattern, readFileConfidence, searchMemories } from "../memory-search.ts";
+import {
+	buildExtractionPrompt,
+	parseExtractionResult,
+	removeProcessedObservations,
+	selectObservationsBatch,
+	splitObservations,
+} from "../memory-extract.ts";
 
 import {
 	DecaySchema,
@@ -1138,7 +1142,7 @@ describe("memory_save integration", () => {
 	let origMemoriesRoot: string;
 
 	beforeAll(async () => {
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 		origMemoriesRoot = MEMORIES_ROOT;
 		tmpRoot = mkdtempSync(join(tmpdir(), "pi-memory-save-"));
 	});
@@ -1148,7 +1152,8 @@ describe("memory_save integration", () => {
 	});
 
 	it("creates a new memory file", async () => {
-		const { getMemoryFilePath, ensureFileDir, formatFrontmatter, formatMemoryEntry } = await import("../utils.ts");
+		const { getMemoryFilePath, formatFrontmatter, formatMemoryEntry } = await import("../memory.ts");
+		const { ensureFileDir } = await import("../session.ts");
 		const { writeFileSync, existsSync } = await import("node:fs");
 
 		const ctx = "my-context";
@@ -1168,7 +1173,7 @@ describe("memory_save integration", () => {
 	});
 
 	it("appends entry to existing memory file", async () => {
-		const { formatMemoryEntry, formatFrontmatter, parseFrontmatter, extractEntryConfidences, recalcOverallConfidence } = await import("../utils.ts");
+		const { formatMemoryEntry, formatFrontmatter, parseFrontmatter, extractEntryConfidences, recalcOverallConfidence } = await import("../memory.ts");
 		const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
 
 		const fp = join(tmpRoot, "_global", "_rules", "my-context.md");
@@ -1192,7 +1197,8 @@ describe("memory_save integration", () => {
 	});
 
 	it("creates and moves to .supersedes on supersede", async () => {
-		const { getSupersedesPath, ensureFileDir, formatFrontmatter, formatMemoryEntry } = await import("../utils.ts");
+		const { getSupersedesPath, formatFrontmatter, formatMemoryEntry } = await import("../memory.ts");
+		const { ensureFileDir } = await import("../session.ts");
 		const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
 
 		// Create old memory
@@ -1334,7 +1340,7 @@ describe("searchMemories", () => {
 
 	beforeAll(async () => {
 		testProjectId = `__test_search_${Date.now()}`;
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 
 		// Write a test file to the real MEMORIES_ROOT under a temp project
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "test-memory.md");
@@ -1390,7 +1396,7 @@ describe("searchMemories", () => {
 	});
 
 	afterAll(async () => {
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 		const testDir = join(MEMORIES_ROOT, "projects", testProjectId);
 		if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 
@@ -1786,7 +1792,7 @@ describe("findMemoryFile", () => {
 
 	beforeAll(async () => {
 		testProjectId = `__test_find_${Date.now()}`;
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 
 		// Create a memory in a specific location
 		const fp = join(MEMORIES_ROOT, "_global", "gotchas", "findme.md");
@@ -1800,7 +1806,7 @@ describe("findMemoryFile", () => {
 	});
 
 	afterAll(async () => {
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 		rmSync(join(MEMORIES_ROOT, "_global", "gotchas", "findme.md"), { force: true });
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
 	});
@@ -1829,7 +1835,7 @@ describe("moveToSupersedes", () => {
 
 	beforeAll(async () => {
 		testProjectId = `__test_move_${Date.now()}`;
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 
 		const fp = join(MEMORIES_ROOT, "_global", "_rules", "decayme.md");
 		ensureFileDir(fp);
@@ -1850,13 +1856,13 @@ describe("moveToSupersedes", () => {
 	});
 
 	afterAll(async () => {
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 		rmSync(join(MEMORIES_ROOT, "_global", "_rules", "decayme.md"), { force: true });
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "_global", "_rules", "decayme.md"), { force: true });
 	});
 
 	it("moves file to .supersedes preserving structure", async () => {
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 
 		const original = join(MEMORIES_ROOT, "_global", "_rules", "decayme.md");
 		const supPath = moveToSupersedes(original, { superseded_reason: "test decay" });
@@ -2094,7 +2100,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 	});
 
 	afterAll(async () => {
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), { recursive: true, force: true });
 		// "supersedes across different type and scope" cria cache-rule em
@@ -2284,7 +2290,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(result.action).toBe("created");
 
 		// Old file should be in .supersedes now
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 		const supPath = join(
 			MEMORIES_ROOT,
 			".supersedes",
@@ -2318,7 +2324,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(result.action).toBe("created");
 
 		// Old file should be in .supersedes with _global/_rules structure
-		const { MEMORIES_ROOT } = await import("../utils.ts");
+		const { MEMORIES_ROOT } = await import("../constants.ts");
 		const supPath = join(
 			MEMORIES_ROOT,
 			".supersedes",
