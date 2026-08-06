@@ -46,7 +46,7 @@ export interface SearchOptions {
 	type?: string;
 	minConfidence?: number;
 	limit?: number;
-	/** Project id — obrigatório quando scope === "project". */
+	/** Project id — required when scope === "project". */
 	projectId?: string;
 }
 
@@ -70,10 +70,10 @@ export function buildSearchPattern(terms: string[]): string {
 export function searchMemories(options: SearchOptions): SearchResult[] {
 	const { query, scope = "all", type, minConfidence, limit = 10 } = options;
 
-	// Paths raiz por escopo — .supersedes/ fica excluído naturalmente (não é
-	// subpath de _global nem projects), sem glob de exclusão frágil.
-	// scope=all = global + projeto ATUAL: memórias de outros projetos são
-	// específicas de cada projeto e não devem vazar para a sessão atual.
+	// Root paths per scope — .supersedes/ is naturally excluded (it is not
+	// a subpath of _global or projects), no fragile exclusion glob.
+	// scope=all = global + CURRENT project: memories from other projects are
+	// project-specific and must not leak into the current session.
 	let searchPaths: string[];
 	if (scope === "global") {
 		searchPaths = [join(MEMORIES_ROOT, "_global")];
@@ -88,13 +88,13 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 				: [projectPath];
 	}
 
-	// Paths inexistentes (projeto novo sem memórias) fariam o rg reclamar no
-	// stderr e sair com status 2 — descartaria resultados válidos dos demais.
+	// Missing paths (new project with no memories) would make rg complain on
+	// stderr and exit with status 2 — discarding valid results from the rest.
 	searchPaths = searchPaths.filter((p) => existsSync(p));
 	if (searchPaths.length === 0) return [];
 
-	// --iglob: case-insensitive também nos globs de path (arquivos criados à
-	// mão podem ter maiúsculas). Sessions é a única exclusão (fica sob projects/).
+	// --iglob: case-insensitive also in path globs (hand-created files may
+	// have uppercase). Sessions is the only exclusion (lives under projects/).
 	const rgArgs: string[] = ["--no-heading", "--line-number", "-i"];
 	rgArgs.push("--iglob", type ? `**/${type}/*.md` : "**/*.md");
 	rgArgs.push("--glob", "!**/sessions/**");

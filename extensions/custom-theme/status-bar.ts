@@ -116,7 +116,7 @@ class ModelInfoEditor extends CustomEditor {
 
 		const topBorder = mutedFg("\u2500".repeat(width));
 
-		// Linha de memória — canto superior direito, acima das infos de token
+		// Memory line — top right corner, above the token info
 		const memoryInfo = [
 			this.uiTheme.fg("muted", "\u{1f9e0}"), // 🧠
 			this.uiTheme.fg("accent", String(this.memoryTotal)),
@@ -148,7 +148,7 @@ class ModelInfoEditor extends CustomEditor {
 		const rightPart = tokenInfo;
 		const rightW = visibleWidth(rightPart);
 
-		// Calcula espaço disponível para modelId dentro do innerW
+		// Calculates available space for modelId inside innerW
 		// Reserva: gap mínimo (1) + rightW + provider + thinking + badge
 		const providerStr = this.provider ? " " + this.uiTheme.fg("muted", this.provider) : "";
 		const thinkingStr = " " + this.uiTheme.fg("dim", this.thinking);
@@ -195,7 +195,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		try {
 			const projectId = identifyProject(cwd);
 
-			// Conta arquivos .md de memória do projeto (exclui sessions/)
+			// Counts .md memory files for the project (excludes sessions/)
 			let total = 0;
 			for (const t of MEMORY_TYPES) {
 				const dir = path.join(MEMORIES_ROOT, "projects", projectId, t);
@@ -204,7 +204,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 				}
 			}
 
-			// Conta observações pendentes da sessão atual
+			// Counts pending observations for the current session
 			let observations = 0;
 			if (sessionFile) {
 				const hash = hashSessionFile(sessionFile);
@@ -213,7 +213,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 
 			editorRef.setMemoryInfo(total, observations);
 		} catch {
-			// extensão pi-memory ausente — mantém 0/0
+			// pi-memory extension missing — keep 0/0
 		}
 	}
 
@@ -253,13 +253,13 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		ctx.ui.setEditorComponent((tui: TUI, baseTheme: EditorTheme, keybindings: KeybindingsManager) => {
 			const uiTheme = ctx.ui.theme;
 
-			// Custom SelectListTheme com background highlight + prefixo visivel
+			// Custom SelectListTheme with background highlight + visible prefix
 			const selectList: SelectListTheme = {
-				// Ignora "> " padrao, substitui por "▶ " com bg highlight
+				// Ignore the default "> ", replace with "▶ " + bg highlight
 				selectedPrefix: () => uiTheme.fg("accent", uiTheme.bg("selectedBg", "▶ ")),
-				// Texto do item selecionado com bg highlight
+				// Selected item text with bg highlight
 				selectedText: (text) => uiTheme.fg("accent", uiTheme.bg("selectedBg", text)),
-				// Descricao mantida pra todos os items
+				// Description kept for all items
 				description: (text) => uiTheme.fg("muted", text),
 				scrollInfo: (text) => uiTheme.fg("muted", text),
 				noMatch: (text) => uiTheme.fg("muted", text),
@@ -342,7 +342,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		// Refresh agent type badge (agent-switcher persists via appendEntry)
 		if (event.message.role === "assistant") {
 			editorRef?.setAgentType(readAgentTypeFromSession(ctx));
-			// Força refresh da branch após resposta do modelo
+			// Force branch refresh after the model responds
 			setTimeout(() => footerDataRef?.refreshGitBranchAsync?.(), 100);
 		}
 	});
@@ -352,7 +352,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		editorRef?.setAgentType(readAgentTypeFromSession(ctx));
 	});
 
-	// Refresh memória após cada turno (delay: garante append do pi-memory)
+	// Refresh memory after each turn (delay: ensures pi-memory append)
 	pi.on("turn_end", async (_event, ctx) => {
 		setTimeout(() => refreshMemoryStats(ctx.cwd, ctx.sessionManager.getSessionFile()), 150);
 	});

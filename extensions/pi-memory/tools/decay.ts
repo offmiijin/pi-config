@@ -27,7 +27,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 		parameters: DecaySchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			// Escrita altera o índice de memórias → invalida cache do system prompt
+			// Write changes the memory index → invalidate system prompt cache
 			state.cachedIndexText = null;
 			if (!state.projectId) {
 				return {

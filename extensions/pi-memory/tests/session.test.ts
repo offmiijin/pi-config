@@ -609,7 +609,7 @@ describe("getObservationStatus", () => {
 		const status = getObservationStatus("__status_test", "statushash", date);
 		expect(status.observation_count).toBe(2);
 
-		// cleanup: arquivo + diretórios do projeto de teste
+		// cleanup: file + test project directories
 		rmSync(fp, { force: true });
 		rmSync(join(MEMORIES_ROOT, "projects", "__status_test"), { recursive: true, force: true });
 	});
@@ -652,7 +652,7 @@ describe("resetSessionFile", () => {
 		const fp = getSessionFilePath("__reset_test", "resethash", date);
 		ensureFileDir(fp);
 
-		// Cria arquivo com observações
+		// Create file with observations
 		writeFileSync(
 			fp,
 			[
@@ -716,7 +716,7 @@ describe("shouldPromptExtraction", () => {
 	});
 
 	it("does not prompt again within same bucket", () => {
-		// já sinalizado no bucket 1 (50-99)
+		// already flagged in bucket 1 (50-99)
 		const r = shouldPromptExtraction(80, 1);
 		expect(r.prompt).toBeFalse();
 	});
@@ -815,7 +815,7 @@ describe("nextTurnDedup", () => {
 	it("allows identical content across different turnIndexes (legit turns)", () => {
 		let state = createTurnDedupState();
 		state = nextTurnDedup(3, "same", state).state;
-		// turnIndex disponível → confia no índice, não no fingerprint
+		// turnIndex available → trust the index, not the fingerprint
 		const next = nextTurnDedup(4, "same", state);
 		expect(next.skip).toBeFalse();
 	});

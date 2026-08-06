@@ -96,7 +96,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 					};
 				}
 
-				// Achou resultado — reset contador de buscas vazias (pode continuar buscando)
+				// Found results — reset empty-search counter (can keep searching)
 				state.consecutiveEmptySearches = 0;
 
 				// Format results as text for the LLM

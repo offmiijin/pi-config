@@ -196,7 +196,7 @@ describe("parseExtractionResult", () => {
 					content: "c",
 					scope: "project",
 				},
-				// singular — criaria diretório "gotcha/" no lugar de "gotchas/"
+				// singular — would create a "gotcha/" dir instead of "gotchas/"
 				{
 					type: "gotcha",
 					context: "bad-singular",
@@ -204,7 +204,7 @@ describe("parseExtractionResult", () => {
 					content: "c",
 					scope: "project",
 				},
-				// sem underscore
+				// without underscore
 				{
 					type: "rules",
 					context: "bad-rules",
@@ -351,7 +351,7 @@ describe("removeProcessedObservations", () => {
 	});
 });
 
-// ── Summary persistido (#4) ─────────────────────────────────────────────────
+// ── Persisted summary (#4) ─────────────────────────────────────────────────
 
 describe("parseExtractionResult summary", () => {
 	it("accepts summary string", () => {

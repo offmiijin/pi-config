@@ -47,8 +47,8 @@ export function selectObservationsBatch(
 		total += t;
 		idx++;
 	}
-	// Nunca retorna lote vazio quando há observações (uma obs gigante não pode
-	// ser quebrada em pedaços menores sem perder a estrutura do arquivo).
+	// Never returns an empty batch when observations exist (a giant obs cannot
+	// be broken into smaller pieces without losing the file structure).
 	if (idx === 0 && observations.length > 0) idx = 1;
 	return { batch: observations.slice(0, idx), remaining: observations.slice(idx) };
 }

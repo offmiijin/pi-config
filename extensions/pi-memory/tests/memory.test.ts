@@ -148,11 +148,11 @@ describe("ensureDirectories", () => {
 	const TEST_PROJECT = "ensure_test";
 
 	afterAll(() => {
-		// Remove APENAS o que o teste cria (projects/ensure_test).
-		// NUNCA remover MEMORIES_ROOT nem _global/<types>: podem conter
-		// memórias reais do usuário. A versão antiga deletava MEMORIES_ROOT
-		// inteiro (recursive) a cada execução do bun test — destruía memórias
-		// globais e de todos os projetos.
+		// Remove ONLY what the test creates (projects/ensure_test).
+		// NEVER remove MEMORIES_ROOT or _global/<types>: they may contain
+		// real user memories. The old version deleted MEMORIES_ROOT
+		// entirely (recursive) on every bun test run — destroying
+		// global and all project memories.
 		const testDirs = [
 			join(MEMORIES_ROOT, "projects", TEST_PROJECT),
 			join(MEMORIES_ROOT, ".supersedes", "projects", TEST_PROJECT),
@@ -490,11 +490,11 @@ describe("listMemoryContexts", () => {
 
 	beforeAll(() => {
 		testProjectId = `__test_ctx_${Date.now()}`;
-		// Memória de projeto
+		// Project memory
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "proj-gotcha.md");
 		ensureFileDir(fp);
 		writeFileSync(fp, "---\ncontext: proj-gotcha\n---\n\ncontent");
-		// Memória global
+		// Global memory
 		const gfp = join(MEMORIES_ROOT, "_global", "lessons", "glob-lesson.md");
 		ensureFileDir(gfp);
 		writeFileSync(gfp, "---\ncontext: glob-lesson\n---\n\ncontent");
@@ -662,7 +662,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), { recursive: true, force: true });
 		// "supersedes across different type and scope" cria cache-rule em
-		// _global/_rules e o move para .supersedes — limpar o resíduo global
+		// _global/_rules and moves it to .supersedes — clean up the global residue
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "_global", "_rules", "cache-rule.md"), { force: true });
 	});
 
@@ -687,7 +687,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 	it("rejects non-canonical type without creating a directory", () => {
 		const result = saveMemory(testProjectId, {
-			type: "gotcha", // singular — criaria diretório errado
+			type: "gotcha", // singular — would create the wrong directory
 			context: "bad-type",
 			title: "T",
 			content: "C",
@@ -697,7 +697,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(result.action).toBe("error");
 		expect(result.error).toBeDefined();
 
-		// Nenhum diretório singular deve ter sido criado
+		// No singular directory should have been created
 		const bogusDir = join(MEMORIES_ROOT, "projects", testProjectId, "gotcha");
 		expect(existsSync(bogusDir)).toBeFalse();
 	});
@@ -748,7 +748,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "multi-avg.md");
 		const { meta } = parseFrontmatter(readFileSync(fp, "utf-8"));
-		expect(meta.confidence).toBe(0.6); // média real (0.7+0.6+0.5)/3 — sucessiva daria 0.575
+		expect(meta.confidence).toBe(0.6); // real mean (0.7+0.6+0.5)/3 — successive would give 0.575
 		expect(meta.entries).toBe(3);
 	});
 
@@ -771,14 +771,14 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		});
 		// conf agora 0.65, entries 2
 
-		// Simula decay: reduz confidence do frontmatter para 0.3
+		// Simulate decay: reduce frontmatter confidence to 0.3
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "decay-multi.md");
 		const { meta, body } = parseFrontmatter(readFileSync(fp, "utf-8"));
 		meta.confidence = 0.3;
 		writeFileSync(fp, formatFrontmatter(meta) + body);
 
-		// O decay deve pesar sobre todas as entradas: (0.3*2 + 0.5)/3 = 0.3666... → 0.37
-		// (média sucessiva daria 0.4)
+		// Decay must weigh over all entries: (0.3*2 + 0.5)/3 = 0.3666... → 0.37
+		// (successive mean would give 0.4)
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "decay-multi",
@@ -805,13 +805,13 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		});
 		expect(result.action).toBe("created");
 
-		// Simula decay: reduz confidence do frontmatter para 0.4
+		// Simulate decay: reduce frontmatter confidence to 0.4
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "decay-persist.md");
 		const { meta, body } = parseFrontmatter(readFileSync(fp, "utf-8"));
 		meta.confidence = 0.4;
 		writeFileSync(fp, formatFrontmatter(meta) + body);
 
-		// Append novo com 0.5 — média deve ser (0.4 + 0.5) / 2 = 0.45
+		// New append with 0.5 — mean must be (0.4 + 0.5) / 2 = 0.45
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "decay-persist",
@@ -861,7 +861,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 	});
 
 	it("supersedes across different type and scope", async () => {
-		// Old memory lives in _global/_rules (type+scope diferentes do novo save)
+		// Old memory lives in _global/_rules (type+scope different from the new save)
 		saveMemory(testProjectId, {
 			type: "_rules",
 			context: "cache-rule",
@@ -919,14 +919,14 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		expect(consolidated.action).toBe("consolidated");
 
-		// Arquivo novo: conteúdo v2, uma entrada, confidence limpo (sem média)
+		// New file: v2 content, one entry, clean confidence (no mean)
 		const content = readFileSync(consolidated.file, "utf-8");
 		expect(content).toContain("conteúdo consolidado novo");
 		expect(content).not.toContain("conteúdo antigo");
 		expect(content).toContain("entries: 1");
 		expect(content).toContain("confidence: 0.8");
 
-		// Versão antiga arquivada em .supersedes com metadados
+		// Old version archived in .supersedes with metadata
 		const supPath = join(
 			MEMORIES_ROOT,
 			".supersedes",
@@ -978,8 +978,8 @@ describe("saveMemory summary", () => {
 
 	afterAll(async () => {
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
-		// O teste com mode:consolidate move sum-cons.md para .supersedes —
-		// limpar o resíduo também (senão cada bun test vaza um artefato).
+		// The mode:consolidate test moves sum-cons.md to .supersedes —
+		// clean the residue too (otherwise every bun test leaks an artifact).
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), {
 			recursive: true,
 			force: true,
@@ -1064,7 +1064,7 @@ describe("listMemoryIndex", () => {
 
 	beforeAll(() => {
 		testProjectId = `__test_index_${Date.now()}`;
-		// 2 global + 2 project, updated diferentes, 1 com summary
+		// 2 global + 2 project, different updated dates, 1 with summary
 		ensureFileDir(join(MEMORIES_ROOT, "_global", "gotchas", "old-global.md"));
 		writeFileSync(
 			join(MEMORIES_ROOT, "_global", "gotchas", "old-global.md"),
@@ -1138,15 +1138,15 @@ describe("formatMemoryIndexText", () => {
 		const text = formatMemoryIndexText(entries);
 		expect(text).toContain("total: 20");
 		expect(text).toContain("Most recent 15:");
-		// 15 recentes + 5 restantes
+		// 15 recent + 5 remaining
 		expect(text).toContain("ctx-1"); // mais recente (updated 07-20)
 		expect(text).toContain("5 not shown");
 		expect(text).toContain("Counts by scope (all):");
 		expect(text).toContain("_global: ");
 		expect(text).toContain("project: ");
-		// nunca omite tipos com 0
+		// never omits types with 0
 		expect(text).toContain("(0 memories)");
-		// ordem fixa dos tipos
+		// fixed type order
 		const gl = text.match(/_global: (.*)/)![1];
 		const types = gl.split(", ").map((s) => s.split(" ")[0]);
 		expect(types).toEqual(["_rules", "decisions", "gotchas", "lessons", "patterns"]);
@@ -1183,13 +1183,13 @@ describe("summarizeExistingMemories", () => {
 
 	beforeAll(() => {
 		testProjectId = `__test_summarize_${Date.now()}`;
-		// com summary
+		// with summary
 		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "com-summary.md"));
 		writeFileSync(
 			join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "com-summary.md"),
 			"---\ncontext: com-summary\ntype: gotchas\nconfidence: 0.8\nupdated: 2026-08-05\nsummary: \"Resumo curado pelo LLM\"\n---\n\n## [2026-08-05 10:00:00] Título\n\nconteúdo\n",
 		);
-		// sem summary → fallback título + excerpt
+		// without summary → title + excerpt fallback
 		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "sem-summary.md"));
 		writeFileSync(
 			join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "sem-summary.md"),
@@ -1219,5 +1219,5 @@ describe("summarizeExistingMemories", () => {
 	});
 });
 
-// ── Turn dedup (bug de duplicação do turn_end) ──────────────────────────────
+// ── Turn dedup (turn_end duplication bug) ──────────────────────────────
 

@@ -9,10 +9,10 @@
 export interface ToolState {
 	projectId: string;
 	currentSessionHash: string;
-	/** Monotônico — último bucket de extração que já disparou prompt (evita re-disparo). */
+	/** Monotonic — last extraction bucket that already fired a prompt (prevents re-firing). */
 	lastPromptedBucket: number;
-	/** Buscas consecutivas sem resultado (policy: abandonar após MAX_MEMORY_SEARCH_ATTEMPTS). */
+	/** Consecutive searches without results (policy: abandon after MAX_MEMORY_SEARCH_ATTEMPTS). */
 	consecutiveEmptySearches: number;
-	/** Cache do índice de memórias no system prompt (invalidado em escritas). */
+	/** Memory index cache in the system prompt (invalidated on writes). */
 	cachedIndexText: string | null;
 }

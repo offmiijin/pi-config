@@ -124,7 +124,7 @@ describe("searchMemories", () => {
 			].join("\n"),
 		);
 
-		// Session file com keyword única (não deve aparecer nos resultados)
+		// Session file with unique keyword (must not appear in results)
 		const sessionFp = join(
 			MEMORIES_ROOT,
 			"projects",
@@ -284,9 +284,9 @@ describe("searchMemories", () => {
 				projectId: testProjectId,
 				limit: 10,
 			});
-			// Encontra a memória do projeto atual
+			// Finds the current project's memory
 			expect(results.some((r) => r.file.includes("test-memory.md"))).toBeTrue();
-			// Não vaza memória de outro projeto
+			// Doesn't leak another project's memory
 			expect(results.some((r) => r.file.includes("leak-all.md"))).toBeFalse();
 		} finally {
 			rmSync(join(MEMORIES_ROOT, "projects", otherProject), {

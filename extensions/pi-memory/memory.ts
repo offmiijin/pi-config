@@ -191,7 +191,7 @@ export function listMemoryIndex(projectId: string): MemoryIndexEntry[] {
 						excerpt: extractExcerpt(body),
 					});
 				} catch {
-					// Arquivo corrompido — ignora, não derruba o índice.
+					// Corrupted file — ignore, don't break the index.
 				}
 			}
 		}
@@ -314,7 +314,7 @@ export function parseFrontmatter(content: string): {
 			value.startsWith('"') &&
 			value.endsWith('"')
 		) {
-			// String entre aspas — desescapa (\n, \", \\)
+			// Quoted string — unescape (\n, \", \\)
 			value = value
 				.slice(1, -1)
 				.replace(/\\n/g, "\n")
@@ -348,7 +348,7 @@ export function formatFrontmatter(meta: Record<string, unknown>): string {
 		} else if (typeof value === "boolean") {
 			lines.push(`${key}: ${value}`);
 		} else {
-			// Strings sempre entre aspas — valores com ":" ou "\n" não quebram o YAML
+			// Strings always quoted — values with ":" or "\n" don't break YAML
 			lines.push(`${key}: ${yamlQuoteString(String(value))}`);
 		}
 	}
@@ -458,8 +458,8 @@ export function saveMemory(
 	const now = formatDateTime();
 	const today = now.slice(0, 10);
 
-	// Guard defensivo: type inválido criaria um diretório novo no lugar errado
-	// (ex.: "gotcha" singular em vez de "gotchas") e geraria memórias órfãs.
+	// Defensive guard: invalid type would create a directory in the wrong place
+	// (e.g. "gotcha" singular instead of "gotchas") and produce orphan memories.
 	if (!(MEMORY_TYPES as readonly string[]).includes(type)) {
 		return {
 			action: "error",
@@ -469,9 +469,9 @@ export function saveMemory(
 	}
 
 	// Handle supersede: move old memory to .supersedes/
-	// Busca em TODOS os types/scopes (findMemoryFile) — a contradição
-	// normalmente cruza type (ex.: lesson supersede pattern). Olhar só o
-	// type+scope do novo save resultaria em no-op silencioso.
+	// Search ALL types/scopes (findMemoryFile) — the contradiction usually
+	// crosses type (e.g. lesson supersede pattern). Looking only at the
+	// new save's type+scope would result in a silent no-op.
 	if (supersedes) {
 		const oldPath = findMemoryFile(projectId, supersedes);
 		if (oldPath) {
@@ -479,9 +479,9 @@ export function saveMemory(
 		}
 	}
 
-	// Consolidate: arquiva a versão atual do MESMO contexto antes de criar a
-	// nova — merge-in-place via .supersedes (histórico preservado, arquivo
-	// sempre limpo, confidence sem distorção de médias acumuladas).
+	// Consolidate: archive the current version of the SAME context before creating
+	// the new one — merge-in-place via .supersedes (history preserved, file
+	// always clean, confidence without accumulated-mean distortion).
 	let consolidated = false;
 	if (mode === "consolidate") {
 		const ownPath = getMemoryFilePath(projectId, type, context, scope);
@@ -522,10 +522,10 @@ export function saveMemory(
 	// Append to existing file
 	const existing = readFileSync(filePath, "utf-8");
 	const { meta, body } = parseFrontmatter(existing);
-	// Média ponderada real: currentConf é a média das `entries` atuais (e já
-	// reflete decays). (currentConf * N + nova) / (N+1) converge para a média
-	// exata — a média sucessiva (a+b)/2 distorceria em direção à entrada mais
-	// recente. Recalcular a partir do body faria o decay evaporar no append.
+	// Real weighted average: currentConf is the mean of the current entries (and
+	// already reflects decays). (currentConf * N + new) / (N+1) converges to the
+	// exact mean — successive averaging (a+b)/2 would skew toward the most
+	// recent entry. Recomputing from the body would make decay vanish on append.
 	const currentConf = typeof meta.confidence === "number" ? meta.confidence : 0.5;
 	const currentEntries = (meta.entries as number) || extractEntryConfidences(body).length || 1;
 	const newOverall = Math.round(((currentConf * currentEntries + confidence) / (currentEntries + 1)) * 100) / 100;
@@ -539,7 +539,7 @@ export function saveMemory(
 		meta.tags = [...new Set([...existingTags, ...tags])];
 	}
 
-	// Summary sempre reflete o estado ATUAL — sobrescreve o anterior.
+	// Summary always reflects the CURRENT state — overwrites the previous one.
 	if (summary) meta.summary = summary;
 
 	writeFileSync(filePath, formatFrontmatter(meta) + body + entry + "\n");
