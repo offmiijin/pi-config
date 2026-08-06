@@ -12,11 +12,13 @@ import path from "node:path";
 import {
 	MEMORIES_ROOT,
 	MEMORY_TYPES,
+	identifyProject,
+} from "../pi-memory/constants.ts";
+import {
 	countObservations,
 	getSessionFilePath,
 	hashSessionFile,
-	identifyProject,
-} from "../pi-memory/utils.ts";
+} from "../pi-memory/session.ts";
 
 function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
