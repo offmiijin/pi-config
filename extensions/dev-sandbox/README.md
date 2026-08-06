@@ -172,6 +172,22 @@ Adicione ao `.gitignore`:
 .sandbox-cache/
 ```
 
+## Testes
+
+Suíte vitest na extensão (unit + integração):
+
+```bash
+cd extensions/dev-sandbox
+npx vitest run
+```
+
+- **Unit** (~107): `buildBwrapArgs` (mounts, whitelist de env, deny scan),
+  merge de config, caches, tools grep/ops — sem bwrap, rápidos.
+- **Integração** (7): bwrap real (echo, stdin, /usr read-only, `.env` mascarado,
+  `/tmp` efêmero, env custom, timeout). Pulados automaticamente se o ambiente
+  já estiver dentro de um sandbox com seccomp (SIGSYS = exit 159) ou sem
+  bubblewrap — rodam no host/CI.
+
 ## Dependências
 
 - **bubblewrap** (`apt install bubblewrap`) — obrigatório
