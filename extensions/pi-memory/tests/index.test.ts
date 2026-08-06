@@ -2542,6 +2542,12 @@ describe("saveMemory summary", () => {
 
 	afterAll(async () => {
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+		// O teste com mode:consolidate move sum-cons.md para .supersedes —
+		// limpar o resíduo também (senão cada bun test vaza um artefato).
+		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), {
+			recursive: true,
+			force: true,
+		});
 	});
 
 	it("stores summary in frontmatter on create", () => {
