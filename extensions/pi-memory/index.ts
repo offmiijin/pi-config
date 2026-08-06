@@ -266,9 +266,13 @@ export default function (pi: ExtensionAPI) {
 		// ── Memory save reminder ──
 		// Turno alterou código e passou o cooldown → lembra o LLM de salvar
 		// aprendizagem durável diretamente via memory_save (sem esperar extract).
-		// Máx 1x por turno de usuário: turn_end pode disparar várias vezes no
-		// mesmo turno (sub-turnos com edits) — notificar de novo é irrelevante
-		// (se a 1ª salvou, as demais não salvariam nada novo).
+		// Máx 1x por turno de USUÁRIO: guard saveReminderSent é resetado em
+		// agent_settled (fim real do prompt) — NÃO em before_agent_start, que
+		// dispara também para ciclos gerados pela própria extensão e resetava o
+		// guard no meio do turno (reminders duplicados).
+		// Entrega via "nextTurn": não interrompe nem gera ciclo extra — a
+		// mensagem chega no próximo prompt do usuário, sem atraso dentro do
+		// turno nem re-disparo pelo próprio followUp.
 		if (
 			!saveReminderSent &&
 			shouldRemindSave(
@@ -283,7 +287,7 @@ export default function (pi: ExtensionAPI) {
 			try {
 				pi.sendUserMessage(
 					"[pi-memory] This turn changed code. If it involved a durable learning (bug cause, decision, gotcha, pattern), call memory_save now. Otherwise ignore.",
-				{ deliverAs: "followUp" },
+				{ deliverAs: "nextTurn" },
 				);
 			} catch {
 				saveReminderDue = true;
@@ -293,8 +297,10 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Inject extraction prompt + memory index at next user turn ───────────
 	pi.on("before_agent_start", async (event, ctx) => {
-		// Novo turno de usuário → permite nova notificação de save (máx 1x/turno)
-		saveReminderSent = false;
+		// NOTA: NÃO resetar saveReminderSent aqui. before_agent_start dispara
+		// também para ciclos gerados pela própria extensão (sendUserMessage), o
+		// que resetava o guard no meio do turno e permitia reminders duplicados.
+		// Reset acontece em agent_settled (fim real do prompt de usuário).
 
 		// Índice de memórias no SYSTEM PROMPT (reconstruído por turno — não
 		// polui o histórico de mensagens como a mensagem customType fazia).
@@ -336,6 +342,14 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		return { systemPrompt: withIndex(event.systemPrompt) };
+	});
+
+	// ── Fim do prompt de usuário → libera novo reminder no próximo turno ─────
+	pi.on("agent_settled", async (_event, _ctx) => {
+		// agent_settled = fim real do prompt (após retries/compaction/followUps).
+		// Reset do guard aqui (e não em before_agent_start) garante no máximo
+		// 1 reminder por turno de USUÁRIO, mesmo com turnos longos de tools.
+		saveReminderSent = false;
 	});
 
 	// ── Tools ──────────────────────────────────────────────────────────────
