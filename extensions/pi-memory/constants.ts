@@ -39,6 +39,10 @@ export const MAX_MEMORY_SEARCH_ATTEMPTS = 3;
 export const MEMORY_TYPES = ["_rules", "decisions", "gotchas", "lessons", "patterns"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
+/** Memory content language rule — memories are stored in PT-BR. */
+export const MEMORY_LANGUAGE_RULE =
+	"Write all memory content (title, content, tags) in PT-BR (Brazilian Portuguese).";
+
 // ── Project identification ─────────────────────────────────────────────────
 
 /**

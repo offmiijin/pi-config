@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { EXTRACT_BATCH_TOKEN_BUDGET, MEMORY_TYPES } from "./constants.ts";
+import { EXTRACT_BATCH_TOKEN_BUDGET, MEMORY_LANGUAGE_RULE, MEMORY_TYPES } from "./constants.ts";
 import { estimateTokens } from "./session.ts";
 
 // ── Memory extraction (LLM-assisted) ───────────────────────────────────────
@@ -71,10 +71,6 @@ export function removeProcessedObservations(filePath: string, processed: number)
 /**
  * Builds the LLM prompt that turns session observations into memories.
  */
-/** Memory content language rule — memories are stored in PT-BR. */
-export const MEMORY_LANGUAGE_RULE =
-	"Write all memory content (title, content, tags) in PT-BR (Brazilian Portuguese).";
-
 export function buildExtractionPrompt(
 	sessionContent: string,
 	existingMemories?: string,
