@@ -21,6 +21,27 @@ export interface SandboxFilesystemConfig {
    * Ignora .git, node_modules durante scan.
    */
   denyFilePatterns: string[];
+  /**
+   * Diretórios de cache persistentes dentro do sandbox.
+   * Valor vazio "" = padrão: <workspace>/.sandbox-cache/<nome>.
+   * Caminho relativo é resolvido contra o workspace.
+   * Caminho absoluto fora do workspace: bind-montado read-write se
+   * existir no host; caso contrário usa --dir (efêmero no comando).
+   */
+  cacheDirs: SandboxCacheDirsConfig;
+}
+
+/** Diretórios de cache persistentes (npm, pip, clones de repositórios). */
+export interface SandboxCacheDirsConfig {
+  /** Cache do npm (env NPM_CONFIG_CACHE). Vazio = .sandbox-cache/npm. */
+  npm: string;
+  /** Cache do pip (env PIP_CACHE_DIR). Vazio = .sandbox-cache/pip. */
+  pip: string;
+  /**
+   * Diretório para clonar repositórios remotos (env SANDBOX_CLONE_DIR).
+   * Persiste entre comandos — /tmp NÃO persiste. Vazio = .sandbox-cache/clones.
+   */
+  clones: string;
 }
 
 export interface SandboxInternetConfig {
@@ -116,6 +137,7 @@ export const DEFAULT_CONFIG: SandboxConfig = {
     extraReadonly: [],
     denyPaths: ["/sbin", "/usr/sbin", "/root"],
     denyFilePatterns: [".env", "*.pem", "*.key"],
+    cacheDirs: { npm: "", pip: "", clones: "" },
   },
   ssh: {
     mode: "agent",

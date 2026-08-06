@@ -41,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
 import type { SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
+import { resolveCacheDirs } from "./bwrap-executor";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
 import { createEditOps } from "./tools/edit-ops";
@@ -344,7 +345,11 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", (event, ctx) => {
     if (!enabled || !config) return;
     const cwd = ctx?.cwd ?? localCwd;
-    const sandboxNote = `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)`;
+    const caches = resolveCacheDirs(config, cwd);
+    const sandboxNote =
+      `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
+      `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}, ` +
+      `clone remote repos in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
     // Concatena ao system prompt existente em vez de substituí-lo,
     // preservando o conteúdo injetado por outras extensões (ex: agent-type).
     return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}` };
@@ -362,6 +367,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      const caches = resolveCacheDirs(config, localCwd);
       const lines = [
         `🔒 Sandbox de Desenvolvimento`,
         ``,
@@ -371,6 +377,8 @@ export default function (pi: ExtensionAPI) {
         `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
         `Seccomp: ${config.seccomp.enabled ? "ativo (" + config.seccomp.bpfPath + ")" : "desabilitado"}`,
         `Capabilities: ${config.capabilities.drop.length} droppadas`,
+        `Caches: npm=${caches.npm} | pip=${caches.pip}`,
+        `Clones: ${caches.clones}`,
       ];
 
       ctx.ui.notify(lines.join("\n"), "info");

@@ -14,7 +14,12 @@
       "/usr/sbin",
       "/root"
     ],
-    "denyFilePatterns": [".env", "*.pem", "*.key"]
+    "denyFilePatterns": [".env", "*.pem", "*.key"],
+    "cacheDirs": {
+      "npm": "",
+      "pip": "",
+      "clones": ""
+    }
   },
   "ssh": {
     "mode": "agent"

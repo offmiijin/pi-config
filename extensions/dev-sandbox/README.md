@@ -56,7 +56,7 @@ Montado read-only:
 
 Montado read-write:
   $PWD                            → diretório do projeto
-  .sandbox-cache/npm, pip         → cache persistente
+  .sandbox-cache/npm, pip, clones → caches persistentes + clones de repositórios
   $SSH_AUTH_SOCK (socket)         → ssh-agent socket (modo agent)
 
 Montado como `/dev/null`:
@@ -64,6 +64,12 @@ Montado como `/dev/null`:
 
 Montado vazio (tmpfs):
   /sbin, /usr/sbin, /root         → ferramentas de sistema bloqueadas
+
+> ⚠️ **denyPaths e symlinks**: se um path negado for um symlink (ex:
+> `/usr/sbin -> bin` no Arch), `bwrap --tmpfs` segue o symlink e mascara o
+> diretório DESTINO — `/usr/bin` inteiro viraria tmpfs vazio, quebrando
+> shebangs `#!/usr/bin/env` (npm, npx). O sandbox detecta symlinks e pula
+> esses paths com um warning.
 
 NÃO montado:
   ~ (home real)                   → sem .aws, .gnupg, .bash_history
@@ -96,7 +102,7 @@ NÃO montado:
     "extraReadonly": [],
     "denyPaths": ["/sbin", "/usr/sbin", "/root"],
     "denyFilePatterns": [".env", "*.pem", "*.key"],
-    "cacheDirs": { "npm": "", "pip": "" }
+    "cacheDirs": { "npm": "", "pip": "", "clones": "" }
   },
   "ssh": { "mode": "agent" }
 }
@@ -122,7 +128,36 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 > **`denyFilePatterns`**: lista de padrões de nomes de arquivo.
 > O sandbox escaneia $PWD recursivamente e substitui cada arquivo
 > correspondente por `/dev/null` (vazio, read-only). Suporta `*` como
-> wildcard. Ignora `.git/`, `node_modules/`, `.sandbox-cache/`.
+> wildcard. Ignora `.git/` e `node_modules/` (performance).
+
+### `cacheDirs` — caches persistentes
+
+| Chave | Padrão | Efeito |
+|---|---|---|
+| `npm` | `.sandbox-cache/npm` | `NPM_CONFIG_CACHE` — cache de pacotes npm |
+| `pip` | `.sandbox-cache/pip` | `PIP_CACHE_DIR` — cache de pacotes pip |
+| `clones` | `.sandbox-cache/clones` | `SANDBOX_CLONE_DIR` — diretório p/ clonar repositórios |
+
+Valor vazio (`""`) = padrão dentro do workspace. Caminho relativo é resolvido
+contra o workspace. Caminho absoluto fora do workspace é bind-montado
+read-write se existir no host (use `extraWritable` para garantir persistência).
+
+### Clonando repositórios
+
+`/tmp` é efêmero (namespace novo a cada comando) — clone **NUNCA** em `/tmp`,
+os dados somem. Clone em `.sandbox-cache/clones/` (ou `cacheDirs.clones`):
+
+```bash
+git clone https://github.com/foo/bar .sandbox-cache/clones/bar
+```
+
+Funciona porque:
+- Rede compartilhada (`--share-net`) — HTTPS e SSH funcionam
+- `~/.gitconfig` montado read-only — `user.name`/`user.email` OK
+- SSH agent socket montado (modo `agent`) — repos privados OK, chaves nunca entram
+
+O diretório de clones é informado ao modelo no system prompt e via `/sandbox`,
+e exposto como `$SANDBOX_CLONE_DIR` dentro do sandbox.
 
 ## Comandos
 
@@ -134,12 +169,30 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 
 ## Cache de pacotes
 
-Caches npm e pip são persistidos em `.sandbox-cache/` dentro do projeto.
+Caches npm (`NPM_CONFIG_CACHE`), pip (`PIP_CACHE_DIR`) e clones de
+repositórios (`SANDBOX_CLONE_DIR`) são persistidos em `.sandbox-cache/`
+dentro do projeto.
 Adicione ao `.gitignore`:
 
 ```gitignore
 .sandbox-cache/
 ```
+
+## Testes
+
+Suíte vitest na extensão (unit + integração):
+
+```bash
+cd extensions/dev-sandbox
+npx vitest run
+```
+
+- **Unit** (~107): `buildBwrapArgs` (mounts, whitelist de env, deny scan),
+  merge de config, caches, tools grep/ops — sem bwrap, rápidos.
+- **Integração** (7): bwrap real (echo, stdin, /usr read-only, `.env` mascarado,
+  `/tmp` efêmero, env custom, timeout). Pulados automaticamente se o ambiente
+  já estiver dentro de um sandbox com seccomp (SIGSYS = exit 159) ou sem
+  bubblewrap — rodam no host/CI.
 
 ## Dependências
 
@@ -151,7 +204,7 @@ Adicione ao `.gitignore`:
 
 - Linux apenas (bwrap depende de namespaces do kernel)
 - Cada tool call cria/destrói um namespace (~30ms overhead)
-- `/tmp` é efêmero entre comandos (use `$PWD` para persistência)
+- `/tmp` é efêmero entre comandos (use `.sandbox-cache/` para persistência)
 - `npm install` com scripts de lifecycle executa dentro do sandbox
   (seguro porque home real inacessível)
 

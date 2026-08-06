@@ -22,7 +22,11 @@ interface OsRelease {
 	idLike: string;
 }
 
-function readOsRelease(): OsRelease | null {
+/**
+ * Lê /etc/os-release (mockável em testes via node:fs).
+ * Exportado para testes.
+ */
+export function readOsRelease(): OsRelease | null {
 	try {
 		const raw = readFileSync(OS_RELEASE_PATH, "utf-8");
 		const id = raw.match(/^ID="?([^^"\n]+)"?/m)?.[1] ?? "";
@@ -37,13 +41,17 @@ function hasOsRelease(): boolean {
 	return existsSync(OS_RELEASE_PATH);
 }
 
-function matchesOsRelease(ids: string[]): boolean {
+/**
+ * Parse de /etc/os-release: retorna id e idLike. Exportado para testes.
+ */
+export function matchesOsRelease(ids: string[]): boolean {
 	const os = readOsRelease();
 	if (!os) return false;
 	return ids.includes(os.id) || os.idLike.split(/\s+/).some((like) => ids.includes(like));
 }
 
-function safeReadJson(filePath: string): Partial<SandboxConfig> | null {
+/** JSON inválido → null. Exportado para testes. */
+export function safeReadJson(filePath: string): Partial<SandboxConfig> | null {
   try {
     if (!existsSync(filePath)) return null;
     return JSON.parse(readFileSync(filePath, "utf-8"));
@@ -52,7 +60,8 @@ function safeReadJson(filePath: string): Partial<SandboxConfig> | null {
   }
 }
 
-function deepMerge<T extends Record<string, unknown>>(base: T, override: Partial<T>): T {
+/** Merge aninhado. Exportado para testes. */
+export function deepMerge<T extends Record<string, unknown>>(base: T, override: Partial<T>): T {
   const result = { ...base };
 
   for (const key of Object.keys(override) as (keyof T)[]) {
@@ -82,8 +91,9 @@ function deepMerge<T extends Record<string, unknown>>(base: T, override: Partial
 /**
  * Converte formato antigo (mountReadOnly) para o novo (mode).
  * Retorna uma cópia do objeto com a conversão aplicada.
+ * Exportado para testes.
  */
-function normalizeSshConfig(raw: Record<string, unknown>): Record<string, unknown> {
+export function normalizeSshConfig(raw: Record<string, unknown>): Record<string, unknown> {
   if (raw.mountReadOnly !== undefined && raw.mode === undefined) {
     const copy = { ...raw };
     copy.mode = raw.mountReadOnly ? "mount" : "none";
