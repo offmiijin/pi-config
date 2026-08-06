@@ -28,7 +28,8 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 			"Processes session observations into organized memories (incremental — one batch per call). " +
 			"Reads the session file, identifies contexts, and saves memories via memory_save. " +
 			"If observations remain after the call, call memory_extract again to drain the backlog. " +
-			"Memories are written in PT-BR.",
+			"Memories are written in PT-BR. " +
+			"NATIVE pi tool — call memory_extract directly, NOT via mcp({ tool: 'memory_extract' }) or the mcp gateway.",
 		promptSnippet:
 			"memory_extract: Process session observations into memories",
 		parameters: ExtractSchema,

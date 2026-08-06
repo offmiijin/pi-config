@@ -16,7 +16,8 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 			"Saves or updates a memory. Same context key = same file. " +
 			"mode 'append' (default) adds a dated entry; mode 'consolidate' rewrites the memory, archiving the old version to .supersedes/ (merge-in-place). " +
 			"Provide 'summary' (1-2 sentences, PT-BR) describing the CURRENT state — it is persisted and updated on every append/consolidate. " +
-			"Use supersedes to mark a memory under a DIFFERENT context key as replaced.",
+			"Use supersedes to mark a memory under a DIFFERENT context key as replaced. " +
+			"NATIVE pi tool — call memory_save directly, NOT via mcp({ tool: 'memory_save' }) or the mcp gateway.",
 		promptSnippet:
 			"memory_save: Save/update a memory (same context = same file)",
 		promptGuidelines: [

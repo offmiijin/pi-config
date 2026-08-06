@@ -13,7 +13,8 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 		label: "Memory Status",
 		description:
 			"Returns current observation count and threshold. " +
-			"Call periodically; when count nears ~50, run memory_extract.",
+			"Call periodically; when count nears ~50, run memory_extract. " +
+			"NATIVE pi tool — call memory_status directly, NOT via mcp({ tool: 'memory_status' }) or the mcp gateway.",
 		promptSnippet:
 			"memory_status: Check observation count (extract at ~50)",
 		parameters: StatusSchema,

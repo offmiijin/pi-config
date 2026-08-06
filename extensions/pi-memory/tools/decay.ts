@@ -20,7 +20,8 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 		label: "Memory Decay",
 		description:
 			"Reduces confidence of a memory or moves it to .supersedes/. " +
-			"Call when a memory is obsolete or contradicted.",
+			"Call when a memory is obsolete or contradicted. " +
+			"NATIVE pi tool — call memory_decay directly, NOT via mcp({ tool: 'memory_decay' }) or the mcp gateway.",
 		promptSnippet:
 			"memory_decay: Reduce confidence or supersede a memory",
 		parameters: DecaySchema,

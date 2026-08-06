@@ -16,7 +16,8 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 			"Searches memories via ripgrep. query accepts multiple keywords (OR semantics — any term matches). " +
 			"scope: 'global' (only global), 'project' (only current project), 'all' (default: current project + global). " +
 			"Use when you need past context about a topic. " +
-			`Max ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results — then abandon and search the code instead.`,
+			`Max ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results — then abandon and search the code instead. ` +
+			"NATIVE pi tool — call memory_search directly, NOT via mcp({ tool: 'memory_search' }) or the mcp gateway.",
 		promptSnippet:
 			"memory_search: Search past memories (multi-term; max 3 empty tries)",
 		promptGuidelines: [
