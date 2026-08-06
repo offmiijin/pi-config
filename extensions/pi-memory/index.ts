@@ -144,9 +144,17 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
-		projectId = identifyProject(ctx.cwd);
+		const nextProjectId = identifyProject(ctx.cwd);
+		if (nextProjectId === projectId) {
+			// Mesmo projeto: NÃO resetar trigger state. Resetar lastPromptedBucket
+			// aqui, com um followUp de extração ainda pendente (nextTurn), faria
+			// o trigger re-disparar o mesmo bucket → mensagem duplicada no
+			// próximo prompt de usuário.
+			return;
+		}
+		projectId = nextProjectId;
 
-		// Reset trigger state on branch navigation
+		// Reset trigger state on project change
 		lastPromptedBucket = -1;
 		extractionDueCount = 0;
 		// Reset memory search policy state
@@ -246,7 +254,11 @@ export default function (pi: ExtensionAPI) {
 		appendFileSync(sessionFile, obs + "\n");
 
 		// ── Auto-extraction trigger ──
-		// Envia mensagem follow-up pro LLM a cada cruzamento do threshold (50, 100, ...)
+		// Envia mensagem pro LLM a cada cruzamento do threshold (50, 100, ...).
+		// Entrega via "nextTurn" (não followUp): sem atraso intra-turno, sem
+		// ciclo extra. lastPromptedBucket (monotônico) já garante 1x/threshold;
+		// não é resetado em before_agent_start nem em session_tree no mesmo
+		// projeto (evita re-disparo do mesmo bucket com mensagem pendente).
 		const count = countObservations(sessionFile);
 		const { prompt, bucket } = shouldPromptExtraction(count, lastPromptedBucket);
 		if (prompt) {
@@ -255,7 +267,7 @@ export default function (pi: ExtensionAPI) {
 				pi.sendUserMessage(
 					`[pi-memory] Session reached ${count} observations (threshold ${OBSERVATION_THRESHOLD}). ` +
 						"Call memory_extract to process observations into memories.",
-					{ deliverAs: "followUp" },
+					{ deliverAs: "nextTurn" },
 				);
 			} catch {
 				// Fallback: injeta no próximo before_agent_start
