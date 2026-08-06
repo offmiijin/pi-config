@@ -25,6 +25,9 @@ export type Scope = (typeof ScopeEnum.static)[number];
 export const SearchScopeEnum = StringEnum(["global", "project", "all"] as const);
 export type SearchScope = (typeof SearchScopeEnum.static)[number];
 
+export const SaveModeEnum = StringEnum(["append", "consolidate"] as const);
+export type SaveMode = (typeof SaveModeEnum.static)[number];
+
 // ─── memory_save ──────────────────────────────────────────────────────────
 
 export const SaveSchema = Type.Object({
@@ -43,6 +46,24 @@ export const SaveSchema = Type.Object({
 	),
 	supersedes: Type.Optional(
 		Type.String({ description: "Context key of memory this replaces" }),
+	),
+	summary: Type.Optional(
+		Type.String({
+			description:
+				"Resumo de 1-2 frases em PT-BR do estado ATUAL da memória. " +
+				"Sobrescreve o anterior no append/consolidate; usado pelo memory_extract para dedup.",
+		}),
+	),
+	mode: Type.Optional(
+		Type.Union(
+			[Type.Literal("append"), Type.Literal("consolidate")],
+			{
+				description:
+					"append (default): adiciona entrada datada ao arquivo. " +
+					"consolidate: reescreve a memória — arquiva a versão atual do MESMO context em .supersedes/ e cria arquivo novo " +
+					"(use quando a informação nova atualiza/contradiz a existente; para substituir memória de OUTRO context use supersedes).",
+			},
+		),
 	),
 });
 
