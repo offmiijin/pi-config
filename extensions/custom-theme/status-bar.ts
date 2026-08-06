@@ -7,7 +7,7 @@
 import { CustomEditor, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, KeybindingsManager, SelectListTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
 	MEMORIES_ROOT,
@@ -40,6 +40,7 @@ class ModelInfoEditor extends CustomEditor {
 	private contextWindow = 0;
 	private memoryTotal = 0;
 	private memoryObservations = 0;
+	private piVersion = "";
 
 	constructor(
 		tui: TUI,
@@ -83,6 +84,11 @@ class ModelInfoEditor extends CustomEditor {
 		this.invalidate();
 	}
 
+	setPiVersion(version: string) {
+		this.piVersion = version;
+		this.invalidate();
+	}
+
 	render(width: number): string[] {
 		const lines = super.render(width);
 		if (width <= 4) return lines;
@@ -116,16 +122,22 @@ class ModelInfoEditor extends CustomEditor {
 
 		const topBorder = mutedFg("\u2500".repeat(width));
 
-		// Memory line — top right corner, above the token info
+		// Linha superior — versão do pi à esquerda, info de memória à direita
+		const versionInfo = this.piVersion && this.piVersion !== "unknown"
+			? this.uiTheme.fg("accent", "\u03c0") + " " + this.uiTheme.fg("muted", this.piVersion)
+			: "";
 		const memoryInfo = [
 			this.uiTheme.fg("muted", "\u{1f9e0}"), // 🧠
 			this.uiTheme.fg("accent", String(this.memoryTotal)),
 			this.uiTheme.fg("muted", "\u{1f441}"), // 👁
 			this.uiTheme.fg("dim", String(this.memoryObservations)),
 		].join(" ");
-		const memoryW = visibleWidth(memoryInfo);
+		const memT = truncateToWidth(memoryInfo, innerW);
+		const memW = visibleWidth(memT);
+		const verT = truncateToWidth(versionInfo, Math.max(0, innerW - memW));
+		const verW = visibleWidth(verT);
 		const memoryLine =
-			rail + " ".repeat(Math.max(0, innerW - memoryW)) + truncateToWidth(memoryInfo, innerW);
+			rail + verT + " ".repeat(Math.max(0, innerW - verW - memW)) + memT;
 
 		const bottomBorder = mutedFg("\u2500".repeat(width));
 
@@ -175,12 +187,43 @@ class ModelInfoEditor extends CustomEditor {
 	}
 }
 
+/**
+ * Resolve a versão do pi em execução.
+ * 1) package.json ao lado do binário (instalações mise)
+ * 2) fallback: `pi --version`
+ */
+async function resolvePiVersion(pi: ExtensionAPI): Promise<string> {
+	try {
+		const pkgPath = path.join(path.dirname(process.execPath), "package.json");
+		if (existsSync(pkgPath)) {
+			const version = JSON.parse(readFileSync(pkgPath, "utf8")).version;
+			if (typeof version === "string" && version.trim()) {
+				return version.trim().replace(/^v/, "");
+			}
+		}
+	} catch {}
+	try {
+		const r = await pi.exec("pi", ["--version"], { timeout: 5000 });
+		if (r.code === 0 && r.stdout.trim()) {
+			return r.stdout.trim().replace(/^v/, "");
+		}
+	} catch {}
+	return "unknown";
+}
+
 export function registerStatusBar(pi: ExtensionAPI) {
 	let currentThinking: string = "off";
 	let editorRef: ModelInfoEditor | null = null;
 	let sessionTokens = 0;
 	let sessionCost = 0;
 	let footerDataRef: any = null;
+	let piVersion = "unknown";
+
+	// Resolve a versão do pi em execução (uma vez por processo)
+	resolvePiVersion(pi).then((v) => {
+		piVersion = v;
+		editorRef?.setPiVersion(v);
+	});
 
 	// ── escuta agente-switcher ─────────────────────────────────
 	pi.events?.on("custom:agent-switch", ({ type }: { type: string }) => {
@@ -269,6 +312,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			editorRef = editor;
 			editor.setModelInfo(modelId, provider, currentThinking);
 			editor.setAgentType(currentAgent);
+			editor.setPiVersion(piVersion);
 			const ctxW = ctx.model?.contextWindow || 0;
 			const ctxU = ctx.getContextUsage?.()?.tokens || 0;
 			editor.setContextInfo(ctxU, ctxW);
