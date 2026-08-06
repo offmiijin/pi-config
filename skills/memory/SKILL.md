@@ -7,6 +7,8 @@ description: Sistema de memória persistente do agente (pi-memory). Usar para sa
 
 Sistema de memória persistente. Memórias são arquivos markdown organizados por **contexto** (um arquivo = um contexto, com entradas relacionadas). Nunca são injetadas no system prompt — toda recuperação é via tool call.
 
+> **Tools nativas do pi:** as tools `memory_*` são nativas do agente — chame SEMPRE diretamente (`memory_status`, `memory_save`, ...). NUNCA via `mcp()`/`mcp call`/`mcp({ tool: ... })` — o gateway não roteia tools nativas; a chamada falha e queima um turno.
+
 ## Tools Disponíveis
 
 | Tool | Quando usar |
