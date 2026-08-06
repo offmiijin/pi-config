@@ -65,6 +65,12 @@ Montado como `/dev/null`:
 Montado vazio (tmpfs):
   /sbin, /usr/sbin, /root         → ferramentas de sistema bloqueadas
 
+> ⚠️ **denyPaths e symlinks**: se um path negado for um symlink (ex:
+> `/usr/sbin -> bin` no Arch), `bwrap --tmpfs` segue o symlink e mascara o
+> diretório DESTINO — `/usr/bin` inteiro viraria tmpfs vazio, quebrando
+> shebangs `#!/usr/bin/env` (npm, npx). O sandbox detecta symlinks e pula
+> esses paths com um warning.
+
 NÃO montado:
   ~ (home real)                   → sem .aws, .gnupg, .bash_history
   ~/.ssh (chaves privadas)        → nunca expostas no modo agent

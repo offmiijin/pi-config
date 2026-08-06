@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync,
+  mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, lstatSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -144,12 +144,37 @@ describe("buildBwrapArgs — flags base e mounts", () => {
     expect(dirs).toContain(home);
   });
 
-  it("nega paths sensíveis com tmpfs vazio", () => {
+  it("nega paths sensíveis com tmpfs vazio (pulando symlinks)", () => {
     const args = buildBwrapArgs(makeConfig(), uniqCwd());
     const tmpfs = flagValues(args, "--tmpfs");
     for (const deny of DEFAULT_CONFIG.filesystem.denyPaths) {
-      expect(tmpfs).toContain(deny);
+      let isSymlink = false;
+      try {
+        isSymlink = lstatSync(deny).isSymbolicLink();
+      } catch { /* não existe */ }
+      if (isSymlink) {
+        expect(tmpfs, `${deny} é symlink → deve ser pulado`).not.toContain(deny);
+      } else {
+        expect(tmpfs).toContain(deny);
+      }
     }
+  });
+
+  it("denyPaths: pula symlinks (ex: /usr/sbin -> bin) para não mascarar o destino", () => {
+    const base = mkdtempSync(join(tmpdir(), "sb-deny-"));
+    fixtures.push(base);
+    const realSbin = join(base, "real-sbin");
+    mkdirSync(realSbin);
+    const sbinLink = join(base, "sbin-link");
+    symlinkSync(realSbin, sbinLink);
+
+    const args = buildBwrapArgs(
+      makeConfig({ filesystem: { denyPaths: [sbinLink, realSbin] } }),
+      uniqCwd(),
+    );
+    const tmpfs = flagValues(args, "--tmpfs");
+    expect(tmpfs).toContain(realSbin);
+    expect(tmpfs).not.toContain(sbinLink);
   });
 
   it("remove capabilities padrão (18)", () => {

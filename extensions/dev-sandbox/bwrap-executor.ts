@@ -8,7 +8,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync } from "node:fs";
+import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
 
@@ -429,6 +429,20 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
 
   // Paths negados — sobrescritos com tmpfs vazio
   for (const deny of config.filesystem.denyPaths) {
+    // Se o path for symlink (ex: /usr/sbin -> bin no Arch), bwrap --tmpfs
+    // segue o symlink (mount(2) resolve o alvo) e mascara o DIRETÓRIO
+    // DESTINO — ex: /usr/bin inteiro vira tmpfs vazio, quebrando shebangs
+    // como #!/usr/bin/env (npm, npx, etc). Pula com aviso.
+    let isSymlink = false;
+    try {
+      isSymlink = lstatSync(deny).isSymbolicLink();
+    } catch {
+      // Não existe → --tmpfs cria o diretório normalmente
+    }
+    if (isSymlink) {
+      console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+      continue;
+    }
     args.push("--tmpfs", deny);
   }
 
