@@ -8,7 +8,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, openSync, closeSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
 
@@ -178,6 +178,40 @@ function findPiDocsDir(home: string): string | null {
   return null;
 }
 
+// ─── Diretórios de cache persistentes ──────────────────────────
+
+/** Defaults relativos ao workspace para cada cache (valor vazio na config). */
+const CACHE_DIR_DEFAULTS: Record<string, string> = {
+  npm: ".sandbox-cache/npm",
+  pip: ".sandbox-cache/pip",
+  clones: ".sandbox-cache/clones",
+};
+
+/** Variável de ambiente exposta dentro do sandbox para cada cache. */
+const CACHE_ENV_VARS: Record<string, string> = {
+  npm: "NPM_CONFIG_CACHE",
+  pip: "PIP_CACHE_DIR",
+  clones: "SANDBOX_CLONE_DIR",
+};
+
+/**
+ * Resolve os caminhos reais dos diretórios de cache.
+ * - Vazio "" → <cwd>/.sandbox-cache/<nome>
+ * - Relativo  → resolvido contra cwd
+ * - Absoluto  → mantido (deve ser montado — ver buildBwrapArgs)
+ */
+export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<string, string> {
+  const cfg = (config.filesystem.cacheDirs ?? {}) as Record<string, string>;
+  const out: Record<string, string> = {};
+  for (const [name, defaultRel] of Object.entries(CACHE_DIR_DEFAULTS)) {
+    const v = cfg[name];
+    if (!v) out[name] = join(cwd, defaultRel);
+    else if (v.startsWith("/")) out[name] = v;
+    else out[name] = join(cwd, v);
+  }
+  return out;
+}
+
 // ─── Cache de argumentos bwrap ──────────────────────────────
 
 const bwrapArgsCache = new Map<string, string[]>();
@@ -191,6 +225,7 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
     config.filesystem.denyFilePatterns.join(","),
     config.filesystem.extraWritable.join(","),
     config.filesystem.extraReadonly.join(","),
+    config.filesystem.cacheDirs ? Object.values(config.filesystem.cacheDirs).join(",") : "",
     config.capabilities.drop.join(","),
   ];
   return parts.join("|");
@@ -404,6 +439,36 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   for (const p of config.filesystem.extraReadonly) {
     if (existsSync(p)) {
       args.push("--ro-bind", p, p);
+    }
+  }
+
+  // ── Caches persistentes (npm, pip, clones) ────────────
+  // Cria os diretórios no host (visíveis no sandbox via bind do $PWD)
+  // e expõe as variáveis de ambiente para as ferramentas (npm, pip, git).
+  const cacheDirs = resolveCacheDirs(config, cwd);
+  for (const [name, dir] of Object.entries(cacheDirs)) {
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      // Degradação segura: segue sem criar
+    }
+
+    const envVar = CACHE_ENV_VARS[name];
+    if (envVar) {
+      args.push("--setenv", envVar, dir);
+    }
+
+    // Caminho fora do workspace → garante montagem read-write própria.
+    // Se já coberto por extraWritable/extraReadonly, não duplica o bind.
+    if (!dir.startsWith(cwd + "/")) {
+      const alreadyBound = [...config.filesystem.extraWritable, ...config.filesystem.extraReadonly]
+        .some((p) => dir === p || dir.startsWith(p + "/"));
+      if (!alreadyBound) {
+        args.push("--dir", dir);
+        if (existsSync(dir)) {
+          args.push("--bind", dir, dir);
+        }
+      }
     }
   }
 

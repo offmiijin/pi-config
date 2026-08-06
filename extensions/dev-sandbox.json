@@ -10,7 +10,8 @@
     "denyFilePatterns": [".env", "*.pem", "*.key"],
     "cacheDirs": {
       "npm": "",
-      "pip": ""
+      "pip": "",
+      "clones": ""
     }
   },
   "ssh": {
