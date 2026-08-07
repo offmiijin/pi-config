@@ -83,8 +83,9 @@ export function matchPathPattern(relPath: string, pattern: string): boolean {
  *
  * Exportado para testes (security scan).
  */
-// Diretórios já alertados via EACCES — evita spam no TUI a cada tool call.
+// Diretórios/Paths já alertados — evita spam no TUI a cada tool call.
 const eaccesWarned = new Set<string>();
+const symlinkWarned = new Set<string>();
 
 export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   if (patterns.length === 0) return [];
@@ -543,7 +544,10 @@ function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
       // Não existe → --tmpfs cria o diretório normalmente
     }
     if (isSymlink) {
-      console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+      if (!symlinkWarned.has(deny)) {
+        symlinkWarned.add(deny);
+        console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+      }
       continue;
     }
     args.push("--tmpfs", deny);
