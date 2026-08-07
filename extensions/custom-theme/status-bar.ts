@@ -4,8 +4,8 @@
  * Refatorado de extensions/status-bar.ts para export nomeado.
  */
 
-import { CustomEditor, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, KeybindingsManager, SelectListTheme, TUI } from "@earendil-works/pi-tui";
+import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
+import type { EditorTheme, SelectListTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";

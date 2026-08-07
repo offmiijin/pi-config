@@ -60,6 +60,7 @@ function makeConfig(over: DeepPartial<SandboxConfig> = {}): SandboxConfig {
     ssh: { ...DEFAULT_CONFIG.ssh, ...(over.ssh ?? {}) },
     capabilities: { ...DEFAULT_CONFIG.capabilities, ...(over.capabilities ?? {}) },
     seccomp: { ...DEFAULT_CONFIG.seccomp, ...(over.seccomp ?? {}) },
+    landlock: { ...DEFAULT_CONFIG.landlock, ...(over.landlock ?? {}) },
   };
 }
 

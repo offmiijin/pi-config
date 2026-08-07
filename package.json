@@ -2,5 +2,9 @@
   "private": true,
   "workspaces": [
     "extensions/*"
-  ]
+  ],
+  "dependencies": {
+    "@earendil-works/pi-tui": "^0.84.0",
+    "@rolldown/binding-linux-x64-gnu": "^1.1.5"
+  }
 }
