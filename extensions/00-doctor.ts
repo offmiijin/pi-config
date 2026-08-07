@@ -352,14 +352,26 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		fix: seccompOk ? undefined : "sandbox roda sem seccomp (modo degradado); gere com gen-seccomp",
 	});
 
-	const landlockExec = join(devSandboxDir, "gen-seccomp", "target", "release", "landlock-exec");
-	const landlockOk = existsSync(landlockExec);
+	// landlock-exec: empacotado por arquitetura (landlock-exec-<arch>),
+	// legado (landlock-exec) ou build de desenvolvimento (target/release).
+	const ARCH_TRIPLET_LOCK: Record<string, string> = {
+		x64: "x86_64",
+		arm64: "aarch64",
+		riscv64: "riscv64",
+	};
+	const archName = ARCH_TRIPLET_LOCK[process.arch] ?? process.arch;
+	const landlockCandidates = [
+		join(devSandboxDir, `landlock-exec-${archName}`),
+		join(devSandboxDir, "landlock-exec"),
+		join(devSandboxDir, "gen-seccomp", "target", "release", "landlock-exec"),
+	];
+	const landlockOk = landlockCandidates.some(existsSync);
 	checks.push({
 		id: "landlock-exec",
 		label: "landlock-exec (sandbox)",
 		status: landlockOk ? "ok" : "warn",
-		detail: landlockOk ? "compilado" : "não compilado",
-		fix: landlockOk ? undefined : "sandbox opera sem a camada Landlock; compile com Rust se quiser (dev-sandbox/README)",
+		detail: landlockOk ? "presente" : "não encontrado",
+		fix: landlockOk ? undefined : "sandbox opera sem a camada Landlock; rode gen-seccomp/build.sh para compilar (dev-sandbox/README)",
 	});
 
 	// User namespaces (bwrap depende)

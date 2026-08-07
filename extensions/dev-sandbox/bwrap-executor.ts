@@ -11,6 +11,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
+import { resolveSystemPaths } from "./portability";
 
 // ─── Env vars seguras (whitelist) ──────────────────────────
 
@@ -370,38 +371,15 @@ function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
     "--dev", "/dev",
     "--tmpfs", "/tmp",
     "--tmpfs", "/run",
-    // Sistema read-only
-    "--ro-bind", "/usr", "/usr",
-    "--ro-bind", "/bin", "/bin",
-    "--ro-bind", "/lib", "/lib",
+    // Sistema read-only — paths detectados por distro (portability.ts)
+    // Base: /usr, /bin, /lib. Condicionais: /lib64, /lib32, /nix (NixOS),
+    // /etc/ssl, /etc/ca-certificates etc.
+    ...resolveSystemPaths().roDirs.map((dir) => ["--ro-bind", dir, dir]).flat(),
+
+    // /etc seletivo — apenas arquivos necessários pra runtime.
+    // Inclui ld.so.cache/conf (Debian/Ubuntu/Fedora) e outros condicionais.
+    ...resolveSystemPaths().etcFiles.map((f) => ["--ro-bind", f, f]).flat(),
   ];
-
-  // /lib64 pode não existir
-  if (existsSync("/lib64")) {
-    args.push("--ro-bind", "/lib64", "/lib64");
-  }
-
-  // /etc seletivo — apenas arquivos necessários pra runtime
-  const etcFiles = [
-    "/etc/resolv.conf",
-    "/etc/hosts",
-    "/etc/passwd",
-    "/etc/group",
-    "/etc/nsswitch.conf",
-  ];
-  for (const f of etcFiles) {
-    if (existsSync(f)) {
-      args.push("--ro-bind", f, f);
-    }
-  }
-
-  // Certificados TLS (necessários pra HTTPS)
-  if (existsSync("/etc/ssl")) {
-    args.push("--ro-bind", "/etc/ssl", "/etc/ssl");
-  }
-  if (existsSync("/etc/ca-certificates")) {
-    args.push("--ro-bind", "/etc/ca-certificates", "/etc/ca-certificates");
-  }
 
   // ── Isolamento do HOME ──────────────────────────────────
   // Cria HOME vazio ANTES de qualquer montagem de subdiretório.

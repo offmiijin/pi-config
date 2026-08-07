@@ -47,6 +47,12 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
+import {
+  resolveLandlockExecPath,
+  resolveSeccompBpfPath,
+  probeUserNamespaces,
+  archTriplet,
+} from "./portability";
 import type { SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath } from "./bwrap-executor";
@@ -123,10 +129,22 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
+      // User namespaces — bwrap depende deles; aviso não-bloqueante
+      // (se falhar de verdade, o bwrap falha e as tools ficam fail-closed).
+      if (!probeUserNamespaces() && ctx.hasUI) {
+        ctx.ui.notify(
+          "⚠️ User namespaces parecem indisponíveis — bwrap pode falhar ao iniciar.\n" +
+          "Verifique kernel.unprivileged_userns_clone=1 (sysctl) ou o AppArmor do container.",
+          "warning",
+        );
+      }
+
       // ── Seccomp BPF ───────────────────────────
-      // Resolve caminho do BPF se não configurado explicitamente
+      // Seleciona por arquitetura: seccomp-<arch>.bpf → seccomp.bpf (universal,
+      // cobre x86_64 + aarch64 + riscv64 num único filtro).
       if (!config.seccomp.bpfPath) {
-        config.seccomp.bpfPath = join(EXT_DIR, "seccomp.bpf");
+        config.seccomp.bpfPath =
+          resolveSeccompBpfPath(EXT_DIR) ?? join(EXT_DIR, "seccomp.bpf");
       }
       if (config.seccomp.enabled && !existsSync(config.seccomp.bpfPath)) {
         if (ctx.hasUI) {
@@ -142,14 +160,15 @@ export default function (pi: ExtensionAPI) {
 
       // ── Landlock ────────────────────────────
       if (config.landlock.enabled) {
-        const hostPath = join(EXT_DIR, "gen-seccomp", "target", "release", "landlock-exec");
-        if (!existsSync(hostPath)) {
+        // Helper da arquitetura atual (landlock-exec-<arch> → landlock-exec → target/release)
+        const hostPath = resolveLandlockExecPath(EXT_DIR);
+        if (!hostPath) {
           if (config.landlock.required) {
             if (ctx.hasUI) {
               ctx.ui.notify(
                 `Landlock está habilitado e é obrigatório, mas o helper não foi encontrado.\n` +
-                `Caminho esperado: ${hostPath}\n` +
-                "Compile com: cd extensions/dev-sandbox/gen-seccomp && cargo build --release\n" +
+                `Procurado: landlock-exec-${archTriplet()} em ${EXT_DIR}\n` +
+                "Compile com: cd extensions/dev-sandbox/gen-seccomp && ./build.sh\n" +
                 'Ou desabilite: {"landlock": {"enabled": false}}',
                 "error",
               );
