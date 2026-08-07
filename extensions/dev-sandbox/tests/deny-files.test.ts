@@ -103,7 +103,7 @@ describe("findDangerousFiles", () => {
     writeFileSync(join(root, "secrets", "api.key"), "x");
     writeFileSync(join(root, "api.key"), "x");
 
-    const found = findDangerousFiles(root, ["secrets/*"]);
+    const found = findDangerousFiles(root, ["secrets/*"], []);
     expect(found).toEqual([join(root, "secrets", "api.key")]);
   });
 
@@ -111,7 +111,7 @@ describe("findDangerousFiles", () => {
     const root = fixture();
     mkdirSync(join(root, "a", "b"), { recursive: true });
     writeFileSync(join(root, "a", "b", ".env"), "x");
-    const found = findDangerousFiles(root, [".env"]);
+    const found = findDangerousFiles(root, [".env"], []);
     expect(found).toEqual([join(root, "a", "b", ".env")]);
   });
 
@@ -122,7 +122,7 @@ describe("findDangerousFiles", () => {
     writeFileSync(join(root, "keys", "id_rsa.pem"), "PRIV");
     writeFileSync(join(root, "safe.txt"), "ok");
 
-    const found = findDangerousFiles(root, [".env", "*.pem"]);
+    const found = findDangerousFiles(root, [".env", "*.pem"], []);
     expect(found.sort()).toEqual(
       [join(root, ".env"), join(root, "keys", "id_rsa.pem")].sort(),
     );
@@ -136,18 +136,18 @@ describe("findDangerousFiles", () => {
     writeFileSync(join(root, "node_modules", ".env"), "x");
     writeFileSync(join(root, ".env"), "x");
 
-    const found = findDangerousFiles(root, [".env"]);
+    const found = findDangerousFiles(root, [".env"], []);
     expect(found).toEqual([join(root, ".env")]);
   });
 
   it("sem padrões → vazio", () => {
     const root = fixture();
     writeFileSync(join(root, ".env"), "x");
-    expect(findDangerousFiles(root, [])).toEqual([]);
+    expect(findDangerousFiles(root, [], [])).toEqual([]);
   });
 
   it("cwd inexistente → degrada sem negar nada", () => {
-    expect(findDangerousFiles(join(tmpdir(), "nao-existe-xyz"), [".env"])).toEqual([]);
+    expect(findDangerousFiles(join(tmpdir(), "nao-existe-xyz"), [".env"], [])).toEqual([]);
   });
 
   it("diretório ilegível (EACCES) → bloqueia (fail-closed)", () => {
@@ -159,10 +159,47 @@ describe("findDangerousFiles", () => {
       // Fail-closed: dir sem permissão de listagem (r) ainda pode ter
       // arquivos acessíveis por nome dentro do sandbox (só precisa de x
       // no pai) — mascaramento por bind /dev/null não é garantido.
-      expect(() => findDangerousFiles(root, [".env"])).toThrow(/denyFilePatterns/);
+      expect(() => findDangerousFiles(root, [".env"], [])).toThrow(/denyFilePatterns/);
     } finally {
       state.failOn = [];
     }
+  });
+
+  it("diretório sob denyPath com EACCES → não bloqueia (tmpfs já mascara)", () => {
+    const root = fixture();
+    const denied = join(root, "dev", "mysql");
+    mkdirSync(denied, { recursive: true });
+    writeFileSync(join(denied, ".env"), "SECRET=1");
+    // Diretório ilegível, mas coberto por denyPath — tmpfs mascara tudo
+    state.failOn = [denied];
+    try {
+      // Não deve lançar: denyPath cobre o diretório
+      const found = findDangerousFiles(root, [".env"], [denied]);
+      // Arquivo sob denyPath não aparece nos resultados (tmpfs já o esconde)
+      expect(found).toEqual([]);
+    } finally {
+      state.failOn = [];
+    }
+  });
+
+  it("arquivo sensível sob denyPath não é reportado (tmpfs já mascara)", () => {
+    const root = fixture();
+    const denied = join(root, "secrets");
+    mkdirSync(denied, { recursive: true });
+    writeFileSync(join(denied, "api.key"), "x");
+    writeFileSync(join(root, "outside.key"), "x");
+
+    const found = findDangerousFiles(root, ["*.key"], [denied]);
+    // Apenas arquivo fora do denyPath é reportado
+    expect(found).toEqual([join(root, "outside.key")]);
+  });
+
+  it("denyPath fora do cwd não interfere no scan", () => {
+    const root = fixture();
+    writeFileSync(join(root, ".env"), "x");
+    // /sbin é denyPath típico — não afeta scan do workspace
+    const found = findDangerousFiles(root, [".env"], ["/sbin", "/usr/sbin"]);
+    expect(found).toEqual([join(root, ".env")]);
   });
 
   it("diretório removido durante o scan (ENOENT) → segue sem bloquear", () => {
@@ -172,7 +209,7 @@ describe("findDangerousFiles", () => {
     state.enoentOn = [join(root, "gone")];
     try {
       // o subdir some entre listar e entrar — ENOENT é tolerado (nada a mascarar)
-      expect(() => findDangerousFiles(root, [".env"])).not.toThrow();
+      expect(() => findDangerousFiles(root, [".env"], [])).not.toThrow();
     } finally {
       state.enoentOn = [];
     }
@@ -184,7 +221,7 @@ describe("findDangerousFiles", () => {
     writeFileSync(join(root, "secrets", "api.key"), "x");
     writeFileSync(join(root, "api.key"), "x");
     // padrão sem * = igualdade exata de basename
-    const found = findDangerousFiles(root, ["api.key"]);
+    const found = findDangerousFiles(root, ["api.key"], []);
     expect(found.sort()).toEqual(
       [join(root, "api.key"), join(root, "secrets", "api.key")].sort(),
     );

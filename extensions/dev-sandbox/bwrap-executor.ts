@@ -86,7 +86,7 @@ export function matchPathPattern(relPath: string, pattern: string): boolean {
 // Paths já alertados — evita spam no TUI a cada tool call.
 const symlinkWarned = new Set<string>();
 
-export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
+export function findDangerousFiles(cwd: string, patterns: string[], denyPaths: string[]): string[] {
   if (patterns.length === 0) return [];
 
   // Padrões sem "/" casam basename (compat); com "/" casam path relativo
@@ -95,6 +95,13 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   const results: string[] = [];
 
   function walk(current: string) {
+    // Pula diretórios que serão mascarados integralmente por --tmpfs
+    // (denyPaths). Se o bwrap já monta um tmpfs vazio no diretório,
+    // qualquer arquivo sensível dentro dele é naturalmente inacessível —
+    // não precisa de bind /dev/null extra. Isso também evita bloqueios
+    // por EACCES em dados de runtime (ex: volumes Docker com dono diferente).
+    if (denyPaths.some(dp => current === dp || current.startsWith(dp + "/"))) return;
+
     let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(current, { withFileTypes: true });
@@ -641,7 +648,7 @@ function appendSensitiveMounts(args: string[], config: SandboxConfig, cwd: strin
   if (sensitivePatterns.length === 0) return;
   // Falha no scan (findDangerousFiles) propaga → execução é bloqueada
   // (fail-closed): nenhuma tool roda sem garantir o mascaramento.
-  const sensitiveFiles = findDangerousFiles(cwd, sensitivePatterns);
+  const sensitiveFiles = findDangerousFiles(cwd, sensitivePatterns, config.filesystem.denyPaths);
   for (const f of sensitiveFiles) {
     // /dev/null já existe porque --dev /dev é adicionado no início
     args.push("--ro-bind", "/dev/null", f);
