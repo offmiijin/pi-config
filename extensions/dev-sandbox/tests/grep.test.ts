@@ -1,105 +1,109 @@
 /**
  * Testes do tool grep (ripgrep via sandbox).
  *
- * Cobre: construção dos argumentos rg (literal, ignore-case, contexto, glob,
- * limite), tratamento de exit codes (0/1 ok, 2 erro), validação de pattern,
- * estado não inicializado e aviso de limite atingido.
+ * Cobre: construção do comando bash (pipefail + head p/ limite global),
+ * passagem dos args do rg via "$@" (sem shell injection), exit codes
+ * (0/1/2), validação de pattern e aviso de limite atingido.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("../bwrap-executor", () => ({ execInSandbox: vi.fn() }));
 
-import { createGrepTool, setGrepConfig } from "../tools/grep";
+import { createGrepTool } from "../tools/grep";
 import { execInSandbox } from "../bwrap-executor";
 import { DEFAULT_CONFIG } from "../types";
 
 const execMock = vi.mocked(execInSandbox);
 
 function makeTool() {
-  return createGrepTool("/work/proj");
+  return createGrepTool("/work/proj", DEFAULT_CONFIG);
 }
 
 function run(params: Record<string, unknown>, ctx: { cwd: string } = { cwd: "/work/proj" }) {
   return makeTool().execute("id", params, undefined, () => {}, ctx);
 }
 
+/** Extrai os args do rg do comando ["bash","-c",script,"_", ...rgArgs]. */
+function rgArgsOf(call: { command: unknown }): string[] {
+  return (call.command as string[]).slice(4);
+}
+
 beforeEach(() => {
   execMock.mockReset();
-  setGrepConfig(DEFAULT_CONFIG);
 });
 
-describe("grep — validação e estado", () => {
+describe("grep — validação", () => {
   it("pattern vazio → erro", async () => {
     const res = await run({ pattern: "" });
     expect(res.content[0].text).toContain("Error: pattern is required");
     expect(execMock).not.toHaveBeenCalled();
   });
-
-  it("sandbox não inicializado → erro", async () => {
-    setGrepConfig(null as unknown as typeof DEFAULT_CONFIG);
-    const res = await run({ pattern: "x" });
-    expect(res.content[0].text).toContain("Error: sandbox not initialized");
-    expect(execMock).not.toHaveBeenCalled();
-  });
 });
 
-describe("grep — construção de rgArgs", () => {
-  it("flags base + default limit 100 + path '.'", async () => {
+describe("grep — construção do comando", () => {
+  it("bash com pipefail e head para limite global; args via \$@", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     await run({ pattern: "foo" });
     const [, call] = execMock.mock.calls[0];
     const cmd = call.command as string[];
-    expect(cmd[0]).toBe("rg");
+    expect(cmd[0]).toBe("bash");
+    expect(cmd[1]).toBe("-c");
+    const script = cmd[2] as string;
+    expect(script).toContain("set -o pipefail");
+    expect(script).toContain('rg "$@"');
+    expect(script).toContain("head -n 101"); // limit default 100 + 1
+
+    const rg = rgArgsOf(call);
     for (const flag of ["--no-heading", "--with-filename", "--line-number", "--no-messages", "--color", "never"]) {
-      expect(cmd).toContain(flag);
+      expect(rg).toContain(flag);
     }
-    expect(cmd).toContain("--max-count");
-    expect(cmd[cmd.indexOf("--max-count") + 1]).toBe("100");
-    expect(cmd[cmd.length - 1]).toBe(".");
-    expect(cmd[cmd.length - 2]).toBe("foo");
+    // sem --max-count por arquivo (limite agora é global via head)
+    expect(rg).not.toContain("--max-count");
+    expect(rg[rg.length - 1]).toBe(".");
+    expect(rg[rg.length - 2]).toBe("foo");
   });
 
   it("literal → --fixed-strings", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     await run({ pattern: "a.b", literal: true });
-    expect(execMock.mock.calls[0][1].command).toContain("--fixed-strings");
+    expect(rgArgsOf(execMock.mock.calls[0][1])).toContain("--fixed-strings");
   });
 
   it("ignoreCase → --ignore-case", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     await run({ pattern: "x", ignoreCase: true });
-    expect(execMock.mock.calls[0][1].command).toContain("--ignore-case");
+    expect(rgArgsOf(execMock.mock.calls[0][1])).toContain("--ignore-case");
   });
 
   it("context → -C N", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     await run({ pattern: "x", context: 3 });
-    const cmd = execMock.mock.calls[0][1].command;
-    expect(cmd).toContain("-C");
-    expect(cmd[cmd.indexOf("-C") + 1]).toBe("3");
+    const rg = rgArgsOf(execMock.mock.calls[0][1]);
+    expect(rg).toContain("-C");
+    expect(rg[rg.indexOf("-C") + 1]).toBe("3");
   });
 
   it("glob → --glob", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     await run({ pattern: "x", glob: "*.ts" });
-    const cmd = execMock.mock.calls[0][1].command;
-    expect(cmd).toContain("--glob");
-    expect(cmd[cmd.indexOf("--glob") + 1]).toBe("*.ts");
+    const rg = rgArgsOf(execMock.mock.calls[0][1]);
+    expect(rg).toContain("--glob");
+    expect(rg[rg.indexOf("--glob") + 1]).toBe("*.ts");
   });
 
-  it("limit custom → --max-count N", async () => {
+  it("limit custom → head -n N+1", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     await run({ pattern: "x", limit: 5 });
-    const cmd = execMock.mock.calls[0][1].command;
-    expect(cmd[cmd.indexOf("--max-count") + 1]).toBe("5");
+    const script = (execMock.mock.calls[0][1].command as string[])[2] as string;
+    expect(script).toContain("head -n 6");
   });
 
-  it("path param vira último argumento", async () => {
+  it("path param vira último argumento do rg", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     await run({ pattern: "x", path: "src" });
-    const cmd = execMock.mock.calls[0][1].command;
-    expect(cmd[cmd.length - 1]).toBe("src");
+    const rg = rgArgsOf(execMock.mock.calls[0][1]);
+    expect(rg[rg.length - 1]).toBe("src");
     expect(execMock.mock.calls[0][1].cwd).toBe("/work/proj");
   });
 
@@ -135,12 +139,14 @@ describe("grep — exit codes e saída", () => {
     expect(res.content[0].text).toContain("exit code 3");
   });
 
-  it("limite atingido → aviso [N matches limit reached]", async () => {
-    const lines = Array.from({ length: 100 }, (_, i) => `f${i}.ts:1:x`);
+  it("limite atingido → aviso [N matches limit reached] e conteúdo truncado", async () => {
+    const lines = Array.from({ length: 101 }, (_, i) => `f${i}.ts:1:x`);
     execMock.mockResolvedValue({ stdout: lines.join("\n"), stderr: "", exitCode: 0 });
     const res = await run({ pattern: "x" });
     expect(res.content[0].text).toContain("[100 matches limit reached]");
     expect(res.details?.matchLimitReached).toBe(100);
+    const contentLines = res.content[0].text.split("\n").filter((l) => l.startsWith("f"));
+    expect(contentLines).toHaveLength(100);
   });
 
   it("abaixo do limite → sem aviso", async () => {

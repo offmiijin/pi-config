@@ -8,18 +8,16 @@
  *   rg --no-heading --with-filename --line-number
  *      [--max-count N] [--ignore-case] [-C N] [-g GLOB]
  *      <pattern> <path>
+ *
+ * Limite global de matches: o pipeline `rg | head` é executado com
+ * `set -o pipefail` (preserva o exit code do rg) e os argumentos do
+ * rg são passados via "$@" — sem shell injection de pattern/path.
  */
 
 import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { execInSandbox } from "../bwrap-executor";
 import type { SandboxConfig } from "../types";
-
-let _config: SandboxConfig | null = null;
-
-export function setGrepConfig(config: SandboxConfig): void {
-  _config = config;
-}
 
 interface GrepToolResult {
   content: Array<{ type: "text"; text: string }>;
@@ -28,7 +26,7 @@ interface GrepToolResult {
 
 const DEFAULT_GREP_LIMIT = 100;
 
-export function createGrepTool(cwd: string) {
+export function createGrepTool(cwd: string, config: SandboxConfig) {
   return {
     name: "grep",
     label: "Grep",
@@ -83,17 +81,9 @@ export function createGrepTool(cwd: string) {
         };
       }
 
-      const config = _config;
-      if (!config) {
-        return {
-          content: [{ type: "text", text: "Error: sandbox not initialized" }],
-          details: undefined,
-        };
-      }
-
       const searchCwd = ctx?.cwd ?? cwd;
 
-      // Constrói comando rg
+      // Constrói comando rg (args passados via "$@" — sem shell injection)
       const rgArgs: string[] = [
         "--no-heading",
         "--with-filename",
@@ -102,44 +92,38 @@ export function createGrepTool(cwd: string) {
         "--color", "never",
       ];
 
-      // Literal (--fixed-strings) vs regex
       if (params.literal) {
         rgArgs.push("--fixed-strings");
       }
 
-      // Case insensitive
       if (params.ignoreCase) {
         rgArgs.push("--ignore-case");
       }
 
-      // Context lines
       if (typeof params.context === "number" && params.context > 0) {
         rgArgs.push("-C", String(params.context));
       }
 
-      // Glob filter
       if (typeof params.glob === "string" && params.glob) {
         rgArgs.push("--glob", params.glob);
       }
 
-      // Limit via rg --max-count (applied per-file; head pipe not needed)
+      // Limite global (head) — sem --max-count por arquivo
       const limit = typeof params.limit === "number" && params.limit > 0
         ? params.limit
         : DEFAULT_GREP_LIMIT;
-      rgArgs.push("--max-count", String(limit));
 
-      // Pattern
       rgArgs.push("--", pattern);
 
-      // Path
       const searchPath = typeof params.path === "string" && params.path
         ? params.path
         : ".";
       rgArgs.push(searchPath);
 
-      // Executa rg diretamente via bwrap (sem bash -c, sem pipe)
+      // pipefail preserva o exit code do rg; head aplica o limite global
+      const script = `set -o pipefail; rg "$@" | head -n ${limit + 1}`;
       const { stdout, stderr, exitCode } = await execInSandbox(config, {
-        command: ["rg", ...rgArgs],
+        command: ["bash", "-c", script, "_", ...rgArgs],
         cwd: searchCwd,
         signal,
       });
@@ -153,30 +137,31 @@ export function createGrepTool(cwd: string) {
         };
       }
 
-      const trimmed = stdout.toString().trim();
+      let lines = stdout.toString().split("\n");
+      // Remove trailing vazio (stdout termina com \n)
+      if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
-      if (!trimmed) {
+      let details: Record<string, unknown> | undefined;
+      let text: string;
+
+      if (lines.length > limit) {
+        lines = lines.slice(0, limit);
+        details = { matchLimitReached: limit };
+        text = lines.join("\n") + `\n\n[${limit} matches limit reached]`;
+      } else {
+        text = lines.join("\n");
+      }
+
+      if (!text.trim()) {
         return {
           content: [{ type: "text", text: "No matches found" }],
           details: undefined,
         };
       }
 
-      const lines = trimmed.split("\n");
-      const details: Record<string, unknown> = {};
-
-      if (lines.length >= limit) {
-        details.matchLimitReached = limit;
-        const notice = `\n\n[${limit} matches limit reached]`;
-        return {
-          content: [{ type: "text", text: trimmed + notice }],
-          details,
-        };
-      }
-
       return {
-        content: [{ type: "text", text: trimmed }],
-        details: Object.keys(details).length > 0 ? details : undefined,
+        content: [{ type: "text", text }],
+        details,
       };
     },
   };

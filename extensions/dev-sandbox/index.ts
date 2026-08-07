@@ -47,7 +47,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
-import type { SandboxConfig } from "./types";
+import { DEFAULT_CONFIG, type SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs } from "./bwrap-executor";
 import { createReadOps } from "./tools/read-ops";
@@ -55,7 +55,7 @@ import { createWriteOps } from "./tools/write-ops";
 import { createEditOps } from "./tools/edit-ops";
 import { createFindOps } from "./tools/find-ops";
 import { createLsOps } from "./tools/ls-ops";
-import { createGrepTool, setGrepConfig } from "./tools/grep";
+import { createGrepTool } from "./tools/grep";
 
 /** Diretório desta extensão — usado para resolver seccomp.bpf. */
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -81,7 +81,6 @@ export default function (pi: ExtensionAPI) {
     enabled = false;
     config = null;
     fallbackToHost = false;
-    setGrepConfig(null);
 
     // --no-sandbox: opt-out explícito → tools do host
     if (pi.getFlag("no-sandbox") as boolean) {
@@ -142,7 +141,6 @@ export default function (pi: ExtensionAPI) {
       }
 
       enabled = true;
-      setGrepConfig(config);
 
       if (ctx.hasUI) {
         ctx.ui.setStatus(
@@ -272,14 +270,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    ...createGrepTool(localCwd),
+    ...createGrepTool(localCwd, DEFAULT_CONFIG),
     async execute(id, params, signal, onUpdate, ctx) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
         if (fallbackToHost) return createGrepToolSdk(cwd).execute(id, params, signal, onUpdate, ctx);
         throw sandboxBlockedError("grep");
       }
-      const tool = createGrepTool(cwd);
+      const tool = createGrepTool(cwd, config);
       return tool.execute(id, params, signal, onUpdate, ctx);
     },
   });
@@ -354,6 +352,5 @@ export default function (pi: ExtensionAPI) {
     enabled = false;
     config = null;
     fallbackToHost = false;
-    setGrepConfig(null);
   });
 }
