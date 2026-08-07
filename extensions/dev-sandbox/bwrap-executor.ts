@@ -428,6 +428,12 @@ function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
     args.push("--ro-bind", piDocsDir, piDocsDir);
   }
 
+  // ── Landlock executor ─────────────────────
+  // Monta o helper landlock-exec como /pi-landlock-exec dentro do sandbox.
+  if (landlockExecHostPath && config.landlock.enabled) {
+    args.push("--ro-bind", landlockExecHostPath, LANDLOCK_EXEC_SANDBOX_PATH);
+  }
+
   // ── PATH sob HOME ──────────────────────────────────────
   // PATH é repassado via SAFE_ENV_VARS, mas HOME é vazio no sandbox.
   // Monta read-only os diretórios no PATH que estão sob HOME para que
@@ -659,6 +665,18 @@ function appendSensitiveMounts(args: string[], config: SandboxConfig, cwd: strin
 
 /** Caminho do helper landlock-exec dentro do sandbox. */
 const LANDLOCK_EXEC_SANDBOX_PATH = "/pi-landlock-exec";
+
+/** Caminho do helper no host — definido por setLandlockExecPath(). */
+let landlockExecHostPath: string | undefined;
+
+/**
+ * Define o caminho do binário landlock-exec no host.
+ * Deve ser chamado durante session_start, antes da primeira tool call.
+ * O binário será montado como /pi-landlock-exec dentro do sandbox.
+ */
+export function setLandlockExecPath(hostPath: string) {
+  landlockExecHostPath = hostPath;
+}
 
 /** Cache do probe de ABI: undefined = não probado, null = indisponível, number = ABI. */
 let landlockAbiCache: number | null | undefined = undefined;

@@ -49,7 +49,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
 import type { SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
-import { resolveCacheDirs } from "./bwrap-executor";
+import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath } from "./bwrap-executor";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
 import { createEditOps } from "./tools/edit-ops";
@@ -138,6 +138,48 @@ export default function (pi: ExtensionAPI) {
           );
         }
         config.seccomp.enabled = false;
+      }
+
+      // ── Landlock ────────────────────────────
+      if (config.landlock.enabled) {
+        const hostPath = join(EXT_DIR, "gen-seccomp", "target", "release", "landlock-exec");
+        if (!existsSync(hostPath)) {
+          if (config.landlock.required) {
+            if (ctx.hasUI) {
+              ctx.ui.notify(
+                `Landlock está habilitado e é obrigatório, mas o helper não foi encontrado.\n` +
+                `Caminho esperado: ${hostPath}\n` +
+                "Compile com: cd extensions/dev-sandbox/gen-seccomp && cargo build --release\n" +
+                'Ou desabilite: {"landlock": {"enabled": false}}',
+                "error",
+              );
+            }
+            return; // fail-closed: sandbox não ativa
+          }
+          console.warn("[dev-sandbox] landlock-exec não encontrado — Landlock desabilitado.");
+          config.landlock.enabled = false;
+        } else {
+          const abi = probeLandlockAbi(hostPath);
+          if (abi === null || abi < config.landlock.minAbi) {
+            if (config.landlock.required) {
+              if (ctx.hasUI) {
+                ctx.ui.notify(
+                  `Landlock requer ABI >= ${config.landlock.minAbi}, ` +
+                  `detectada: ${abi ?? "indisponível"}. Execução bloqueada.`,
+                  "error",
+                );
+              }
+              return; // fail-closed
+            }
+            console.warn(
+              `[dev-sandbox] Landlock ABI insuficiente (${abi ?? "N/A"} < ${config.landlock.minAbi}) — modo degradado.`
+            );
+            config.landlock.enabled = false;
+          } else {
+            // Helper disponível e ABI compatível — registra para montagem
+            setLandlockExecPath(hostPath);
+          }
+        }
       }
 
       enabled = true;
@@ -270,9 +312,10 @@ export default function (pi: ExtensionAPI) {
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
       `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}, ` +
       `clone remote repos in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
-    // Concatena ao system prompt existente em vez de substituí-lo,
-    // preservando o conteúdo injetado por outras extensões (ex: agent-type).
-    return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}` };
+    const landlockNote = config.landlock.enabled
+      ? "\nLandlock filesystem allowlist active."
+      : "";
+    return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}${landlockNote}` };
   });
 
   // ── /sandbox command ──────────────────────────
@@ -295,6 +338,7 @@ export default function (pi: ExtensionAPI) {
         `Workspace: ${localCwd}`,
         `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
         `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
+        `Landlock: ${config.landlock.enabled ? "ativo (ABI min: " + config.landlock.minAbi + ")" : "desabilitado"}`,
         `Seccomp: ${config.seccomp.enabled ? "ativo (" + config.seccomp.bpfPath + ")" : "desabilitado"}`,
         `Capabilities: ${config.capabilities.drop.length} droppadas`,
         `Caches: npm=${caches.npm} | pip=${caches.pip}`,
