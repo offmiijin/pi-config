@@ -19,6 +19,12 @@ vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
+    // bpfPath é "/x/seccomp.bpf" (inexistente no host) — mocka como
+    // existente para exercitar o caminho openSync-falha → degradação.
+    existsSync: (p: unknown) => {
+      if (String(p).includes("seccomp.bpf")) return true;
+      return (actual.existsSync as (p: string) => boolean)(p as string);
+    },
     openSync: (p: unknown, ...rest: unknown[]) => {
       if (String(p).includes("seccomp.bpf")) throw new Error("open failed (mock)");
       return (actual.openSync as (...a: unknown[]) => number)(p as string, ...rest);

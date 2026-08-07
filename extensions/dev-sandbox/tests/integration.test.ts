@@ -147,6 +147,16 @@ describe.skipIf(!nestedBwrapWorks || !landlockAvailable)("integração Landlock"
     expect(res.stdout.toString()).toBe("ok\n");
   });
 
+  it("/dev/null é gravável (sink) — git e ferramentas funcionam", async () => {
+    const cwd = fixture();
+    const res = await execInSandbox(landlockConfig, {
+      command: ["bash", "-c", "echo ok > /dev/null && echo NULL_RW_OK"],
+      cwd,
+    });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.toString()).toContain("NULL_RW_OK");
+  });
+
   it("leitura/escrita no workspace funciona", async () => {
     const cwd = fixture();
     const res = await execInSandbox(landlockConfig, {

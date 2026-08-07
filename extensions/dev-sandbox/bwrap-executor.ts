@@ -83,8 +83,7 @@ export function matchPathPattern(relPath: string, pattern: string): boolean {
  *
  * Exportado para testes (security scan).
  */
-// Diretórios/Paths já alertados — evita spam no TUI a cada tool call.
-const eaccesWarned = new Set<string>();
+// Paths já alertados — evita spam no TUI a cada tool call.
 const symlinkWarned = new Set<string>();
 
 export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
@@ -103,20 +102,11 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
       // Diretório removido durante o scan (ENOENT/ENOTDIR) → nada a mascarar
       const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
       if (code === "ENOENT" || code === "ENOTDIR") return;
-      // EACCES: dir sem permissão de leitura no host → sandbox também não lê.
-      // Emitir warning uma única vez por diretório (evita spam no TUI).
-      if (code === "EACCES") {
-        if (!eaccesWarned.has(current)) {
-          eaccesWarned.add(current);
-          console.warn(
-            `[dev-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
-            `diretório ignorado no scan de denyFilePatterns.`,
-          );
-        }
-        return;
-      }
-      // Fail-closed: diretório ilegível pode conter arquivos que deveriam
-      // ser mascarados — bloqueia em vez de seguir sem negar.
+      // Fail-closed (EACCES incluído): diretório ilegível pode conter
+      // arquivos que deveriam ser mascarados — bloqueia em vez de seguir
+      // sem negar. Sem permissão de listagem (r), um path ainda é
+      // acessível por nome dentro do sandbox (precisa só de x no pai),
+      // então o mascaramento por bind /dev/null não é garantido.
       throw new Error(
         `[dev-sandbox] Falha ao escanear '${current}' para denyFilePatterns: ` +
         `${err instanceof Error ? err.message : String(err)}`,
@@ -727,7 +717,6 @@ function buildLandlockArgs(config: SandboxConfig, cwd: string): string[] {
   const roPaths = ["/usr", "/bin", "/lib"];
   if (existsSync("/lib64")) roPaths.push("/lib64");
   roPaths.push("/etc");
-  roPaths.push("/dev");
   roPaths.push("/proc");
 
   // Documentação do pi
@@ -750,6 +739,17 @@ function buildLandlockArgs(config: SandboxConfig, cwd: string): string[] {
 
   // ── Read-write paths ─────────────────────
   const rwPaths = ["/tmp", "/run", cwd];
+
+  // /dev — read-write, NÃO read-only.
+  // Regras Landlock são interseção (todas devem conceder o acesso): com
+  // /dev RO, abrir /dev/null O_RDWR é negado e ferramentas que usam
+  // /dev/null como sink (git init, git remote get-url, make, gcc, …)
+  // quebram. O devtmpfs do namespace bwrap (--dev /dev) já expõe apenas
+  // os devices padrão do kernel (null, zero, full, random, urandom, tty,
+  // ptmx, pts, fd, shm) — NUNCA dispositivos de bloco do host (sda etc.).
+  // E com ABI 5+, LANDLOCK_ACCESS_FS_IOCTL_DEV fica "handled" (negado por
+  // padrão), então ioctl em devices continua bloqueado mesmo com /dev rw.
+  rwPaths.push("/dev");
 
   // Caches persistentes
   const cacheDirs = resolveCacheDirs(config, cwd);

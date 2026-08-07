@@ -7,9 +7,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 
 // ─── Mock buffer para controlar chamadas ──────────────────────
 
@@ -174,7 +174,7 @@ describe("wrapWithLandlock", () => {
     expect(roPaths).toContain("/bin");
     expect(roPaths).toContain("/lib");
     expect(roPaths).toContain("/etc");
-    expect(roPaths).toContain("/dev");
+    expect(roPaths).not.toContain("/dev"); // /dev é RW (devtmpfs do namespace + sink /dev/null)
     expect(roPaths).toContain("/proc");
     expect(roPaths).toContain(home);
 
@@ -184,6 +184,7 @@ describe("wrapWithLandlock", () => {
       result.indexOf("--"),
     );
     expect(rwSection).toContain("--allow-rw");
+    expect(rwSection).toContain("/dev");
     expect(rwSection).toContain("/tmp");
     expect(rwSection).toContain("/run");
     expect(rwSection).toContain(proj);
@@ -318,7 +319,7 @@ describe("buildBwrapArgs — mount landlock-exec", () => {
 
     const args = buildBwrapArgs(cfg, proj);
     const ro = args
-      .map((v, i, arr) => (arr[i] === "--ro-bind" ? [arr[i + 1], arr[i + 2]] : null))
+      .map((_, i, arr) => (arr[i] === "--ro-bind" ? [arr[i + 1], arr[i + 2]] : null))
       .filter(Boolean);
 
     expect(ro).toContainEqual(["/host/path/to/landlock-exec", "/pi-landlock-exec"]);
