@@ -7,7 +7,7 @@
  *   - Coletar stdout/stderr com backpressure
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
@@ -652,6 +652,132 @@ function appendSensitiveMounts(args: string[], config: SandboxConfig, cwd: strin
   }
 }
 
+// ─── Landlock ──────────────────────────────────────────────────
+//
+// Landlock é aplicado DENTRO do namespace bwrap via helper nativo.
+// O probe de ABI é cacheado e feito uma única vez por sessão.
+
+/** Caminho do helper landlock-exec dentro do sandbox. */
+const LANDLOCK_EXEC_SANDBOX_PATH = "/pi-landlock-exec";
+
+/** Cache do probe de ABI: undefined = não probado, null = indisponível, number = ABI. */
+let landlockAbiCache: number | null | undefined = undefined;
+
+/**
+ * Consulta a ABI Landlock suportada pelo kernel chamando o helper
+ * landlock-exec fora do sandbox. O resultado é cacheado — chamadas
+ * subsequentes retornam o mesmo valor.
+ *
+ * @param helperPath Caminho absoluto do binário landlock-exec no host.
+ * @returns ABI version (1-9) ou null se Landlock indisponível.
+ */
+export function probeLandlockAbi(helperPath: string): number | null {
+  if (landlockAbiCache !== undefined) return landlockAbiCache;
+  try {
+    const out = execFileSync(helperPath, ["--probe-abi"], {
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const abi = parseInt(out.toString().trim(), 10);
+    landlockAbiCache = Number.isFinite(abi) && abi >= 1 ? abi : null;
+  } catch {
+    landlockAbiCache = null;
+  }
+  return landlockAbiCache;
+}
+
+/**
+ * Constrói os argumentos do landlock-exec com allowlist de paths.
+ *
+ * RO paths: /usr, /bin, /lib, /lib64, /etc, /dev, /proc,
+ *           documentação pi, skills, HOME, extraReadonly.
+ * RW paths: cwd, /tmp, /run, caches, extraWritable, SSH agent socket dir.
+ */
+function buildLandlockArgs(config: SandboxConfig, cwd: string): string[] {
+  const home = process.env.HOME || "/root";
+  const args: string[] = [
+    LANDLOCK_EXEC_SANDBOX_PATH,
+    "--min-abi", String(config.landlock.minAbi),
+  ];
+
+  // ── Read-only paths ──────────────────────
+  const roPaths = ["/usr", "/bin", "/lib"];
+  if (existsSync("/lib64")) roPaths.push("/lib64");
+  roPaths.push("/etc");
+  roPaths.push("/dev");
+  roPaths.push("/proc");
+
+  // Documentação do pi
+  const piDocs = findPiDocsDir(home);
+  if (piDocs) roPaths.push(piDocs);
+
+  // Skills do agente
+  const skillsDir = join(home, ".pi", "agent", "skills");
+  if (existsSync(skillsDir)) roPaths.push(skillsDir);
+
+  // HOME — tmpfs vazio com mounts seletivos (known_hosts, config, .gitconfig)
+  roPaths.push(home);
+
+  // Extra readonly
+  for (const p of config.filesystem.extraReadonly) {
+    if (existsSync(p)) roPaths.push(p);
+  }
+
+  for (const p of roPaths) args.push("--allow-ro", p);
+
+  // ── Read-write paths ─────────────────────
+  const rwPaths = ["/tmp", "/run", cwd];
+
+  // Caches persistentes
+  const cacheDirs = resolveCacheDirs(config, cwd);
+  for (const dir of Object.values(cacheDirs)) {
+    if (existsSync(dir)) rwPaths.push(dir);
+  }
+
+  // Extra writable
+  for (const p of config.filesystem.extraWritable) {
+    if (existsSync(p)) rwPaths.push(p);
+  }
+
+  // SSH agent socket dir (precisa de rw para comunicação bidirecional)
+  if (config.ssh.mode === "agent") {
+    const sock = process.env.SSH_AUTH_SOCK;
+    if (sock) {
+      try {
+        const real = realpathSync(sock);
+        rwPaths.push(dirname(real));
+      } catch {
+        // Socket não resolvível → ignora
+      }
+    }
+  }
+
+  for (const p of rwPaths) args.push("--allow-rw", p);
+
+  args.push("--");
+  return args;
+}
+
+/**
+ * Envolve o comando com o helper landlock-exec se o Landlock
+ * estiver habilitado na configuração. Caso contrário, apenas
+ * anexa o comando diretamente aos argumentos do bwrap.
+ *
+ * @returns Array completo de argumentos para o bwrap.
+ */
+export function wrapWithLandlock(
+  bwrapArgs: string[],
+  command: string[],
+  config: SandboxConfig,
+  cwd: string,
+): string[] {
+  if (!config.landlock.enabled) {
+    return [...bwrapArgs, ...command];
+  }
+  const landlockArgs = buildLandlockArgs(config, cwd);
+  return [...bwrapArgs, ...landlockArgs, ...command];
+}
+
 // ─── Execução ─────────────────────────────────────────────────
 
 /**
@@ -676,7 +802,7 @@ export function execInSandbox(
     }
 
     const baseArgs = buildBwrapArgs(config, opts.cwd);
-    const args = [...baseArgs];
+    let args = [...baseArgs];
 
     // ── Seccomp BPF ──────────────────────────
     let bpfFd: number | undefined;
@@ -693,8 +819,9 @@ export function execInSandbox(
       }
     }
 
-    // Comando a executar
-    args.push(...opts.command);
+    // ── Landlock + comando ───────────────────
+    // Landlock é aplicado dentro do bwrap, após mounts e seccomp.
+    args = wrapWithLandlock(args, opts.command, config, opts.cwd);
 
     // stdio: stdin, stdout, stderr, + opcionalmente FD 3 (BPF)
     const stdio: any[] = ["pipe", "pipe", "pipe"];

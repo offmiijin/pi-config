@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { existsSync, openSync, closeSync } from "node:fs";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
-import { buildBwrapArgs, killGroup } from "../bwrap-executor";
+import { buildBwrapArgs, killGroup, wrapWithLandlock } from "../bwrap-executor";
 
 /**
  * Abre o arquivo BPF se seccomp estiver habilitado.
@@ -36,7 +36,7 @@ export function createBashOps(config: SandboxConfig, cwd: string): BashOperation
         throw new Error("aborted");
       }
 
-      const args = buildBwrapArgs(config, cwd);
+      let args = buildBwrapArgs(config, cwd);
 
       // ── Seccomp BPF ────────────────────────
       const bpfFd = openSeccompFd(config);
@@ -53,8 +53,9 @@ export function createBashOps(config: SandboxConfig, cwd: string): BashOperation
         }
       }
 
-      // Comando — usa bash -lc para carregar profile e ter job control
-      args.push("bash", "-lc", command);
+      // ── Landlock + comando ────────────────
+      // bash -lc carrega profile e tem job control
+      args = wrapWithLandlock(args, ["bash", "-lc", command], config, cwd);
 
       return new Promise((resolve, reject) => {
         // stdio: stdin, stdout, stderr + opcionalmente FD 3 (BPF)
