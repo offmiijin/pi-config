@@ -15,6 +15,6 @@
     "test:memory": "cd extensions/pi-memory && bun test",
     "test:doctor": "cd extensions && vitest run tests/doctor.test.ts",
     "typecheck": "cd extensions/dev-sandbox && tsc --noEmit",
-    "doctor:check": "bun -e \"const m = await import('./extensions/00-doctor.ts'); const c = await m.runChecks({skipNetwork:true}); const e = c.filter(x=>x.status==='error'); if(e.length){ console.error(m.buildReportText(c, m.readOsRelease(), m.detectPackageManager())); process.exit(1); } console.log('doctor: ambiente OK');\""
+    "doctor:check": "cd extensions && vitest run tests/doctor.smoke.test.ts"
   }
 }
