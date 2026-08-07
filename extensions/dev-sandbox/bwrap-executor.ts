@@ -77,6 +77,10 @@ export function matchPathPattern(relPath: string, pattern: string): boolean {
  *
  * Ignora .git, node_modules para performance.
  *
+ * Fail-closed: se um diretório não puder ser lido (ex: permissão), LANÇA
+ * erro — arquivos dentro dele podem não ser mascarados e a operação deve
+ * ser bloqueada em vez de seguir sem negar.
+ *
  * Exportado para testes (security scan).
  */
 export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
@@ -91,8 +95,16 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
     let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      return;
+    } catch (err) {
+      // Diretório removido durante o scan (ENOENT/ENOTDIR) → nada a mascarar
+      const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
+      if (code === "ENOENT" || code === "ENOTDIR") return;
+      // Fail-closed: diretório ilegível pode conter arquivos que deveriam
+      // ser mascarados — bloqueia em vez de seguir sem negar.
+      throw new Error(
+        `[dev-sandbox] Falha ao escanear '${current}' para denyFilePatterns: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     for (const entry of entries) {
@@ -140,9 +152,10 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
     walk(cwd);
   } catch (err) {
     console.warn(
-      "[dev-sandbox] Falha ao escanear denyFilePatterns — arquivos podem não ser mascarados:",
+      "[dev-sandbox] Falha ao escanear denyFilePatterns — operação bloqueada:",
       err,
     );
+    throw err;
   }
 
   return results;
@@ -611,6 +624,8 @@ function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
 function appendSensitiveMounts(args: string[], config: SandboxConfig, cwd: string): void {
   const sensitivePatterns = config.filesystem.denyFilePatterns;
   if (sensitivePatterns.length === 0) return;
+  // Falha no scan (findDangerousFiles) propaga → execução é bloqueada
+  // (fail-closed): nenhuma tool roda sem garantir o mascaramento.
   const sensitiveFiles = findDangerousFiles(cwd, sensitivePatterns);
   for (const f of sensitiveFiles) {
     // /dev/null já existe porque --dev /dev é adicionado no início

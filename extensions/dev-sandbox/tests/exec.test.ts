@@ -6,6 +6,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Cwd cujo scan de denyFilePatterns deve falhar (simula EACCES).
+const state = vi.hoisted(() => ({ failScanCwd: null as string | null }));
 
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 
@@ -16,6 +22,12 @@ vi.mock("node:fs", async (importOriginal) => {
     openSync: (p: unknown, ...rest: unknown[]) => {
       if (String(p).includes("seccomp.bpf")) throw new Error("open failed (mock)");
       return (actual.openSync as (...a: unknown[]) => number)(p as string, ...rest);
+    },
+    readdirSync: (p: unknown, ...rest: unknown[]) => {
+      if (state.failScanCwd !== null && String(p) === state.failScanCwd) {
+        throw Object.assign(new Error(`EACCES: permission denied '${String(p)}'`), { code: "EACCES" });
+      }
+      return (actual.readdirSync as (...a: unknown[]) => unknown)(p as string, ...rest);
     },
   };
 });
@@ -43,6 +55,7 @@ function fakeChild() {
 
 beforeEach(() => {
   spawnMock.mockReset();
+  state.failScanCwd = null;
 });
 
 describe("execInSandbox — abort pré-sinalizado", () => {
@@ -68,6 +81,25 @@ describe("bash-ops — abort pré-sinalizado", () => {
       }),
     ).rejects.toThrow("aborted");
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("execInSandbox — scan de denyFilePatterns (fail-closed)", () => {
+  it("scan falha → execução bloqueada (nada é executado)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "sb-scan-"));
+    try {
+      state.failScanCwd = cwd;
+      const cfg = structuredClone(DEFAULT_CONFIG);
+      cfg.filesystem.denyFilePatterns = [".env"];
+
+      await expect(
+        execInSandbox(cfg, { command: ["echo", "x"], cwd }),
+      ).rejects.toThrow(/denyFilePatterns/);
+      expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      state.failScanCwd = null;
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

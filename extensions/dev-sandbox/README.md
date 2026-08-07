@@ -138,6 +138,8 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 >   qualquer profundidade (ex: `.env`, `*.pem`).
 > - Padrão **com `/`** casa o **path relativo ao workspace** (ex:
 >   `secrets/*`, `secrets/*.pem`). `*` não atravessa `/`.
+> - Se o scan falhar (ex: diretório sem permissão de leitura), a operação
+>   é **bloqueada** (fail-closed) — o sandbox nunca executa sem mascarar.
 
 ### `cacheDirs` — caches persistentes
 
