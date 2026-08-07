@@ -2,7 +2,6 @@
  * ReadOperations — leitura de arquivos via bwrap.
  */
 
-import { Buffer } from "node:buffer";
 import type { ReadOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
 import { execInSandbox } from "../bwrap-executor";

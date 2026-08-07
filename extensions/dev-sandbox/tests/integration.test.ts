@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execInSandbox } from "../bwrap-executor";

@@ -62,12 +62,12 @@ export function safeReadJson(filePath: string): Partial<SandboxConfig> | null {
 }
 
 /** Merge aninhado. Exportado para testes. */
-export function deepMerge<T extends Record<string, unknown>>(base: T, override: Partial<T>): T {
-  const result = { ...base };
+export function deepMerge<T extends object>(base: T, override: object): T {
+  const result = { ...base } as unknown as Record<string, unknown>;
 
-  for (const key of Object.keys(override) as (keyof T)[]) {
-    const baseVal = base[key];
-    const overrideVal = override[key];
+  for (const key of Object.keys(override)) {
+    const baseVal = (base as unknown as Record<string, unknown>)[key];
+    const overrideVal = (override as unknown as Record<string, unknown>)[key];
 
     if (
       typeof baseVal === "object" &&
@@ -77,27 +77,26 @@ export function deepMerge<T extends Record<string, unknown>>(base: T, override: 
       overrideVal !== null &&
       !Array.isArray(overrideVal)
     ) {
-      (result as Record<string, unknown>)[key as string] = deepMerge(
-        baseVal as Record<string, unknown>,
-        overrideVal as Record<string, unknown>,
-      );
+      result[key] = deepMerge(baseVal, overrideVal);
     } else if (overrideVal !== undefined) {
-      (result as Record<string, unknown>)[key as string] = overrideVal;
+      result[key] = overrideVal;
     }
   }
 
-  return result;
+  return result as unknown as T;
 }
 
 /**
  * Converte formato antigo (mountReadOnly) para o novo (mode).
- * Retorna uma cópia do objeto com a conversão aplicada.
+ * Retorna o objeto original se já estiver no formato novo.
  * Exportado para testes.
  */
-export function normalizeSshConfig(raw: Record<string, unknown>): Record<string, unknown> {
-  if (raw.mountReadOnly !== undefined && raw.mode === undefined) {
-    const copy = { ...raw };
-    copy.mode = raw.mountReadOnly ? "mount" : "none";
+export function normalizeSshConfig(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const obj = raw as { mountReadOnly?: unknown; mode?: unknown };
+  if (obj.mountReadOnly !== undefined && obj.mode === undefined) {
+    const copy = { ...obj };
+    copy.mode = obj.mountReadOnly === true ? "mount" : "none";
     delete copy.mountReadOnly;
     return copy;
   }
@@ -142,7 +141,7 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
       out.filesystem.denyFilePatterns = fs.denyFilePatterns.filter((s): s is string => typeof s === "string");
     }
     if (fs.cacheDirs && typeof fs.cacheDirs === "object") {
-      const cd = fs.cacheDirs as Record<string, unknown>;
+      const cd = fs.cacheDirs as unknown as Record<string, unknown>;
       for (const k of ["npm", "pip", "clones"] as const) {
         if (typeof cd[k] === "string") out.filesystem.cacheDirs[k] = cd[k];
       }
@@ -186,9 +185,7 @@ export function loadConfig(cwd: string, options: LoadConfigOptions = {}): Sandbo
   if (globalOverlay) {
     // Normaliza formato antigo → novo antes do merge
     if (globalOverlay.ssh) {
-      (globalOverlay as Record<string, unknown>).ssh = normalizeSshConfig(
-        globalOverlay.ssh as Record<string, unknown>,
-      );
+      (globalOverlay as { ssh?: unknown }).ssh = normalizeSshConfig(globalOverlay.ssh);
     }
     config = deepMerge(config, globalOverlay);
   }
@@ -199,9 +196,7 @@ export function loadConfig(cwd: string, options: LoadConfigOptions = {}): Sandbo
     if (projectOverlay) {
       // Normaliza formato antigo → novo antes do merge
       if (projectOverlay.ssh) {
-        (projectOverlay as Record<string, unknown>).ssh = normalizeSshConfig(
-          projectOverlay.ssh as Record<string, unknown>,
-        );
+        (projectOverlay as { ssh?: unknown }).ssh = normalizeSshConfig(projectOverlay.ssh);
       }
       config = deepMerge(config, projectOverlay);
     }

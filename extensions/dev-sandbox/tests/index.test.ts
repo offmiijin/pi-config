@@ -105,7 +105,7 @@ describe("index — orquestração", () => {
 
   it("--no-sandbox: tools usam fallback original", async () => {
     const { pi, handlers, tools } = fakePi();
-    pi.getFlag = () => true;
+    pi.getFlag = vi.fn(() => true);
     extension(pi as never);
     await handlers.get("session_start")!({}, fakeCtx());
 
@@ -118,7 +118,7 @@ describe("index — orquestração", () => {
 
   it("--no-sandbox: notifica usuário", async () => {
     const { pi, handlers } = fakePi();
-    pi.getFlag = () => true;
+    pi.getFlag = vi.fn(() => true);
     extension(pi as never);
     const ctx = fakeCtx();
     ctx.hasUI = true;

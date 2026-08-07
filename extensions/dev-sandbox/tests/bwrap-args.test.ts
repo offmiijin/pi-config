@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBwrapArgs } from "../bwrap-executor";
-import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
+import { DEFAULT_CONFIG, type SandboxConfig, type SandboxFilesystemConfig } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -47,12 +47,16 @@ function fixtureProj(): string {
 }
 
 /** Config com merge raso por seção (não muta DEFAULT_CONFIG). */
-function makeConfig(over: Partial<SandboxConfig> = {}): SandboxConfig {
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends Array<infer U> ? Array<U> : T[K] extends object ? DeepPartial<T[K]> : T[K];
+};
+
+function makeConfig(over: DeepPartial<SandboxConfig> = {}): SandboxConfig {
   return {
     ...DEFAULT_CONFIG,
     ...over,
     internet: { ...DEFAULT_CONFIG.internet, ...(over.internet ?? {}) },
-    filesystem: { ...DEFAULT_CONFIG.filesystem, ...(over.filesystem ?? {}) },
+    filesystem: { ...DEFAULT_CONFIG.filesystem, ...(over.filesystem ?? {}) } as SandboxFilesystemConfig,
     ssh: { ...DEFAULT_CONFIG.ssh, ...(over.ssh ?? {}) },
     capabilities: { ...DEFAULT_CONFIG.capabilities, ...(over.capabilities ?? {}) },
     seccomp: { ...DEFAULT_CONFIG.seccomp, ...(over.seccomp ?? {}) },

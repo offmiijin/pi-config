@@ -7,15 +7,24 @@
 
 import { describe, it, expect } from "vitest";
 import { resolveCacheDirs } from "../bwrap-executor";
-import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
+import { DEFAULT_CONFIG, type SandboxConfig, type SandboxFilesystemConfig } from "../types";
 
-function makeConfig(over: Partial<SandboxConfig> = {}): SandboxConfig {
+function makeConfig(over: DeepPartial<SandboxConfig> = {}): SandboxConfig {
   return {
     ...DEFAULT_CONFIG,
     ...over,
-    filesystem: { ...DEFAULT_CONFIG.filesystem, ...(over.filesystem ?? {}) },
+    internet: { ...DEFAULT_CONFIG.internet, ...(over.internet ?? {}) },
+    filesystem: { ...DEFAULT_CONFIG.filesystem, ...(over.filesystem ?? {}) } as SandboxFilesystemConfig,
+    ssh: { ...DEFAULT_CONFIG.ssh, ...(over.ssh ?? {}) },
+    capabilities: { ...DEFAULT_CONFIG.capabilities, ...(over.capabilities ?? {}) },
+    seccomp: { ...DEFAULT_CONFIG.seccomp, ...(over.seccomp ?? {}) },
   };
 }
+
+/** DeepPartial para overrides parciais por seção. */
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends Array<infer U> ? Array<U> : T[K] extends object ? DeepPartial<T[K]> : T[K];
+};
 
 describe("resolveCacheDirs", () => {
   it("vazio → .sandbox-cache/<nome> sob o workspace", () => {
@@ -46,7 +55,7 @@ describe("resolveCacheDirs", () => {
 
   it("config sem cacheDirs (legado) → defaults", () => {
     const cfg = makeConfig();
-    delete (cfg.filesystem as Record<string, unknown>).cacheDirs;
+    delete (cfg.filesystem as unknown as Record<string, unknown>).cacheDirs;
     const dirs = resolveCacheDirs(cfg, "/proj");
     expect(dirs.clones).toBe("/proj/.sandbox-cache/clones");
   });

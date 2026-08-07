@@ -14,8 +14,8 @@
  * rg são passados via "$@" — sem shell injection de pattern/path.
  */
 
-import { Type } from "typebox";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type, type Static } from "typebox";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { execInSandbox } from "../bwrap-executor";
 import type { SandboxConfig } from "../types";
 
@@ -26,6 +26,42 @@ interface GrepToolResult {
 
 const DEFAULT_GREP_LIMIT = 100;
 
+const GrepParamsSchema = Type.Object({
+  pattern: Type.String({ description: "Pattern to search for (regex by default)" }),
+  path: Type.Optional(
+    Type.String({
+      description: "File or directory to search in (default: current directory)",
+    }),
+  ),
+  glob: Type.Optional(
+    Type.String({
+      description: "Glob pattern to filter files (e.g. '*.ts', 'src/**')",
+    }),
+  ),
+  literal: Type.Optional(
+    Type.Boolean({
+      description: "Treat pattern as literal string, not regex",
+    }),
+  ),
+  ignoreCase: Type.Optional(
+    Type.Boolean({
+      description: "Case-insensitive search",
+    }),
+  ),
+  context: Type.Optional(
+    Type.Number({
+      description: "Number of context lines to show around each match",
+    }),
+  ),
+  limit: Type.Optional(
+    Type.Number({
+      description: `Maximum matches to return (default: ${DEFAULT_GREP_LIMIT})`,
+    }),
+  ),
+});
+
+type GrepParams = Static<typeof GrepParamsSchema>;
+
 export function createGrepTool(cwd: string, config: SandboxConfig) {
   return {
     name: "grep",
@@ -33,47 +69,14 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
     description:
       "Search for a pattern in files. Uses ripgrep. " +
       "Returns file:line:content for each match.",
-    parameters: Type.Object({
-      pattern: Type.String({ description: "Pattern to search for (regex by default)" }),
-      path: Type.Optional(
-        Type.String({
-          description: "File or directory to search in (default: current directory)",
-        }),
-      ),
-      glob: Type.Optional(
-        Type.String({
-          description: "Glob pattern to filter files (e.g. '*.ts', 'src/**')",
-        }),
-      ),
-      literal: Type.Optional(
-        Type.Boolean({
-          description: "Treat pattern as literal string, not regex",
-        }),
-      ),
-      ignoreCase: Type.Optional(
-        Type.Boolean({
-          description: "Case-insensitive search",
-        }),
-      ),
-      context: Type.Optional(
-        Type.Number({
-          description: "Number of context lines to show around each match",
-        }),
-      ),
-      limit: Type.Optional(
-        Type.Number({
-          description: `Maximum matches to return (default: ${DEFAULT_GREP_LIMIT})`,
-        }),
-      ),
-    }),
+    parameters: GrepParamsSchema,
     async execute(
       _toolCallId: string,
-      params: Record<string, unknown>,
+      params: GrepParams,
       signal: AbortSignal | undefined,
-      _onUpdate: (data: Buffer) => void,
-      ctx: ExtensionContext,
+      _onUpdate?: (partialResult: AgentToolResult<any>) => void,
     ): Promise<GrepToolResult> {
-      const pattern = String(params.pattern || "");
+      const pattern = params.pattern;
       if (!pattern) {
         return {
           content: [{ type: "text", text: "Error: pattern is required" }],
@@ -81,7 +84,7 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
         };
       }
 
-      const searchCwd = ctx?.cwd ?? cwd;
+      const searchCwd = cwd;
 
       // Constrói comando rg (args passados via "$@" — sem shell injection)
       const rgArgs: string[] = [

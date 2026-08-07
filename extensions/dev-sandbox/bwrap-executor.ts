@@ -9,7 +9,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
 
 // ─── Env vars seguras (whitelist) ──────────────────────────
@@ -240,7 +240,7 @@ const CACHE_ENV_VARS: Record<string, string> = {
  * - Absoluto  → mantido (deve ser montado — ver buildBwrapArgs)
  */
 export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<string, string> {
-  const cfg = (config.filesystem.cacheDirs ?? {}) as Record<string, string>;
+  const cfg = (config.filesystem.cacheDirs ?? {}) as unknown as Record<string, string>;
   const out: Record<string, string> = {};
   for (const [name, defaultRel] of Object.entries(CACHE_DIR_DEFAULTS)) {
     const v = cfg[name];

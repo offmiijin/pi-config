@@ -33,7 +33,7 @@
  *   /sandbox                    → mostra status e configuração
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   createReadTool,
   createWriteTool,
@@ -174,13 +174,6 @@ export default function (pi: ExtensionAPI) {
     );
   }
 
-  /** Shape mínimo de uma tool (para o wrapper genérico). */
-  type ToolLike = {
-    name: string;
-    [key: string]: unknown;
-    execute(...args: any[]): unknown;
-  };
-
   /**
    * Cria wrapper sandboxed de uma tool built-in.
    * - Schema/descrição vêm da tool original (makeTool).
@@ -188,22 +181,22 @@ export default function (pi: ExtensionAPI) {
    * - Opt-out explícito (--no-sandbox / enabled:false) → makeTool (host).
    * - Fail-closed → erro sandboxBlockedError.
    */
-  function sandboxTool(
-    makeTool: (cwd: string) => ToolLike,
-    makeSandboxed: (config: SandboxConfig, cwd: string) => ToolLike,
+  function sandboxTool<TTool extends ToolDefinition<any, any, any>>(
+    makeTool: (cwd: string) => TTool,
+    makeSandboxed: (config: SandboxConfig, cwd: string) => TTool,
     label?: string,
-  ): ToolLike {
+  ): TTool {
     const base = makeTool(localCwd);
     return {
       ...base,
       ...(label !== undefined ? { label } : {}),
-      async execute(id, params, signal, onUpdate, ctx) {
-        const cwd = ctx?.cwd ?? localCwd;
+      async execute(toolCallId, params, signal, onUpdate, ctx) {
+        const cwd = ctx.cwd ?? localCwd;
         if (!enabled || !config) {
-          if (fallbackToHost) return makeTool(cwd).execute(id, params, signal, onUpdate, ctx);
+          if (fallbackToHost) return makeTool(cwd).execute(toolCallId, params, signal, onUpdate, ctx);
           throw sandboxBlockedError(base.name);
         }
-        return makeSandboxed(config, cwd).execute(id, params, signal, onUpdate, ctx);
+        return makeSandboxed(config, cwd).execute(toolCallId, params, signal, onUpdate, ctx);
       },
     };
   }
