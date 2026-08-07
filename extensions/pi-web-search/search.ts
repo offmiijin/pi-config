@@ -115,12 +115,16 @@ export async function search(
 	query: string,
 	signal?: AbortSignal,
 ): Promise<SearchOutput> {
-	// 0. SearXNG (local, self-hosted) — skip if not explicitly configured
-	// to avoid mandatory 10s timeout when docker isn't running.
+	// 0. SearXNG (local, self-hosted). Tenta quando configurado (URL/chave) OU
+	//     quando responde no localhost — o probe (3s, cache por processo) cobre
+	//     quem subiu o container (install.sh --searxng, docker compose) sem
+	//     precisar configurar URL/chave, e evita o timeout de 10s do
+	//     searchSearxng quando o SearXNG não está rodando.
 	const searxngConfigured = getSearxngUrl() !== null || getSearxngKey() !== null;
-	const searxng = searxngConfigured
-		? await searchSearxng(query, signal)
-		: { results: [] as SearchResult[], error: "SearXNG: not configured — skipping" };
+	const searxng =
+		searxngConfigured || (await isSearxngReachable(signal))
+			? await searchSearxng(query, signal)
+			: { results: [] as SearchResult[], error: "SearXNG: não configurado nem acessível em localhost:4000 — pulando" };
 	if (searxng.results.length > 0) {
 		return { query, source: "searxng", results: searxng.results };
 	}

@@ -13,16 +13,17 @@ vi.mock("../config", () => ({
 	getSerperKey: () => "mock-serper-key",
 	getExaKey: () => "mock-exa-key",
 	getTavilyKey: () => "mock-tavily-key",
-	getSearxngKey: () => "mock-searxng-key",
-	getSearxngUrl: () => "http://localhost:4000",
+	getSearxngKey: () => mockSearxng.key,
+	getSearxngUrl: () => mockSearxng.url,
 	getSearxngTargetUrl: () => "http://localhost:4000",
 	getConfiguredProviders: () => mockConfigured,
 	setKey: vi.fn(),
 	getConfigSummary: () => "",
 }));
 
-const { mockConfigured } = vi.hoisted(() => ({
+const { mockConfigured, mockSearxng } = vi.hoisted(() => ({
 	mockConfigured: ["searxng", "serper", "exa", "tavily"],
+	mockSearxng: { url: "http://localhost:4000" as string | null, key: "mock-searxng-key" as string | null },
 }));
 
 import { search, isSearxngReachable, validateProvider, resetSearxngReachCache } from "../search";
@@ -58,6 +59,9 @@ function makeError(status: number): Response {
 describe("search — SearXNG → Tavily → Exa → Serper cascade", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		mockSearxng.url = "http://localhost:4000";
+		mockSearxng.key = "mock-searxng-key";
+		resetSearxngReachCache();
 	});
 
 	it("returns results from SearXNG (primary, local)", async () => {
@@ -143,6 +147,40 @@ describe("search — SearXNG → Tavily → Exa → Serper cascade", () => {
 		expect(result.error).toContain("Nenhum provedor de busca configurado");
 		expect(result.error).toContain("/web_search config");
 		mockConfigured.push(...original);
+	});
+
+	it("usa SearXNG sem config quando responde (probe ok)", async () => {
+		mockSearxng.url = null;
+		mockSearxng.key = null;
+		let callCount = 0;
+		const mockFetch = vi.fn().mockImplementation(() => {
+			callCount++;
+			if (callCount === 1) return Promise.resolve(makeResponse([])); // probe: ok
+			return Promise.resolve(makeResponse([{ title: "SearXNG Result", url: "https://local.searxng", snippet: "local" }]));
+		});
+		vi.stubGlobal("fetch", mockFetch);
+
+		const result = await search("test");
+		expect(result.source).toBe("searxng");
+		expect(result.results).toHaveLength(1);
+		expect(mockFetch).toHaveBeenCalledTimes(2); // probe + busca
+	});
+
+	it("pula SearXNG quando não configurado e não responde (cai p/ Tavily)", async () => {
+		mockSearxng.url = null;
+		mockSearxng.key = null;
+		let callCount = 0;
+		const mockFetch = vi.fn().mockImplementation(() => {
+			callCount++;
+			if (callCount === 1) return Promise.reject(new Error("ECONNREFUSED")); // probe falha
+			return Promise.resolve(makeResponse([{ title: "Tavily Result", url: "https://tavily.com", snippet: "tavily" }]));
+		});
+		vi.stubGlobal("fetch", mockFetch);
+
+		const result = await search("test");
+		expect(result.source).toBe("tavily");
+		expect(result.results).toHaveLength(1);
+		expect(mockFetch).toHaveBeenCalledTimes(2); // probe + tavily (sem timeout de 10s)
 	});
 });
 
