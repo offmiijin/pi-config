@@ -3,7 +3,7 @@
 # install.sh — setup de dependências das extensões do pi
 #
 # Resolve, antes de abrir o pi:
-#   1. Node.js >= 22 + npm (via mise ou gerenciador de pacotes)
+#   1. Node.js >= 22.19 + npm (via mise ou gerenciador de pacotes)
 #   2. Pacotes de sistema: bubblewrap, ripgrep, git (+ gh e docker opcionais)
 #   3. Dependências npm das extensões (npm ci em <agent>/node_modules)
 #   4. landlock-exec (compila com Rust se disponível)
@@ -68,8 +68,7 @@ confirm_req() { # obrigatório: --yes OU não-interativo (curl|bash) → sim
   case "$ans" in s|S|sim|Sim|y|Y|yes) return 0 ;; *) return 1 ;; esac
 }
 
-confirm_opt() { # opcional: só com --yes ou resposta interativa
-  [ "$ASSUME_YES" -eq 1 ] && return 0
+confirm_opt() { # opcional: SÓ com resposta interativa (--yes não instala opcional)
   [ ! -t 0 ] && return 1
   local ans
   printf '%s [s/N] ' "$1"
@@ -213,10 +212,20 @@ resolve_agent_dir() {
 }
 
 # ── Node.js / npm ────────────────────────────────────────────────────────
-node_major() { node -v 2>/dev/null | tr -d 'v' | cut -d. -f1; }
+# Node >= 22.19.0 (mesmo requisito do doctor/pi-coding-agent).
+node_sufficient() {
+  local full maj min
+  full="$(node -v 2>/dev/null || true)"
+  [ -n "$full" ] || return 1
+  full="${full#v}"
+  maj="${full%%.*}"; min="${full#*.}"; min="${min%%.*}"
+  [ "$maj" -gt 22 ] && return 0
+  [ "$maj" -lt 22 ] && return 1
+  [ "$min" -ge 19 ]
+}
 
 ensure_node() {
-  if has_cmd node && has_cmd npm && [ "$(node_major)" -ge 22 ]; then
+  if has_cmd node && has_cmd npm && node_sufficient; then
     log "✓ Node $(node -v) + npm $(npm -v)"
     return
   fi
@@ -235,10 +244,10 @@ ensure_node() {
     install_system_pkgs 0 node npm
   fi
 
-  if has_cmd node && has_cmd npm; then
+  if has_cmd node && has_cmd npm && node_sufficient; then
     log "✓ Node $(node -v) + npm $(npm -v)"
   else
-    warn "Node/npm ausentes. Instale manualmente (mise install node@22 ou pacote da distro) e rode de novo."
+    warn "Node/npm ausentes ou < 22.19. Instale manualmente (mise install node@22 ou pacote da distro com Node >= 22.19) e rode de novo."
   fi
 }
 
@@ -320,7 +329,8 @@ setup_searxng() {
   fi
 
   if ! has_cmd docker; then
-    install_system_pkgs 1 docker
+    # Com --searxng, Docker é obrigatório para o fluxo (instala sem confirmar)
+    install_system_pkgs "$([ "$DO_SEARXNG" -eq 1 ] && echo 0 || echo 1)" docker
   fi
   has_cmd docker || { warn "Docker indisponível — use APIs externas: /web_search config <tavily|exa|serper> <key>"; return; }
 
@@ -337,7 +347,7 @@ setup_searxng() {
     fi
   fi
 
-  if confirm_opt "Subir container SearXNG (docker compose up -d)?"; then
+  if [ "$DO_SEARXNG" -eq 1 ] || confirm_opt "Subir container SearXNG (docker compose up -d)?"; then
     run bash -c "cd '$ws' && docker compose up -d"
     warn "Após o 1º start, habilite JSON no SearXNG:"
     warn "  docker exec pi-searxng sed -i 's/  formats:\\n    - html/  formats:\\n    - html\\n    - json/' /etc/searxng/settings.yml && docker restart pi-searxng"
@@ -381,7 +391,10 @@ main() {
   echo
   log "✔ Concluído! Inicie o pi — a extensão doctor (00-doctor) valida o ambiente:"
   log "    pi   (ou /reload se já estiver aberto)"
-  [ "$ASSUME_YES" -eq 0 ] && echo "Dica: rode /doctor dentro do pi para ver o relatório completo."
+  if [ "$ASSUME_YES" -eq 0 ]; then
+    echo "Dica: rode /doctor dentro do pi para ver o relatório completo."
+  fi
+  return 0
 }
 
 main
