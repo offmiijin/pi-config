@@ -39,10 +39,10 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import {
-  deepMerge, normalizeSshConfig, loadConfig,
+  deepMerge, normalizeSshConfig, loadConfig, sanitizeConfig,
   readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson,
 } from "../config";
-import { DEFAULT_CONFIG } from "../types";
+import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
 
 const fixtures: string[] = [];
 
@@ -218,6 +218,54 @@ describe("loadConfig", () => {
     expect(JSON.stringify(DEFAULT_CONFIG)).toBe(before);
     expect(DEFAULT_CONFIG.seccomp.bpfPath).toBe("");
     expect(DEFAULT_CONFIG.enabled).toBe(true);
+  });
+});
+
+describe("sanitizeConfig", () => {
+  it("config válida passa intacta", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.internet.enabled = false;
+    cfg.ssh.mode = "none";
+    expect(sanitizeConfig(cfg)).toEqual(cfg);
+  });
+
+  it("campos com tipo errado voltam ao default", () => {
+    const bad = {
+      enabled: "yes",
+      internet: { enabled: "true" },
+      filesystem: {
+        denyPaths: "/sbin",
+        denyFilePatterns: ".env",
+        extraWritable: "x",
+        extraReadonly: 42,
+        cacheDirs: { npm: 123, pip: false, clones: [] },
+      },
+      ssh: { mode: "weird" },
+      capabilities: { drop: "all" },
+      seccomp: { enabled: "on", bpfPath: 7 },
+    } as unknown as SandboxConfig;
+    expect(sanitizeConfig(bad)).toEqual(DEFAULT_CONFIG);
+  });
+
+  it("campos válidos preservados mesmo com outros inválidos", () => {
+    const mixed = {
+      enabled: false,
+      internet: { enabled: false },
+      filesystem: { denyPaths: ["/custom"], denyFilePatterns: "broken" },
+      capabilities: { drop: ["CAP_SYS_ADMIN", 5] },
+    } as unknown as SandboxConfig;
+    const out = sanitizeConfig(mixed);
+    expect(out.enabled).toBe(false);
+    expect(out.internet.enabled).toBe(false);
+    expect(out.filesystem.denyPaths).toEqual(["/custom"]);
+    expect(out.filesystem.denyFilePatterns).toEqual(DEFAULT_CONFIG.filesystem.denyFilePatterns);
+    expect(out.capabilities.drop).toEqual(["CAP_SYS_ADMIN"]);
+  });
+
+  it("loadConfig sanea JSON global com tipos inválidos", () => {
+    const agentDir = writeGlobal('{"enabled": "sim", "ssh": {"mode": "hack"}, "filesystem": {"denyPaths": "tudo"}}');
+    state.agentDir = agentDir;
+    expect(loadConfig("/cwd/proj")).toEqual(DEFAULT_CONFIG);
   });
 });
 

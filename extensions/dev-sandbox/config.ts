@@ -114,10 +114,63 @@ export interface LoadConfigOptions {
 }
 
 /**
+ * Valida a configuração final: campos com tipo errado (JSON inválido)
+ * são resetados para o default. Configuração corrompida não pode
+ * quebrar o sandbox em runtime nem enfraquecer o isolamento.
+ */
+export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
+  const out = structuredClone(DEFAULT_CONFIG);
+
+  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+
+  if (raw.internet && typeof raw.internet.enabled === "boolean") {
+    out.internet.enabled = raw.internet.enabled;
+  }
+
+  const fs = raw.filesystem;
+  if (fs && typeof fs === "object") {
+    if (Array.isArray(fs.extraWritable)) {
+      out.filesystem.extraWritable = fs.extraWritable.filter((s): s is string => typeof s === "string");
+    }
+    if (Array.isArray(fs.extraReadonly)) {
+      out.filesystem.extraReadonly = fs.extraReadonly.filter((s): s is string => typeof s === "string");
+    }
+    if (Array.isArray(fs.denyPaths)) {
+      out.filesystem.denyPaths = fs.denyPaths.filter((s): s is string => typeof s === "string");
+    }
+    if (Array.isArray(fs.denyFilePatterns)) {
+      out.filesystem.denyFilePatterns = fs.denyFilePatterns.filter((s): s is string => typeof s === "string");
+    }
+    if (fs.cacheDirs && typeof fs.cacheDirs === "object") {
+      const cd = fs.cacheDirs as Record<string, unknown>;
+      for (const k of ["npm", "pip", "clones"] as const) {
+        if (typeof cd[k] === "string") out.filesystem.cacheDirs[k] = cd[k];
+      }
+    }
+  }
+
+  if (raw.ssh && (raw.ssh.mode === "agent" || raw.ssh.mode === "mount" || raw.ssh.mode === "none")) {
+    out.ssh.mode = raw.ssh.mode;
+  }
+
+  if (raw.capabilities && typeof raw.capabilities === "object" && Array.isArray(raw.capabilities.drop)) {
+    out.capabilities.drop = raw.capabilities.drop.filter((s): s is string => typeof s === "string");
+  }
+
+  if (raw.seccomp && typeof raw.seccomp === "object") {
+    if (typeof raw.seccomp.enabled === "boolean") out.seccomp.enabled = raw.seccomp.enabled;
+    if (typeof raw.seccomp.bpfPath === "string") out.seccomp.bpfPath = raw.seccomp.bpfPath;
+  }
+
+  return out;
+}
+
+/**
  * Carrega configuração completa com merge de defaults, global e projeto.
  *
  * Retorna um clone do DEFAULT_CONFIG: mutações feitas pelo chamador
- * nunca contaminam o objeto padrão global.
+ * nunca contaminam o objeto padrão global. JSON com tipos inválidos
+ * é saneado (campos inválidos voltam ao default).
  */
 export function loadConfig(cwd: string, options: LoadConfigOptions = {}): SandboxConfig {
   // Global
@@ -154,7 +207,7 @@ export function loadConfig(cwd: string, options: LoadConfigOptions = {}): Sandbo
     }
   }
 
-  return config;
+  return sanitizeConfig(config);
 }
 
 /**
