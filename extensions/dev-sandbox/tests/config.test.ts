@@ -189,6 +189,36 @@ describe("loadConfig", () => {
     expect(config.filesystem.cacheDirs.pip).toBe("");
     expect(config.filesystem.cacheDirs.clones).toBe("");
   });
+
+  it("projeto não confiável é ignorado (projectTrusted: false)", () => {
+    const agentDir = writeGlobal('{"internet": {"enabled": false}}');
+    state.agentDir = agentDir;
+    const cwd = fixture();
+    writeProject(cwd, '{"internet": {"enabled": true}}');
+
+    const untrusted = loadConfig(cwd, { projectTrusted: false });
+    expect(untrusted.internet.enabled).toBe(false);
+  });
+
+  it("projeto confiável é aplicado (projectTrusted: true)", () => {
+    const agentDir = writeGlobal('{"internet": {"enabled": false}}');
+    state.agentDir = agentDir;
+    const cwd = fixture();
+    writeProject(cwd, '{"internet": {"enabled": true}}');
+
+    const trusted = loadConfig(cwd, { projectTrusted: true });
+    expect(trusted.internet.enabled).toBe(true);
+  });
+
+  it("não muta DEFAULT_CONFIG ao alterar a config retornada", () => {
+    const before = JSON.stringify(DEFAULT_CONFIG);
+    const cfg = loadConfig("/cwd/proj");
+    (cfg as unknown as { seccomp: { bpfPath: string } }).seccomp.bpfPath = "/custom/bpf";
+    (cfg as unknown as { enabled: boolean }).enabled = false;
+    expect(JSON.stringify(DEFAULT_CONFIG)).toBe(before);
+    expect(DEFAULT_CONFIG.seccomp.bpfPath).toBe("");
+    expect(DEFAULT_CONFIG.enabled).toBe(true);
+  });
 });
 
 describe("readOsRelease / matchesOsRelease / guias", () => {

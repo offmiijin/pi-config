@@ -103,10 +103,22 @@ export function normalizeSshConfig(raw: Record<string, unknown>): Record<string,
   return raw;
 }
 
+/** Opções de carregamento da configuração. */
+export interface LoadConfigOptions {
+  /**
+   * Se false, o `.pi/sandbox.json` do projeto é ignorado
+   * (projeto não confiável). A config global continua valendo.
+   */
+  projectTrusted?: boolean;
+}
+
 /**
  * Carrega configuração completa com merge de defaults, global e projeto.
+ *
+ * Retorna um clone do DEFAULT_CONFIG: mutações feitas pelo chamador
+ * nunca contaminam o objeto padrão global.
  */
-export function loadConfig(cwd: string): SandboxConfig {
+export function loadConfig(cwd: string, options: LoadConfigOptions = {}): SandboxConfig {
   // Global
   const agentDir = getAgentDir();
   const globalPath = join(agentDir, "extensions", "dev-sandbox.json");
@@ -114,7 +126,7 @@ export function loadConfig(cwd: string): SandboxConfig {
   // Projeto
   const projectPath = join(cwd, CONFIG_DIR_NAME, "sandbox.json");
 
-  let config = DEFAULT_CONFIG;
+  let config = structuredClone(DEFAULT_CONFIG);
 
   const globalOverlay = safeReadJson(globalPath);
   if (globalOverlay) {
@@ -127,15 +139,18 @@ export function loadConfig(cwd: string): SandboxConfig {
     config = deepMerge(config, globalOverlay);
   }
 
-  const projectOverlay = safeReadJson(projectPath);
-  if (projectOverlay) {
-    // Normaliza formato antigo → novo antes do merge
-    if (projectOverlay.ssh) {
-      (projectOverlay as Record<string, unknown>).ssh = normalizeSshConfig(
-        projectOverlay.ssh as Record<string, unknown>,
-      );
+  // Config do projeto só entra para projetos confiáveis
+  if (options.projectTrusted !== false) {
+    const projectOverlay = safeReadJson(projectPath);
+    if (projectOverlay) {
+      // Normaliza formato antigo → novo antes do merge
+      if (projectOverlay.ssh) {
+        (projectOverlay as Record<string, unknown>).ssh = normalizeSshConfig(
+          projectOverlay.ssh as Record<string, unknown>,
+        );
+      }
+      config = deepMerge(config, projectOverlay);
     }
-    config = deepMerge(config, projectOverlay);
   }
 
   return config;

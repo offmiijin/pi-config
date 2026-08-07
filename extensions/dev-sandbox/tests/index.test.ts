@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const state = vi.hoisted(() => ({ agentDir: "/tmp/sb-agent", bwrapAvailable: true }));
+const state = vi.hoisted(() => ({ agentDir: "/tmp/sb-agent", bwrapAvailable: true, loadConfigCalls: [] as unknown[], loadConfigReturn: null as unknown }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: () => state.agentDir,
@@ -29,10 +29,16 @@ vi.mock("../config", async (importOriginal) => {
     isBwrapAvailable: () => state.bwrapAvailable,
     isRgAvailable: () => true,
     getBwrapInstallGuide: () => "guia-teste",
+    loadConfig: (...args: unknown[]) => {
+      state.loadConfigCalls.push(args);
+      if (state.loadConfigReturn !== null) return state.loadConfigReturn;
+      return structuredClone(DEFAULT_CONFIG);
+    },
   };
 });
 
 import extension from "../index";
+import { DEFAULT_CONFIG } from "../types";
 
 interface FakeCtx {
   cwd: string;
@@ -60,6 +66,8 @@ function fakeCtx(): FakeCtx {
 
 beforeEach(() => {
   state.bwrapAvailable = true;
+  state.loadConfigCalls = [];
+  state.loadConfigReturn = null;
 });
 
 describe("index — orquestração", () => {
@@ -156,5 +164,38 @@ describe("index — orquestração", () => {
     // Desabilitado → before_agent_start não injeta
     const res = handlers.get("before_agent_start")!({ systemPrompt: "base" }, { cwd: process.cwd() });
     expect(res).toBeUndefined();
+  });
+
+  it("bwrap ausente → tools bloqueadas (fail-closed)", async () => {
+    state.bwrapAvailable = false;
+    const { pi, handlers, tools } = fakePi();
+    extension(pi as never);
+    await handlers.get("session_start")!({}, fakeCtx());
+
+    const readTool = tools.find((t) => t.name === "read")!;
+    await expect(
+      readTool.execute("id", { path: "/x" }, undefined, undefined, { cwd: process.cwd() }),
+    ).rejects.toThrow(/bloqueada/);
+  });
+
+  it("consulta ctx.isProjectTrusted ao carregar config", async () => {
+    const { pi, handlers } = fakePi();
+    extension(pi as never);
+    const ctx = { ...fakeCtx(), isProjectTrusted: () => false };
+    await handlers.get("session_start")!({}, ctx);
+    expect(state.loadConfigCalls[0]).toEqual([process.cwd(), { projectTrusted: false }]);
+  });
+
+  it("config enabled:false → opt-out explícito → fallback para tools do host", async () => {
+    state.loadConfigReturn = { ...structuredClone(DEFAULT_CONFIG), enabled: false };
+    const { pi, handlers, tools } = fakePi();
+    extension(pi as never);
+    await handlers.get("session_start")!({}, fakeCtx());
+
+    const readTool = tools.find((t) => t.name === "read")!;
+    const res = await readTool.execute("id", { path: "/x" }, undefined, undefined, { cwd: process.cwd() }) as {
+      content: Array<{ text: string }>;
+    };
+    expect(res.content[0].text).toBe("fallback");
   });
 });

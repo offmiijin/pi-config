@@ -5,23 +5,31 @@
  * grep, find, ls) dentro de um namespace bwrap com:
  *   - Filesystem restrito (whitelist de /usr, /bin, /lib; /sbin vazio)
  *   - Rede do host compartilhada (para LLM API, npm, git)
- *   - ~/.ssh montado read-only (git push/pull)
  *   - HOME isolado (sem acesso ao home real)
+ *   - SSH via ssh-agent socket (chaves privadas nunca entram)
  *
  * Complementa security-guard.ts:
  *   - security-guard = soft boundary (pattern matching, confirmação)
  *   - dev-sandbox    = hard boundary (kernel namespaces)
+ *
+ * Política (fail-closed):
+ *   - Se o sandbox não puder ser ativado (bwrap ausente, erro de
+ *     inicialização), as tools são BLOQUEADAS — nunca executam no host.
+ *   - Fallback para tools do host apenas com opt-out explícito:
+ *     `--no-sandbox` ou `enabled: false` na configuração.
+ *   - `.pi/sandbox.json` (projeto) só é aplicado se o projeto for
+ *     confiável (ctx.isProjectTrusted()).
  *
  * Integração:
  *   - Dev-sandbox registra tool unificado com bwrap operations
  *
  * Configuração:
  *   - ~/.pi/agent/extensions/dev-sandbox.json (global)
- *   - .pi/sandbox.json (projeto)
+ *   - .pi/sandbox.json (projeto, somente se confiável)
  *
  * Uso:
  *   pi                          → sandbox ativo por padrão
- *   pi --no-sandbox             → desabilita sandbox
+ *   pi --no-sandbox             → desabilita sandbox (tools do host)
  *   /sandbox                    → mostra status e configuração
  */
 
@@ -52,8 +60,6 @@ import { createGrepTool, setGrepConfig } from "./tools/grep";
 /** Diretório desta extensão — usado para resolver seccomp.bpf. */
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 
-
-
 export default function (pi: ExtensionAPI) {
   // ── Flag --no-sandbox ──────────────────────────
   pi.registerFlag("no-sandbox", {
@@ -65,43 +71,57 @@ export default function (pi: ExtensionAPI) {
   // ── Estado da sessão ───────────────────────────
   let config: SandboxConfig | null = null;
   let enabled = false;
+  /** true com opt-out explícito (--no-sandbox ou enabled:false) → tools do host. */
+  let fallbackToHost = false;
   let localCwd = process.cwd();
 
   // ── session_start ──────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
-    try {
-      localCwd = ctx.cwd;
+    localCwd = ctx.cwd;
+    enabled = false;
+    config = null;
+    fallbackToHost = false;
+    setGrepConfig(null);
 
-      const noSandbox = pi.getFlag("no-sandbox") as boolean;
-      if (noSandbox) {
-        enabled = false;
+    // --no-sandbox: opt-out explícito → tools do host
+    if (pi.getFlag("no-sandbox") as boolean) {
+      fallbackToHost = true;
+      if (ctx.hasUI) {
+        ctx.ui.notify("Sandbox desabilitado via --no-sandbox", "warning");
+      }
+      return;
+    }
+
+    try {
+      // Config do projeto só é aplicada se o projeto for confiável
+      config = loadConfig(localCwd, { projectTrusted: ctx.isProjectTrusted?.() ?? false });
+
+      // enabled: false na configuração = opt-out explícito → tools do host
+      if (!config.enabled) {
+        fallbackToHost = true;
         if (ctx.hasUI) {
-          ctx.ui.notify(
-            "Sandbox desabilitado via --no-sandbox",
-            "warning",
-          );
+          ctx.ui.notify("Sandbox desabilitado na configuração. Tools rodam sem isolamento.", "info");
         }
         return;
       }
 
-      // Carrega config
-      config = loadConfig(localCwd);
-
-      if (!config.enabled) {
-        enabled = false;
-        return;
-      }
-
-      // Verifica bwrap
+      // bwrap ausente → fail-closed (tools bloqueadas, nunca host)
       if (!isBwrapAvailable()) {
-        enabled = false;
         if (ctx.hasUI) {
           ctx.ui.notify(
-            "bubblewrap não encontrado. Instale com: apt install bubblewrap",
+            `bubblewrap não encontrado. Tools sandbox desativadas (fail-closed).\nInstalação: ${getBwrapInstallGuide()}`,
             "error",
           );
         }
         return;
+      }
+
+      // ripgrep ausente → warning não-bloqueante
+      if (!isRgAvailable() && ctx.hasUI) {
+        ctx.ui.notify(
+          `⚠️ ripgrep não encontrado. Tool grep pode operar em modo degradado.\nInstalação: ${getRgInstallGuide()}`,
+          "warning",
+        );
       }
 
       // ── Seccomp BPF ───────────────────────────
@@ -122,7 +142,6 @@ export default function (pi: ExtensionAPI) {
       }
 
       enabled = true;
-      // Injeta config no grep tool
       setGrepConfig(config);
 
       if (ctx.hasUI) {
@@ -136,66 +155,26 @@ export default function (pi: ExtensionAPI) {
         );
       }
     } catch (err: any) {
+      // Erro inesperado → fail-closed: nunca roda sem sandbox silenciosamente
       enabled = false;
       config = null;
-      return;
-    }
-
-    // Verifica bwrap
-    if (!isBwrapAvailable()) {
-      enabled = false;
+      console.error("[dev-sandbox] Falha ao inicializar sandbox:", err);
       if (ctx.hasUI) {
-        const guide = getBwrapInstallGuide();
         ctx.ui.notify(
-          `⚠️ bubblewrap não encontrado. Tools sandbox desativadas.\nInstalação: ${guide}`,
+          `Falha ao inicializar sandbox. Tools bloqueadas.\n${err?.message ?? String(err)}`,
           "error",
         );
       }
-      return;
-    }
-
-    // Verifica ripgrep (warning não-bloqueante)
-    if (!isRgAvailable() && ctx.hasUI) {
-      const guide = getRgInstallGuide();
-      ctx.ui.notify(
-        `⚠️ ripgrep não encontrado. Tool grep pode operar em modo degradado.\nInstalação: ${guide}`,
-        "warning",
-      );
-    }
-
-    // ── Seccomp BPF ───────────────────────────
-    // Resolve caminho do BPF se não configurado explicitamente
-    if (!config.seccomp.bpfPath) {
-      config.seccomp.bpfPath = join(EXT_DIR, "seccomp.bpf");
-    }
-    if (config.seccomp.enabled && !existsSync(config.seccomp.bpfPath)) {
-      if (ctx.hasUI) {
-        ctx.ui.notify(
-          `Filtro seccomp não encontrado em ${config.seccomp.bpfPath}.\n` +
-          "Execute 'gen-seccomp > seccomp.bpf' na extensão para gerar.\n" +
-          "Sandbox continuará sem seccomp (modo degradado).",
-          "warning",
-        );
-      }
-      config.seccomp.enabled = false;
-    }
-
-    enabled = true;
-
-    // Injeta config no grep tool
-    setGrepConfig(config);
-
-    if (ctx.hasUI) {
-      ctx.ui.setStatus(
-        "sandbox",
-        `[🔒 Sandbox ativo] ${localCwd}`,
-      );
-      ctx.ui.notify(
-        `Sandbox inicializado.\nWorkspace: ${localCwd}\nRede: ${config.internet.enabled ? "compartilhada" : "isolada"}`,
-        "info",
-      );
     }
   });
+
+  /** Erro lançado pelas tools quando o sandbox não está ativo (fail-closed). */
+  function sandboxBlockedError(toolName: string): Error {
+    return new Error(
+      `[dev-sandbox] Tool '${toolName}' bloqueada: sandbox não está ativo. ` +
+      "Instale bubblewrap e habilite o sandbox, ou use --no-sandbox para rodar sem isolamento.",
+    );
+  }
 
   // ── Substitui todas as tools ───────────────────
 
@@ -204,17 +183,13 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
-        const fallback = createReadTool(cwd);
-        return fallback.execute(id, params, signal, onUpdate);
+        if (fallbackToHost) return createReadTool(cwd).execute(id, params, signal, onUpdate);
+        throw sandboxBlockedError("read");
       }
-      try {
-        const tool = createReadTool(cwd, {
-          operations: createReadOps(config, cwd),
-        });
-        return await tool.execute(id, params, signal, onUpdate);
-      } catch (err: any) {
-        throw err;
-      }
+      const tool = createReadTool(cwd, {
+        operations: createReadOps(config, cwd),
+      });
+      return tool.execute(id, params, signal, onUpdate);
     },
   });
 
@@ -223,17 +198,13 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
-        const fallback = createWriteTool(cwd);
-        return fallback.execute(id, params, signal, onUpdate);
+        if (fallbackToHost) return createWriteTool(cwd).execute(id, params, signal, onUpdate);
+        throw sandboxBlockedError("write");
       }
-      try {
-        const tool = createWriteTool(cwd, {
-          operations: createWriteOps(config, cwd),
-        });
-        return await tool.execute(id, params, signal, onUpdate);
-      } catch (err: any) {
-        throw err;
-      }
+      const tool = createWriteTool(cwd, {
+        operations: createWriteOps(config, cwd),
+      });
+      return tool.execute(id, params, signal, onUpdate);
     },
   });
 
@@ -242,17 +213,13 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
-        const fallback = createEditTool(cwd);
-        return fallback.execute(id, params, signal, onUpdate);
+        if (fallbackToHost) return createEditTool(cwd).execute(id, params, signal, onUpdate);
+        throw sandboxBlockedError("edit");
       }
-      try {
-        const tool = createEditTool(cwd, {
-          operations: createEditOps(config, cwd),
-        });
-        return await tool.execute(id, params, signal, onUpdate);
-      } catch (err: any) {
-        throw err;
-      }
+      const tool = createEditTool(cwd, {
+        operations: createEditOps(config, cwd),
+      });
+      return tool.execute(id, params, signal, onUpdate);
     },
   });
 
@@ -264,18 +231,13 @@ export default function (pi: ExtensionAPI) {
     async execute(id: string, params: any, signal: any, onUpdate: any, ctx: any) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
-        const fallback = createBashTool(cwd);
-        return fallback.execute(id, params, signal, onUpdate);
+        if (fallbackToHost) return createBashTool(cwd).execute(id, params, signal, onUpdate);
+        throw sandboxBlockedError("bash");
       }
-
-      try {
-        const tool = createBashTool(cwd, {
-          operations: createBashOps(config, cwd),
-        });
-        return await tool.execute(id, params, signal, onUpdate);
-      } catch (err: any) {
-        throw err;
-      }
+      const tool = createBashTool(cwd, {
+        operations: createBashOps(config, cwd),
+      });
+      return tool.execute(id, params, signal, onUpdate);
     },
   });
 
@@ -284,17 +246,13 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
-        const fallback = createFindTool(cwd);
-        return fallback.execute(id, params, signal, onUpdate);
+        if (fallbackToHost) return createFindTool(cwd).execute(id, params, signal, onUpdate);
+        throw sandboxBlockedError("find");
       }
-      try {
-        const tool = createFindTool(cwd, {
-          operations: createFindOps(config, cwd),
-        });
-        return await tool.execute(id, params, signal, onUpdate);
-      } catch (err: any) {
-        throw err;
-      }
+      const tool = createFindTool(cwd, {
+        operations: createFindOps(config, cwd),
+      });
+      return tool.execute(id, params, signal, onUpdate);
     },
   });
 
@@ -303,17 +261,13 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
-        const fallback = createLsTool(cwd);
-        return fallback.execute(id, params, signal, onUpdate);
+        if (fallbackToHost) return createLsTool(cwd).execute(id, params, signal, onUpdate);
+        throw sandboxBlockedError("ls");
       }
-      try {
-        const tool = createLsTool(cwd, {
-          operations: createLsOps(config, cwd),
-        });
-        return await tool.execute(id, params, signal, onUpdate);
-      } catch (err: any) {
-        throw err;
-      }
+      const tool = createLsTool(cwd, {
+        operations: createLsOps(config, cwd),
+      });
+      return tool.execute(id, params, signal, onUpdate);
     },
   });
 
@@ -322,23 +276,33 @@ export default function (pi: ExtensionAPI) {
     async execute(id, params, signal, onUpdate, ctx) {
       const cwd = ctx?.cwd ?? localCwd;
       if (!enabled || !config) {
-        const fallback = createGrepToolSdk(cwd);
-        return fallback.execute(id, params, signal, onUpdate, ctx);
+        if (fallbackToHost) return createGrepToolSdk(cwd).execute(id, params, signal, onUpdate, ctx);
+        throw sandboxBlockedError("grep");
       }
-      try {
-        const tool = createGrepTool(cwd);
-        return await tool.execute(id, params, signal, onUpdate, ctx);
-      } catch (err: any) {
-        throw err;
-      }
+      const tool = createGrepTool(cwd);
+      return tool.execute(id, params, signal, onUpdate, ctx);
     },
   });
 
   // ── user_bash (!comando e !!comando) ──────────
   pi.on("user_bash", (_event, ctx) => {
-    if (!enabled || !config) return;
     const cwd = ctx?.cwd ?? localCwd;
-    return { operations: createBashOps(config, cwd) };
+    if (enabled && config) {
+      return { operations: createBashOps(config, cwd) };
+    }
+    // Opt-out explícito → comportamento padrão do pi
+    if (fallbackToHost) return;
+    // Fail-closed: bloqueia com mensagem clara
+    return {
+      result: {
+        output:
+          "[dev-sandbox] Comando bloqueado: sandbox não está ativo. " +
+          "Instale bubblewrap e habilite o sandbox, ou use --no-sandbox.",
+        exitCode: 1,
+        cancelled: false,
+        truncated: false,
+      },
+    };
   });
 
   // ── before_agent_start ────────────────────────
@@ -389,5 +353,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     enabled = false;
     config = null;
+    fallbackToHost = false;
+    setGrepConfig(null);
   });
 }

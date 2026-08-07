@@ -15,6 +15,11 @@ sudo apt install bubblewrap
 # Só instale Rust se quiser customizar a lista de syscalls bloqueadas.
 ```
 
+> ⚠️ **Fail-closed**: se o sandbox não puder ser ativado (bubblewrap
+> ausente ou erro de inicialização), as tools são **bloqueadas** — nunca
+> executam no host. Para rodar sem isolamento, use `pi --no-sandbox`
+> explicitamente (ou `enabled: false` na configuração global).
+
 ## Arquitetura de Proteção (3 camadas)
 
 ```
