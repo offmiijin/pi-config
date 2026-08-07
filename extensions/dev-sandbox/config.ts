@@ -161,6 +161,15 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
     if (typeof raw.seccomp.bpfPath === "string") out.seccomp.bpfPath = raw.seccomp.bpfPath;
   }
 
+  if (raw.landlock && typeof raw.landlock === "object") {
+    const l = raw.landlock as Record<string, unknown>;
+    if (typeof l.enabled === "boolean") out.landlock.enabled = l.enabled;
+    if (typeof l.required === "boolean") out.landlock.required = l.required;
+    if (typeof l.minAbi === "number" && Number.isInteger(l.minAbi) && l.minAbi >= 1 && l.minAbi <= 5) {
+      out.landlock.minAbi = l.minAbi;
+    }
+  }
+
   return out;
 }
 
