@@ -83,6 +83,9 @@ export function matchPathPattern(relPath: string, pattern: string): boolean {
  *
  * Exportado para testes (security scan).
  */
+// Diretórios já alertados via EACCES — evita spam no TUI a cada tool call.
+const eaccesWarned = new Set<string>();
+
 export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   if (patterns.length === 0) return [];
 
@@ -100,12 +103,15 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
       const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
       if (code === "ENOENT" || code === "ENOTDIR") return;
       // EACCES: dir sem permissão de leitura no host → sandbox também não lê.
-      // Emitir warning e seguir sem bloquear (não há risco de vazamento).
+      // Emitir warning uma única vez por diretório (evita spam no TUI).
       if (code === "EACCES") {
-        console.warn(
-          `[dev-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
-          `diretório ignorado no scan de denyFilePatterns.`,
-        );
+        if (!eaccesWarned.has(current)) {
+          eaccesWarned.add(current);
+          console.warn(
+            `[dev-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
+            `diretório ignorado no scan de denyFilePatterns.`,
+          );
+        }
         return;
       }
       // Fail-closed: diretório ilegível pode conter arquivos que deveriam
