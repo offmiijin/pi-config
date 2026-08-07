@@ -683,11 +683,12 @@ export function execInSandbox(
       child.stdin!.end();
     }
 
-    let stdout = "";
+    // stdout em buffers para preservar bytes binários (ex: imagens)
+    const stdoutChunks: Buffer[] = [];
     let stderr = "";
 
     child.stdout!.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdoutChunks.push(chunk);
     });
 
     child.stderr!.on("data", (chunk: Buffer) => {
@@ -720,11 +721,11 @@ export function execInSandbox(
       opts.signal?.removeEventListener("abort", onAbort);
 
       if (opts.signal?.aborted) {
-        resolve({ stdout, stderr, exitCode: code, timedOut: false, aborted: true });
+        resolve({ stdout: Buffer.concat(stdoutChunks), stderr, exitCode: code, timedOut: false, aborted: true });
       } else if (timedOut) {
-        resolve({ stdout, stderr, exitCode: code, timedOut: true, aborted: false });
+        resolve({ stdout: Buffer.concat(stdoutChunks), stderr, exitCode: code, timedOut: true, aborted: false });
       } else {
-        resolve({ stdout, stderr, exitCode: code, timedOut: false, aborted: false });
+        resolve({ stdout: Buffer.concat(stdoutChunks), stderr, exitCode: code, timedOut: false, aborted: false });
       }
     });
   });

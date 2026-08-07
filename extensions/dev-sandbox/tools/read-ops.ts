@@ -17,7 +17,8 @@ export function createReadOps(config: SandboxConfig, cwd: string): ReadOperation
       if (exitCode !== 0) {
         throw new Error(stderr || `Falha ao ler ${filePath}`);
       }
-      return Buffer.from(stdout, "utf-8");
+      // stdout já é Buffer — bytes exatos, sem corromper binário
+      return stdout;
     },
 
     async access(filePath) {
@@ -37,7 +38,7 @@ export function createReadOps(config: SandboxConfig, cwd: string): ReadOperation
           command: ["file", "--mime-type", "-b", filePath],
           cwd,
         });
-        const mime = stdout.trim();
+        const mime = stdout.toString().trim();
         const mimeMap: Record<string, string> = {
           "image/png": "image/png",
           "image/jpeg": "image/jpeg",

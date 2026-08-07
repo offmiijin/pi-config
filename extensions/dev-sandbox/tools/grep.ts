@@ -153,7 +153,7 @@ export function createGrepTool(cwd: string) {
         };
       }
 
-      const trimmed = stdout.trim();
+      const trimmed = stdout.toString().trim();
 
       if (!trimmed) {
         return {

@@ -119,7 +119,9 @@ export interface BwrapCall {
 
 /** Resultado de uma execução bwrap. */
 export interface BwrapResult {
-  stdout: string;
+  /** Stdout como bytes brutos (preserva binário — ex: imagens). */
+  stdout: Buffer;
+  /** Stderr como texto (diagnóstico). */
   stderr: string;
   exitCode: number | null;
   timedOut: boolean;

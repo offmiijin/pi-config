@@ -39,6 +39,14 @@ describe("read-ops", () => {
     expect(buf.toString()).toBe("conteúdo");
   });
 
+  it("readFile preserva bytes binários (Buffer intacto)", async () => {
+    const bin = Buffer.from([0xff, 0xfe, 0x00, 0x41, 0x80]);
+    execMock.mockResolvedValue(ok({ stdout: bin }));
+    const buf = await createReadOps(DEFAULT_CONFIG, "/p").readFile("/p/img.png");
+    expect(buf).toBeInstanceOf(Buffer);
+    expect(buf.equals(bin)).toBe(true);
+  });
+
   it("readFile: exit ≠ 0 → throw com stderr", async () => {
     execMock.mockResolvedValue(ok({ stderr: "permissão negada", exitCode: 1 }));
     await expect(createReadOps(DEFAULT_CONFIG, "/p").readFile("/p/x.txt"))

@@ -53,7 +53,7 @@ describe.skipIf(!nestedBwrapWorks)("integração com bwrap real", () => {
     const cwd = fixture();
     const res = await execInSandbox(config, { command: ["echo", "oi"], cwd });
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toBe("oi\n");
+    expect(res.stdout.toString()).toBe("oi\n");
   });
 
   it("repassa stdin", async () => {
@@ -62,7 +62,7 @@ describe.skipIf(!nestedBwrapWorks)("integração com bwrap real", () => {
       command: ["bash", "-c", "cat"], cwd, stdin: "dados-pelo-stdin",
     });
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toBe("dados-pelo-stdin");
+    expect(res.stdout.toString()).toBe("dados-pelo-stdin");
   });
 
   it("/usr é read-only (escrita falha)", async () => {
@@ -78,7 +78,7 @@ describe.skipIf(!nestedBwrapWorks)("integração com bwrap real", () => {
     writeFileSync(join(cwd, ".env"), "TOPSECRET=1");
     const res = await execInSandbox(config, { command: ["cat", ".env"], cwd });
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toBe("");
+    expect(res.stdout.toString()).toBe("");
   });
 
   it("/tmp é efêmero entre namespaces", async () => {
@@ -86,11 +86,20 @@ describe.skipIf(!nestedBwrapWorks)("integração com bwrap real", () => {
     const w = await execInSandbox(config, {
       command: ["bash", "-c", "echo x > /tmp/sb-mark && cat /tmp/sb-mark"], cwd,
     });
-    expect(w.stdout).toBe("x\n");
+    expect(w.stdout.toString()).toBe("x\n");
     const r = await execInSandbox(config, {
       command: ["cat", "/tmp/sb-mark"], cwd,
     });
     expect(r.exitCode).not.toBe(0);
+  });
+
+  it("preserva bytes binários no stdout", async () => {
+    const cwd = fixture();
+    const res = await execInSandbox(config, {
+      command: ["bash", "-c", "printf '\\377\\376\\000A'"], cwd,
+    });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout.equals(Buffer.from([0xff, 0xfe, 0x00, 0x41]))).toBe(true);
   });
 
   it("bash-ops: env custom visível", async () => {
