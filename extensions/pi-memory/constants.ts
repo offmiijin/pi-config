@@ -1,16 +1,21 @@
 /**
- * pi-memory — Shared constants + project setup (no PI dependency).
+ * pi-memory — Shared constants + project setup.
+ *
+ * Portabilidade: usa getAgentDir() do pi-coding-agent (honra $PI_AGENT_DIR
+ * e rebrandings via CONFIG_DIR_NAME) em vez de hardcodar ~/.pi/agent —
+ * funciona em qualquer máquina Linux sem paths fixos.
  */
 
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-export const MEMORIES_ROOT = join(homedir(), ".pi", "agent", "memories");
+/** Raiz das memórias — diretório do agente real (env/rebranding-aware). */
+export const MEMORIES_ROOT = join(getAgentDir(), "memories");
 export const OBSERVATION_THRESHOLD = 50;
 
 /**
@@ -46,21 +51,36 @@ export const MEMORY_LANGUAGE_RULE =
 // ── Project identification ─────────────────────────────────────────────────
 
 /**
- * Identifies the project by git remote origin.
- *
- * 1. Tries `git remote get-url origin`
- * 2. Normalizes to `host_user_repo` format (e.g. `github.com_user_repo`)
- * 3. Falls back to `__unmanaged_<cwd_hash_12>`
+ * Lê a URL do remote origin (git opcional).
+ * Retorna null quando não é repo git ou o git está ausente.
+ * Exportado para testes (mock de execSync).
  */
-export function identifyProject(cwd: string): string {
+export function getGitRemoteUrl(cwd: string): string | null {
 	try {
-		const remote = execSync("git remote get-url origin", {
+		return execSync("git remote get-url origin", {
 			cwd,
 			encoding: "utf-8",
 			stdio: "pipe",
 			timeout: 3000,
 		}).trim();
+	} catch {
+		return null;
+	}
+}
 
+/**
+ * Identifies the project by git remote origin.
+ *
+ * 1. Tries `git remote get-url origin` (git opcional — sem git, cai no fallback)
+ * 2. Normalizes to `host_user_repo` format (e.g. `github.com_user_repo`)
+ * 3. Falls back to `__unmanaged_<cwd_hash_12>`
+ */
+export function identifyProject(
+	cwd: string,
+	gitRemote: (c: string) => string | null = getGitRemoteUrl,
+): string {
+	const remote = gitRemote(cwd);
+	if (remote !== null) {
 		// Strip protocol, auth, .git
 		const normalized = remote
 			.replace(/^git@/, "")
@@ -70,10 +90,9 @@ export function identifyProject(cwd: string): string {
 			.replace(/\/$/, "");
 
 		return normalized.replace(/[/:]/g, "_");
-	} catch {
-		const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
-		return `__unmanaged_${hash}`;
 	}
+	const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
+	return `__unmanaged_${hash}`;
 }
 
 // ── Directory management ──────────────────────────────────────────────────
@@ -96,14 +115,26 @@ export function getMemoryDirectories(projectId: string): string[] {
 }
 
 /**
- * Ensures all required memory directories exist.
- * Idempotent — safe to call multiple times.
+ * Ensures all required memory directories exist (private, 0o700).
+ * Idempotente. Retorna TODOS os paths esperados (contrato antigo).
+ *
+ * Portabilidade: falha de permissão num diretório NÃO derruba a extensão —
+ * avisa e segue; as tools reportam erro por chamada se a escrita falhar.
  */
 export function ensureDirectories(projectId: string): string[] {
 	const dirs = getMemoryDirectories(projectId);
 	for (const dir of dirs) {
-		if (!existsSync(dir)) {
-			mkdirSync(dir, { recursive: true });
+		if (existsSync(dir)) continue;
+		try {
+			mkdirSync(dir, { recursive: true, mode: 0o700 });
+			// recursive só aplica mode ao último nível; força 0o700 em todos
+			try {
+				chmodSync(dir, 0o700);
+			} catch {
+				// chmod não crítico — segue
+			}
+		} catch (err) {
+			console.warn(`[pi-memory] não pôde criar ${dir}: ${(err as Error).message}`);
 		}
 	}
 	return dirs;
