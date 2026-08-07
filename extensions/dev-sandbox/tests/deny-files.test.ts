@@ -150,15 +150,21 @@ describe("findDangerousFiles", () => {
     expect(findDangerousFiles(join(tmpdir(), "nao-existe-xyz"), [".env"])).toEqual([]);
   });
 
-  it("diretório ilegível → lança erro (fail-closed, não segue sem mascarar)", () => {
+  it("diretório ilegível (EACCES) → emite warning e pula (host sem acesso = sandbox sem acesso)", () => {
     const root = fixture();
     mkdirSync(join(root, "locked"), { recursive: true });
     writeFileSync(join(root, "locked", ".env"), "SECRET=1");
     state.failOn = [join(root, "locked")];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      expect(() => findDangerousFiles(root, [".env"])).toThrow(/denyFilePatterns/);
+      // EACCES não bloqueia — dir ilegível no host é ilegível no sandbox
+      expect(() => findDangerousFiles(root, [".env"])).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sem permissão para escanear"),
+      );
     } finally {
       state.failOn = [];
+      warn.mockRestore();
     }
   });
 

@@ -99,6 +99,15 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
       // Diretório removido durante o scan (ENOENT/ENOTDIR) → nada a mascarar
       const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
       if (code === "ENOENT" || code === "ENOTDIR") return;
+      // EACCES: dir sem permissão de leitura no host → sandbox também não lê.
+      // Emitir warning e seguir sem bloquear (não há risco de vazamento).
+      if (code === "EACCES") {
+        console.warn(
+          `[dev-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
+          `diretório ignorado no scan de denyFilePatterns.`,
+        );
+        return;
+      }
       // Fail-closed: diretório ilegível pode conter arquivos que deveriam
       // ser mascarados — bloqueia em vez de seguir sem negar.
       throw new Error(
