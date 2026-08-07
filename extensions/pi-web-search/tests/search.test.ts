@@ -15,12 +15,17 @@ vi.mock("../config", () => ({
 	getTavilyKey: () => "mock-tavily-key",
 	getSearxngKey: () => "mock-searxng-key",
 	getSearxngUrl: () => "http://localhost:4000",
-	getConfiguredProviders: () => ["searxng", "serper", "exa", "tavily"],
+	getSearxngTargetUrl: () => "http://localhost:4000",
+	getConfiguredProviders: () => mockConfigured,
 	setKey: vi.fn(),
 	getConfigSummary: () => "",
 }));
 
-import { search } from "../search";
+const { mockConfigured } = vi.hoisted(() => ({
+	mockConfigured: ["searxng", "serper", "exa", "tavily"],
+}));
+
+import { search, isSearxngReachable, validateProvider, resetSearxngReachCache } from "../search";
 
 interface MockResult {
 	title: string;
@@ -126,5 +131,54 @@ describe("search — SearXNG → Tavily → Exa → Serper cascade", () => {
 		const result = await search("test");
 		expect(result.results).toEqual([]);
 		expect(result.error).toContain("All engines failed");
+	});
+
+	it("returns setup guidance when no provider is configured", async () => {
+		const original = mockConfigured.slice();
+		mockConfigured.length = 0;
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(makeError(500)));
+
+		const result = await search("test");
+		expect(result.results).toEqual([]);
+		expect(result.error).toContain("Nenhum provedor de busca configurado");
+		expect(result.error).toContain("/web_search config");
+		mockConfigured.push(...original);
+	});
+});
+
+describe("isSearxngReachable / validateProvider", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		resetSearxngReachCache();
+	});
+
+	it("detects reachable SearXNG", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(makeResponse([])));
+		expect(await isSearxngReachable()).toBe(true);
+	});
+
+	it("detects unreachable SearXNG (Docker parado)", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+		expect(await isSearxngReachable()).toBe(false);
+	});
+
+	it("caches the probe per process", async () => {
+		const f = vi.fn().mockResolvedValue(makeResponse([]));
+		vi.stubGlobal("fetch", f);
+		await isSearxngReachable();
+		await isSearxngReachable();
+		expect(f).toHaveBeenCalledTimes(1);
+	});
+
+	it("validateProvider('searxng') ok quando alcançável", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(makeResponse([])));
+		const v = await validateProvider("searxng");
+		expect(v.ok).toBe(true);
+	});
+
+	it("validateProvider desconhecido → falha", async () => {
+		const v = await validateProvider("nope");
+		expect(v.ok).toBe(false);
+		expect(v.detail).toContain("nope");
 	});
 });
