@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { existsSync, openSync, closeSync } from "node:fs";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
-import { buildBwrapArgs, killGroup } from "../bwrap-executor";
+import { buildBwrapArgs, killGroup, wrapWithLandlock } from "../bwrap-executor";
 
 /**
  * Abre o arquivo BPF se seccomp estiver habilitado.
@@ -22,7 +22,8 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
   }
   try {
     return openSync(cfg.bpfPath, "r");
-  } catch {
+  } catch (err) {
+    console.warn("[dev-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
     return undefined;
   }
 }
@@ -30,7 +31,12 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
 export function createBashOps(config: SandboxConfig, cwd: string): BashOperations {
   return {
     async exec(command, cmdCwd, { onData, signal, timeout, env }) {
-      const args = buildBwrapArgs(config, cwd);
+      // Sinal já abortado antes do spawn → nem cria o processo
+      if (signal?.aborted) {
+        throw new Error("aborted");
+      }
+
+      let args = buildBwrapArgs(config, cwd);
 
       // ── Seccomp BPF ────────────────────────
       const bpfFd = openSeccompFd(config);
@@ -47,8 +53,9 @@ export function createBashOps(config: SandboxConfig, cwd: string): BashOperation
         }
       }
 
-      // Comando — usa bash -lc para carregar profile e ter job control
-      args.push("bash", "-lc", command);
+      // ── Landlock + comando ────────────────
+      // bash -lc carrega profile e tem job control
+      args = wrapWithLandlock(args, ["bash", "-lc", command], config, cwd);
 
       return new Promise((resolve, reject) => {
         // stdio: stdin, stdout, stderr + opcionalmente FD 3 (BPF)

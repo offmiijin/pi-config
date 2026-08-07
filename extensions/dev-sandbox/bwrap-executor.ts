@@ -7,9 +7,9 @@
  *   - Coletar stdout/stderr com backpressure
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
 
 // ─── Env vars seguras (whitelist) ──────────────────────────
@@ -43,19 +43,32 @@ const SAFE_ENV_VARS = new Set([
 // ─── Detection de arquivos sensíveis ───────────────────────────
 
 /**
- * Casamento simples com wildcard `*`.
- * - `*` corresponde a qualquer sequência (exceto `/`).
+ * Casamento com glob simples.
+ * - `*` = qualquer sequência de caracteres (não atravessa `/`).
  * - Sem `*` = igualdade exata.
  *
  * Exportado para testes (security scan).
  */
 export function matchSimpleGlob(name: string, pattern: string): boolean {
   if (!pattern.includes("*")) return name === pattern;
-  const [prefix, suffix] = pattern.split("*", 2);
-  if (prefix && !name.startsWith(prefix)) return false;
-  if (suffix && !name.endsWith(suffix)) return false;
-  if (prefix && suffix) return name.length >= prefix.length + suffix.length;
-  return true;
+  // Escapa regex chars, depois transforma `*` em wildcard por segmento
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = escaped.replace(/\\\*/g, "[^/]*");
+  return new RegExp(`^${re}$`).test(name);
+}
+
+/**
+ * Casa um glob com `/` contra um path relativo ao workspace.
+ * Cada segmento é casado independentemente — `*` não atravessa `/`.
+ * Ex: `secrets/*` casa `secrets/api.key`, mas não `api.key` nem `secrets/x/api.key`.
+ *
+ * Exportado para testes (security scan).
+ */
+export function matchPathPattern(relPath: string, pattern: string): boolean {
+  const pathSegs = relPath.split("/");
+  const patSegs = pattern.split("/");
+  if (pathSegs.length !== patSegs.length) return false;
+  return patSegs.every((seg, i) => matchSimpleGlob(pathSegs[i], seg));
 }
 
 /**
@@ -64,19 +77,50 @@ export function matchSimpleGlob(name: string, pattern: string): boolean {
  *
  * Ignora .git, node_modules para performance.
  *
+ * Fail-closed: se um diretório não puder ser lido (ex: permissão), LANÇA
+ * erro — arquivos dentro dele podem não ser mascarados e a operação deve
+ * ser bloqueada em vez de seguir sem negar.
+ *
  * Exportado para testes (security scan).
  */
+// Diretórios/Paths já alertados — evita spam no TUI a cada tool call.
+const eaccesWarned = new Set<string>();
+const symlinkWarned = new Set<string>();
+
 export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   if (patterns.length === 0) return [];
 
+  // Padrões sem "/" casam basename (compat); com "/" casam path relativo
+  const namePatterns = patterns.filter((p) => !p.includes("/"));
+  const pathPatterns = patterns.filter((p) => p.includes("/"));
   const results: string[] = [];
 
   function walk(current: string) {
     let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      return;
+    } catch (err) {
+      // Diretório removido durante o scan (ENOENT/ENOTDIR) → nada a mascarar
+      const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
+      if (code === "ENOENT" || code === "ENOTDIR") return;
+      // EACCES: dir sem permissão de leitura no host → sandbox também não lê.
+      // Emitir warning uma única vez por diretório (evita spam no TUI).
+      if (code === "EACCES") {
+        if (!eaccesWarned.has(current)) {
+          eaccesWarned.add(current);
+          console.warn(
+            `[dev-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
+            `diretório ignorado no scan de denyFilePatterns.`,
+          );
+        }
+        return;
+      }
+      // Fail-closed: diretório ilegível pode conter arquivos que deveriam
+      // ser mascarados — bloqueia em vez de seguir sem negar.
+      throw new Error(
+        `[dev-sandbox] Falha ao escanear '${current}' para denyFilePatterns: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     for (const entry of entries) {
@@ -92,13 +136,29 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
       // Só arquivos regulares
       if (!entry.isFile()) continue;
 
-      // Testa contra cada padrão
-      for (const pattern of patterns) {
+      const fullPath = join(current, name);
+      let matched = false;
+
+      // Basename: testa o nome do arquivo
+      for (const pattern of namePatterns) {
         if (matchSimpleGlob(name, pattern)) {
-          results.push(join(current, name));
+          matched = true;
           break;
         }
       }
+
+      // Path: testa o caminho relativo ao workspace (ex: "secrets/*")
+      if (!matched && pathPatterns.length > 0) {
+        const rel = relative(cwd, fullPath);
+        for (const pattern of pathPatterns) {
+          if (matchPathPattern(rel, pattern)) {
+            matched = true;
+            break;
+          }
+        }
+      }
+
+      if (matched) results.push(fullPath);
     }
   }
 
@@ -106,8 +166,12 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   try {
     if (!existsSync(cwd)) return results;
     walk(cwd);
-  } catch {
-    // Degradação segura: segue sem negar arquivos
+  } catch (err) {
+    console.warn(
+      "[dev-sandbox] Falha ao escanear denyFilePatterns — operação bloqueada:",
+      err,
+    );
+    throw err;
   }
 
   return results;
@@ -205,7 +269,7 @@ const CACHE_ENV_VARS: Record<string, string> = {
  * - Absoluto  → mantido (deve ser montado — ver buildBwrapArgs)
  */
 export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<string, string> {
-  const cfg = (config.filesystem.cacheDirs ?? {}) as Record<string, string>;
+  const cfg = (config.filesystem.cacheDirs ?? {}) as unknown as Record<string, string>;
   const out: Record<string, string> = {};
   for (const [name, defaultRel] of Object.entries(CACHE_DIR_DEFAULTS)) {
     const v = cfg[name];
@@ -217,16 +281,40 @@ export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<str
 }
 
 // ─── Cache de argumentos bwrap ──────────────────────────────
+//
+// O cache guarda apenas a parte ESTÁTICA dos args (mounts de
+// sistema, SSH, caches, capabilities, env). A varredura de
+// arquivos sensíveis (denyFilePatterns) é feita a cada chamada:
+// um .env criado após a primeira tool call não pode escapar.
 
 const bwrapArgsCache = new Map<string, string[]>();
+const BWRAP_ARGS_CACHE_MAX = 50;
+
+/**
+ * Impressão digital das env vars que influenciam os args.
+ * Mudanças de HOME, PATH, SSH_AUTH_SOCK, USER ou de qualquer
+ * var da whitelist invalidam o cache.
+ */
+function envFingerprint(): string {
+  const keys = new Set<string>(SAFE_ENV_VARS);
+  keys.add("HOME");
+  keys.add("SSH_AUTH_SOCK");
+  keys.add("USER");
+  const parts: string[] = [];
+  for (const key of keys) {
+    const v = process.env[key];
+    if (v !== undefined) parts.push(`${key}=${v}`);
+  }
+  return parts.join("|");
+}
 
 function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
   const parts = [
     cwd,
+    envFingerprint(),
     String(config.internet.enabled),
     config.ssh.mode,
     config.filesystem.denyPaths.join(","),
-    config.filesystem.denyFilePatterns.join(","),
     config.filesystem.extraWritable.join(","),
     config.filesystem.extraReadonly.join(","),
     config.filesystem.cacheDirs ? Object.values(config.filesystem.cacheDirs).join(",") : "",
@@ -240,13 +328,39 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
 /**
  * Constrói o array de argumentos base do bwrap.
  * Estes argumentos são comuns a todas as tools.
- * Cache por config+cwd para evitar reconstrução a cada tool call.
+ * Cache por config+cwd+env para evitar reconstrução a cada tool call.
+ *
+ * A parte cacheada é estática (mounts, capabilities, env). A
+ * varredura de denyFilePatterns roda a cada chamada e os binds
+ * de /dev/null são anexados ao final — assim um arquivo sensível
+ * criado depois da primeira execução não escapa do sandbox.
  */
 export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   const key = getBwrapCacheKey(config, cwd);
-  const cached = bwrapArgsCache.get(key);
-  if (cached) return [...cached];
+  let cached = bwrapArgsCache.get(key);
+  if (!cached) {
+    cached = buildStaticArgs(config, cwd);
+    if (bwrapArgsCache.size >= BWRAP_ARGS_CACHE_MAX) {
+      const oldest = bwrapArgsCache.keys().next().value;
+      if (oldest !== undefined) bwrapArgsCache.delete(oldest);
+    }
+    bwrapArgsCache.set(key, cached);
+  }
+  const args = [...cached];
 
+  // Arquivos sensíveis no projeto — substituídos por /dev/null.
+  // Anexados ao final (após binds de extraWritable/cache) para que
+  // a negação SEMPRE vença sobre binds de diretórios read-write.
+  appendSensitiveMounts(args, config, cwd);
+
+  return args;
+}
+
+/**
+ * Monta a parte estática dos args (independe do estado atual dos
+ * arquivos no workspace). O resultado é cacheado.
+ */
+function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
   const home = process.env.HOME || "/root";
   const args: string[] = [
     "--unshare-all",
@@ -314,6 +428,12 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
     args.push("--ro-bind", piDocsDir, piDocsDir);
   }
 
+  // ── Landlock executor ─────────────────────
+  // Monta o helper landlock-exec como /pi-landlock-exec dentro do sandbox.
+  if (landlockExecHostPath && config.landlock.enabled) {
+    args.push("--ro-bind", landlockExecHostPath, LANDLOCK_EXEC_SANDBOX_PATH);
+  }
+
   // ── PATH sob HOME ──────────────────────────────────────
   // PATH é repassado via SAFE_ENV_VARS, mas HOME é vazio no sandbox.
   // Monta read-only os diretórios no PATH que estão sob HOME para que
@@ -341,16 +461,6 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
 
   // Projeto read-write (ponto central do sandbox)
   args.push("--bind", cwd, cwd);
-
-  // Arquivos sensíveis no projeto — substituídos por /dev/null (vazio/imutável)
-  const sensitivePatterns = config.filesystem.denyFilePatterns;
-  if (sensitivePatterns.length > 0) {
-    const sensitiveFiles = findDangerousFiles(cwd, sensitivePatterns);
-    for (const f of sensitiveFiles) {
-      // /dev/null já existe porque --dev /dev é adicionado no início
-      args.push("--ro-bind", "/dev/null", f);
-    }
-  }
 
   // Rede do host
   if (config.internet.enabled) {
@@ -440,7 +550,10 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
       // Não existe → --tmpfs cria o diretório normalmente
     }
     if (isSymlink) {
-      console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+      if (!symlinkWarned.has(deny)) {
+        symlinkWarned.add(deny);
+        console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+      }
       continue;
     }
     args.push("--tmpfs", deny);
@@ -525,8 +638,167 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   args.push("--setenv", "HOME", home);
   args.push("--setenv", "USER", process.env.USER || "root");
 
-  bwrapArgsCache.set(key, [...args]);
   return args;
+}
+
+/**
+ * Anexa binds /dev/null para arquivos que correspondem a
+ * denyFilePatterns. Re-escaneado a cada chamada para cobrir
+ * arquivos criados após o cache ter sido construído.
+ */
+function appendSensitiveMounts(args: string[], config: SandboxConfig, cwd: string): void {
+  const sensitivePatterns = config.filesystem.denyFilePatterns;
+  if (sensitivePatterns.length === 0) return;
+  // Falha no scan (findDangerousFiles) propaga → execução é bloqueada
+  // (fail-closed): nenhuma tool roda sem garantir o mascaramento.
+  const sensitiveFiles = findDangerousFiles(cwd, sensitivePatterns);
+  for (const f of sensitiveFiles) {
+    // /dev/null já existe porque --dev /dev é adicionado no início
+    args.push("--ro-bind", "/dev/null", f);
+  }
+}
+
+// ─── Landlock ──────────────────────────────────────────────────
+//
+// Landlock é aplicado DENTRO do namespace bwrap via helper nativo.
+// O probe de ABI é cacheado e feito uma única vez por sessão.
+
+/** Caminho do helper landlock-exec dentro do sandbox. */
+const LANDLOCK_EXEC_SANDBOX_PATH = "/pi-landlock-exec";
+
+/** Caminho do helper no host — definido por setLandlockExecPath(). */
+let landlockExecHostPath: string | undefined;
+
+/**
+ * Define o caminho do binário landlock-exec no host.
+ * Deve ser chamado durante session_start, antes da primeira tool call.
+ * O binário será montado como /pi-landlock-exec dentro do sandbox.
+ */
+export function setLandlockExecPath(hostPath: string) {
+  landlockExecHostPath = hostPath;
+}
+
+/** Cache do probe de ABI: undefined = não probado, null = indisponível, number = ABI. */
+let landlockAbiCache: number | null | undefined = undefined;
+
+/**
+ * Consulta a ABI Landlock suportada pelo kernel chamando o helper
+ * landlock-exec fora do sandbox. O resultado é cacheado — chamadas
+ * subsequentes retornam o mesmo valor.
+ *
+ * @param helperPath Caminho absoluto do binário landlock-exec no host.
+ * @returns ABI version (1-9) ou null se Landlock indisponível.
+ */
+export function probeLandlockAbi(helperPath: string): number | null {
+  if (landlockAbiCache !== undefined) return landlockAbiCache;
+  try {
+    const out = execFileSync(helperPath, ["--probe-abi"], {
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const abi = parseInt(out.toString().trim(), 10);
+    landlockAbiCache = Number.isFinite(abi) && abi >= 1 ? abi : null;
+  } catch {
+    landlockAbiCache = null;
+  }
+  return landlockAbiCache;
+}
+
+/** Reseta o cache de ABI (uso interno — testes). */
+export function resetLandlockAbiCache() {
+  landlockAbiCache = undefined;
+}
+
+/**
+ * Constrói os argumentos do landlock-exec com allowlist de paths.
+ *
+ * RO paths: /usr, /bin, /lib, /lib64, /etc, /dev, /proc,
+ *           documentação pi, skills, HOME, extraReadonly.
+ * RW paths: cwd, /tmp, /run, caches, extraWritable, SSH agent socket dir.
+ */
+function buildLandlockArgs(config: SandboxConfig, cwd: string): string[] {
+  const home = process.env.HOME || "/root";
+  const args: string[] = [
+    LANDLOCK_EXEC_SANDBOX_PATH,
+    "--min-abi", String(config.landlock.minAbi),
+  ];
+
+  // ── Read-only paths ──────────────────────
+  const roPaths = ["/usr", "/bin", "/lib"];
+  if (existsSync("/lib64")) roPaths.push("/lib64");
+  roPaths.push("/etc");
+  roPaths.push("/dev");
+  roPaths.push("/proc");
+
+  // Documentação do pi
+  const piDocs = findPiDocsDir(home);
+  if (piDocs) roPaths.push(piDocs);
+
+  // Skills do agente
+  const skillsDir = join(home, ".pi", "agent", "skills");
+  if (existsSync(skillsDir)) roPaths.push(skillsDir);
+
+  // HOME — tmpfs vazio com mounts seletivos (known_hosts, config, .gitconfig)
+  roPaths.push(home);
+
+  // Extra readonly
+  for (const p of config.filesystem.extraReadonly) {
+    if (existsSync(p)) roPaths.push(p);
+  }
+
+  for (const p of roPaths) args.push("--allow-ro", p);
+
+  // ── Read-write paths ─────────────────────
+  const rwPaths = ["/tmp", "/run", cwd];
+
+  // Caches persistentes
+  const cacheDirs = resolveCacheDirs(config, cwd);
+  for (const dir of Object.values(cacheDirs)) {
+    if (existsSync(dir)) rwPaths.push(dir);
+  }
+
+  // Extra writable
+  for (const p of config.filesystem.extraWritable) {
+    if (existsSync(p)) rwPaths.push(p);
+  }
+
+  // SSH agent socket dir (precisa de rw para comunicação bidirecional)
+  if (config.ssh.mode === "agent") {
+    const sock = process.env.SSH_AUTH_SOCK;
+    if (sock) {
+      try {
+        const real = realpathSync(sock);
+        rwPaths.push(dirname(real));
+      } catch {
+        // Socket não resolvível → ignora
+      }
+    }
+  }
+
+  for (const p of rwPaths) args.push("--allow-rw", p);
+
+  args.push("--");
+  return args;
+}
+
+/**
+ * Envolve o comando com o helper landlock-exec se o Landlock
+ * estiver habilitado na configuração. Caso contrário, apenas
+ * anexa o comando diretamente aos argumentos do bwrap.
+ *
+ * @returns Array completo de argumentos para o bwrap.
+ */
+export function wrapWithLandlock(
+  bwrapArgs: string[],
+  command: string[],
+  config: SandboxConfig,
+  cwd: string,
+): string[] {
+  if (!config.landlock.enabled) {
+    return [...bwrapArgs, ...command];
+  }
+  const landlockArgs = buildLandlockArgs(config, cwd);
+  return [...bwrapArgs, ...landlockArgs, ...command];
 }
 
 // ─── Execução ─────────────────────────────────────────────────
@@ -546,8 +818,14 @@ export function execInSandbox(
   opts: BwrapCall,
 ): Promise<BwrapResult> {
   return new Promise((resolve, reject) => {
+    // Sinal já abortado antes do spawn → nem cria o processo
+    if (opts.signal?.aborted) {
+      resolve({ stdout: Buffer.alloc(0), stderr: "", exitCode: null, timedOut: false, aborted: true });
+      return;
+    }
+
     const baseArgs = buildBwrapArgs(config, opts.cwd);
-    const args = [...baseArgs];
+    let args = [...baseArgs];
 
     // ── Seccomp BPF ──────────────────────────
     let bpfFd: number | undefined;
@@ -557,14 +835,16 @@ export function execInSandbox(
         bpfFd = openSync(seccompCfg.bpfPath, "r");
         // FD 3 no child = arquivo BPF
         args.push("--seccomp", "3");
-      } catch {
-        // Degradação segura: segue sem seccomp
+      } catch (err) {
+        // Degradação de segurança → aviso explícito
+        console.warn("[dev-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
         bpfFd = undefined;
       }
     }
 
-    // Comando a executar
-    args.push(...opts.command);
+    // ── Landlock + comando ───────────────────
+    // Landlock é aplicado dentro do bwrap, após mounts e seccomp.
+    args = wrapWithLandlock(args, opts.command, config, opts.cwd);
 
     // stdio: stdin, stdout, stderr, + opcionalmente FD 3 (BPF)
     const stdio: any[] = ["pipe", "pipe", "pipe"];
@@ -594,11 +874,12 @@ export function execInSandbox(
       child.stdin!.end();
     }
 
-    let stdout = "";
+    // stdout em buffers para preservar bytes binários (ex: imagens)
+    const stdoutChunks: Buffer[] = [];
     let stderr = "";
 
     child.stdout!.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdoutChunks.push(chunk);
     });
 
     child.stderr!.on("data", (chunk: Buffer) => {
@@ -631,11 +912,11 @@ export function execInSandbox(
       opts.signal?.removeEventListener("abort", onAbort);
 
       if (opts.signal?.aborted) {
-        resolve({ stdout, stderr, exitCode: code, timedOut: false, aborted: true });
+        resolve({ stdout: Buffer.concat(stdoutChunks), stderr, exitCode: code, timedOut: false, aborted: true });
       } else if (timedOut) {
-        resolve({ stdout, stderr, exitCode: code, timedOut: true, aborted: false });
+        resolve({ stdout: Buffer.concat(stdoutChunks), stderr, exitCode: code, timedOut: true, aborted: false });
       } else {
-        resolve({ stdout, stderr, exitCode: code, timedOut: false, aborted: false });
+        resolve({ stdout: Buffer.concat(stdoutChunks), stderr, exitCode: code, timedOut: false, aborted: false });
       }
     });
   });

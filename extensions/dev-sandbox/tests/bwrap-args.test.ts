@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBwrapArgs } from "../bwrap-executor";
-import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
+import { DEFAULT_CONFIG, type SandboxConfig, type SandboxFilesystemConfig } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -47,12 +47,16 @@ function fixtureProj(): string {
 }
 
 /** Config com merge raso por seção (não muta DEFAULT_CONFIG). */
-function makeConfig(over: Partial<SandboxConfig> = {}): SandboxConfig {
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends Array<infer U> ? Array<U> : T[K] extends object ? DeepPartial<T[K]> : T[K];
+};
+
+function makeConfig(over: DeepPartial<SandboxConfig> = {}): SandboxConfig {
   return {
     ...DEFAULT_CONFIG,
     ...over,
     internet: { ...DEFAULT_CONFIG.internet, ...(over.internet ?? {}) },
-    filesystem: { ...DEFAULT_CONFIG.filesystem, ...(over.filesystem ?? {}) },
+    filesystem: { ...DEFAULT_CONFIG.filesystem, ...(over.filesystem ?? {}) } as SandboxFilesystemConfig,
     ssh: { ...DEFAULT_CONFIG.ssh, ...(over.ssh ?? {}) },
     capabilities: { ...DEFAULT_CONFIG.capabilities, ...(over.capabilities ?? {}) },
     seccomp: { ...DEFAULT_CONFIG.seccomp, ...(over.seccomp ?? {}) },
@@ -296,6 +300,31 @@ describe("buildBwrapArgs — denyFilePatterns", () => {
     const args = buildBwrapArgs(makeConfig({ filesystem: { denyFilePatterns: [] } }), proj);
     expect(roBindPairs(args).filter(([src]) => src === "/dev/null")).toHaveLength(0);
   });
+
+  it("re-scanneia a cada chamada: arquivo sensível criado depois é mascarado", () => {
+    const proj = fixtureProj();
+    const config = makeConfig();
+    const first = buildBwrapArgs(config, proj);
+    expect(roBindPairs(first).filter(([src]) => src === "/dev/null")).toHaveLength(0);
+
+    writeFileSync(join(proj, ".env"), "SECRET=1");
+    const second = buildBwrapArgs(config, proj);
+    expect(roBindPairs(second)).toContainEqual(["/dev/null", join(proj, ".env")]);
+  });
+
+  it("bind de deny vence bind read-write de extraWritable", () => {
+    const proj = fixtureProj();
+    writeFileSync(join(proj, ".env"), "SECRET=1");
+    const args = buildBwrapArgs(
+      makeConfig({ filesystem: { extraWritable: [proj] } }),
+      proj,
+    );
+    // deny (/dev/null) vem DEPOIS do bind rw do diretório → prevalece
+    const denyIdx = args.indexOf("/dev/null");
+    const bindIdx = args.lastIndexOf("--bind");
+    expect(bindIdx).toBeGreaterThan(-1);
+    expect(denyIdx).toBeGreaterThan(bindIdx);
+  });
 });
 
 // ─── SSH ──────────────────────────────────────────────────────
@@ -459,5 +488,42 @@ describe("buildBwrapArgs — cache", () => {
     const tmpfsB = flagValues(b, "--tmpfs").filter((v) => v === "/proc");
     expect(tmpfsA).toHaveLength(0);
     expect(tmpfsB).toHaveLength(1);
+  });
+
+  it("mudança de HOME invalida o cache (args não ficam stale)", () => {
+    const homeA = fixtureHome();
+    const homeB = fixtureHome();
+    mkdirSync(join(homeA, ".ssh"), { recursive: true });
+    mkdirSync(join(homeB, ".ssh"), { recursive: true });
+    const cfg = makeConfig({ ssh: { mode: "mount" } });
+    const cwd = uniqCwd();
+
+    process.env.HOME = homeA;
+    const argsA = buildBwrapArgs(cfg, cwd);
+    process.env.HOME = homeB;
+    const argsB = buildBwrapArgs(cfg, cwd);
+
+    expect(roBindPairs(argsA)).toContainEqual([join(homeA, ".ssh"), join(homeA, ".ssh")]);
+    expect(roBindPairs(argsB)).toContainEqual([join(homeB, ".ssh"), join(homeB, ".ssh")]);
+  });
+
+  it("mudança de SSH_AUTH_SOCK invalida o cache", () => {
+    const sockDirA = mkdtempSync(join(tmpdir(), "sb-sockA-"));
+    fixtures.push(sockDirA);
+    const sockA = join(sockDirA, "agent.1");
+    writeFileSync(sockA, "");
+    const sockDirB = mkdtempSync(join(tmpdir(), "sb-sockB-"));
+    fixtures.push(sockDirB);
+    const sockB = join(sockDirB, "agent.2");
+    writeFileSync(sockB, "");
+    const cwd = uniqCwd();
+
+    process.env.SSH_AUTH_SOCK = sockA;
+    const argsA = buildBwrapArgs(makeConfig(), cwd);
+    process.env.SSH_AUTH_SOCK = sockB;
+    const argsB = buildBwrapArgs(makeConfig(), cwd);
+
+    expect(flagValues(argsA, "--bind")).toContain(sockA);
+    expect(flagValues(argsB, "--bind")).toContain(sockB);
   });
 });

@@ -15,7 +15,7 @@ import { createWriteOps } from "../tools/write-ops";
 import { createEditOps } from "../tools/edit-ops";
 import { createFindOps } from "../tools/find-ops";
 import { createLsOps } from "../tools/ls-ops";
-import { DEFAULT_CONFIG } from "../types";
+import { DEFAULT_CONFIG, type BwrapResult } from "../types";
 
 const execMock = vi.mocked(execInSandbox);
 
@@ -23,8 +23,8 @@ beforeEach(() => {
   execMock.mockReset();
 });
 
-function ok(over: Partial<{ stdout: string; stderr: string; exitCode: number }> = {}) {
-  return { stdout: "", stderr: "", exitCode: 0, ...over };
+function ok(over: Partial<{ stdout: string | Buffer; stderr: string; exitCode: number }> = {}) {
+  return { stdout: Buffer.from(""), stderr: "", exitCode: 0, timedOut: false, aborted: false, ...over } as unknown as BwrapResult;
 }
 
 // ─── read-ops ─────────────────────────────────────────────────
@@ -37,6 +37,14 @@ describe("read-ops", () => {
       command: ["cat", "/p/x.txt"], cwd: "/p",
     });
     expect(buf.toString()).toBe("conteúdo");
+  });
+
+  it("readFile preserva bytes binários (Buffer intacto)", async () => {
+    const bin = Buffer.from([0xff, 0xfe, 0x00, 0x41, 0x80]);
+    execMock.mockResolvedValue(ok({ stdout: bin }));
+    const buf = await createReadOps(DEFAULT_CONFIG, "/p").readFile("/p/img.png");
+    expect(buf).toBeInstanceOf(Buffer);
+    expect(buf.equals(bin)).toBe(true);
   });
 
   it("readFile: exit ≠ 0 → throw com stderr", async () => {
@@ -54,19 +62,19 @@ describe("read-ops", () => {
 
   it("detectImageMimeType: mapeia MIME conhecido", async () => {
     execMock.mockResolvedValue(ok({ stdout: "image/png\n" }));
-    await expect(createReadOps(DEFAULT_CONFIG, "/p").detectImageMimeType("/p/i.png"))
+    await expect(createReadOps(DEFAULT_CONFIG, "/p").detectImageMimeType!("/p/i.png"))
       .resolves.toBe("image/png");
   });
 
   it("detectImageMimeType: MIME desconhecido → null", async () => {
     execMock.mockResolvedValue(ok({ stdout: "text/plain\n" }));
-    await expect(createReadOps(DEFAULT_CONFIG, "/p").detectImageMimeType("/p/i.png"))
+    await expect(createReadOps(DEFAULT_CONFIG, "/p").detectImageMimeType!("/p/i.png"))
       .resolves.toBeNull();
   });
 
   it("detectImageMimeType: falha interna → null (degradação)", async () => {
     execMock.mockRejectedValue(new Error("bwrap sumiu"));
-    await expect(createReadOps(DEFAULT_CONFIG, "/p").detectImageMimeType("/p/i.png"))
+    await expect(createReadOps(DEFAULT_CONFIG, "/p").detectImageMimeType!("/p/i.png"))
       .resolves.toBeNull();
   });
 });
@@ -127,7 +135,7 @@ describe("find-ops", () => {
 
   it("glob: find com filtros e head -n limit", async () => {
     execMock.mockResolvedValue(ok({ stdout: "src/a.ts\nsrc/b.ts\n" }));
-    const found = await createFindOps(DEFAULT_CONFIG, "/p").glob("*.ts", "/p", { limit: 7 });
+    const found = await createFindOps(DEFAULT_CONFIG, "/p").glob("*.ts", "/p", { ignore: [], limit: 7 });
     expect(found).toEqual(["src/a.ts", "src/b.ts"]);
     const [, call] = execMock.mock.calls[0];
     const script = call.command[2] as string;
@@ -140,7 +148,7 @@ describe("find-ops", () => {
 
   it("glob: stdout vazio → lista vazia", async () => {
     execMock.mockResolvedValue(ok({ stdout: "" }));
-    await expect(createFindOps(DEFAULT_CONFIG, "/p").glob("*.ts", "/p", { limit: 10 }))
+    await expect(createFindOps(DEFAULT_CONFIG, "/p").glob("*.ts", "/p", { ignore: [], limit: 10 }))
       .resolves.toEqual([]);
   });
 });
@@ -148,9 +156,21 @@ describe("find-ops", () => {
 // ─── ls-ops ───────────────────────────────────────────────────
 
 describe("ls-ops — stat parse", () => {
+  type StatLike = {
+    isDirectory(): boolean;
+    isFile(): boolean;
+    isSymbolicLink(): boolean;
+    size: number;
+    mtimeMs: number;
+  };
+
+  async function statOf(stdout: string): Promise<StatLike> {
+    execMock.mockResolvedValue(ok({ stdout }));
+    return (await createLsOps(DEFAULT_CONFIG, "/p").stat("/p/x")) as unknown as StatLike;
+  }
+
   it("arquivo regular: tipo, tamanho e mtime", async () => {
-    execMock.mockResolvedValue(ok({ stdout: "regular file|123|1700000000\n" }));
-    const st = await createLsOps(DEFAULT_CONFIG, "/p").stat("/p/x");
+    const st = await statOf("regular file|123|1700000000\n");
     expect(st.isFile()).toBe(true);
     expect(st.isDirectory()).toBe(false);
     expect(st.isSymbolicLink()).toBe(false);
@@ -159,21 +179,18 @@ describe("ls-ops — stat parse", () => {
   });
 
   it("arquivo vazio: regular empty file → isFile", async () => {
-    execMock.mockResolvedValue(ok({ stdout: "regular empty file|0|1700000000\n" }));
-    const st = await createLsOps(DEFAULT_CONFIG, "/p").stat("/p/x");
+    const st = await statOf("regular empty file|0|1700000000\n");
     expect(st.isFile()).toBe(true);
   });
 
   it("symlink → isSymbolicLink", async () => {
-    execMock.mockResolvedValue(ok({ stdout: "symbolic link|0|1700000000\n" }));
-    const st = await createLsOps(DEFAULT_CONFIG, "/p").stat("/p/link");
+    const st = await statOf("symbolic link|0|1700000000\n");
     expect(st.isSymbolicLink()).toBe(true);
     expect(st.isFile()).toBe(false);
   });
 
   it("diretório → isDirectory", async () => {
-    execMock.mockResolvedValue(ok({ stdout: "directory|4096|1700000000\n" }));
-    const st = await createLsOps(DEFAULT_CONFIG, "/p").stat("/p/dir");
+    const st = await statOf("directory|4096|1700000000\n");
     expect(st.isDirectory()).toBe(true);
   });
 

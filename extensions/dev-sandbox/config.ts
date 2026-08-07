@@ -8,6 +8,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { getAgentDir, CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "./types";
@@ -61,12 +62,12 @@ export function safeReadJson(filePath: string): Partial<SandboxConfig> | null {
 }
 
 /** Merge aninhado. Exportado para testes. */
-export function deepMerge<T extends Record<string, unknown>>(base: T, override: Partial<T>): T {
-  const result = { ...base };
+export function deepMerge<T extends object>(base: T, override: object): T {
+  const result = { ...base } as unknown as Record<string, unknown>;
 
-  for (const key of Object.keys(override) as (keyof T)[]) {
-    const baseVal = base[key];
-    const overrideVal = override[key];
+  for (const key of Object.keys(override)) {
+    const baseVal = (base as unknown as Record<string, unknown>)[key];
+    const overrideVal = (override as unknown as Record<string, unknown>)[key];
 
     if (
       typeof baseVal === "object" &&
@@ -76,37 +77,110 @@ export function deepMerge<T extends Record<string, unknown>>(base: T, override: 
       overrideVal !== null &&
       !Array.isArray(overrideVal)
     ) {
-      (result as Record<string, unknown>)[key as string] = deepMerge(
-        baseVal as Record<string, unknown>,
-        overrideVal as Record<string, unknown>,
-      );
+      result[key] = deepMerge(baseVal, overrideVal);
     } else if (overrideVal !== undefined) {
-      (result as Record<string, unknown>)[key as string] = overrideVal;
+      result[key] = overrideVal;
     }
   }
 
-  return result;
+  return result as unknown as T;
 }
 
 /**
  * Converte formato antigo (mountReadOnly) para o novo (mode).
- * Retorna uma cópia do objeto com a conversão aplicada.
+ * Retorna o objeto original se já estiver no formato novo.
  * Exportado para testes.
  */
-export function normalizeSshConfig(raw: Record<string, unknown>): Record<string, unknown> {
-  if (raw.mountReadOnly !== undefined && raw.mode === undefined) {
-    const copy = { ...raw };
-    copy.mode = raw.mountReadOnly ? "mount" : "none";
+export function normalizeSshConfig(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const obj = raw as { mountReadOnly?: unknown; mode?: unknown };
+  if (obj.mountReadOnly !== undefined && obj.mode === undefined) {
+    const copy = { ...obj };
+    copy.mode = obj.mountReadOnly === true ? "mount" : "none";
     delete copy.mountReadOnly;
     return copy;
   }
   return raw;
 }
 
+/** Opções de carregamento da configuração. */
+export interface LoadConfigOptions {
+  /**
+   * Se false, o `.pi/sandbox.json` do projeto é ignorado
+   * (projeto não confiável). A config global continua valendo.
+   */
+  projectTrusted?: boolean;
+}
+
+/**
+ * Valida a configuração final: campos com tipo errado (JSON inválido)
+ * são resetados para o default. Configuração corrompida não pode
+ * quebrar o sandbox em runtime nem enfraquecer o isolamento.
+ */
+export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
+  const out = structuredClone(DEFAULT_CONFIG);
+
+  if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+
+  if (raw.internet && typeof raw.internet.enabled === "boolean") {
+    out.internet.enabled = raw.internet.enabled;
+  }
+
+  const fs = raw.filesystem;
+  if (fs && typeof fs === "object") {
+    if (Array.isArray(fs.extraWritable)) {
+      out.filesystem.extraWritable = fs.extraWritable.filter((s): s is string => typeof s === "string");
+    }
+    if (Array.isArray(fs.extraReadonly)) {
+      out.filesystem.extraReadonly = fs.extraReadonly.filter((s): s is string => typeof s === "string");
+    }
+    if (Array.isArray(fs.denyPaths)) {
+      out.filesystem.denyPaths = fs.denyPaths.filter((s): s is string => typeof s === "string");
+    }
+    if (Array.isArray(fs.denyFilePatterns)) {
+      out.filesystem.denyFilePatterns = fs.denyFilePatterns.filter((s): s is string => typeof s === "string");
+    }
+    if (fs.cacheDirs && typeof fs.cacheDirs === "object") {
+      const cd = fs.cacheDirs as unknown as Record<string, unknown>;
+      for (const k of ["npm", "pip", "clones"] as const) {
+        if (typeof cd[k] === "string") out.filesystem.cacheDirs[k] = cd[k];
+      }
+    }
+  }
+
+  if (raw.ssh && (raw.ssh.mode === "agent" || raw.ssh.mode === "mount" || raw.ssh.mode === "none")) {
+    out.ssh.mode = raw.ssh.mode;
+  }
+
+  if (raw.capabilities && typeof raw.capabilities === "object" && Array.isArray(raw.capabilities.drop)) {
+    out.capabilities.drop = raw.capabilities.drop.filter((s): s is string => typeof s === "string");
+  }
+
+  if (raw.seccomp && typeof raw.seccomp === "object") {
+    if (typeof raw.seccomp.enabled === "boolean") out.seccomp.enabled = raw.seccomp.enabled;
+    if (typeof raw.seccomp.bpfPath === "string") out.seccomp.bpfPath = raw.seccomp.bpfPath;
+  }
+
+  if (raw.landlock && typeof raw.landlock === "object") {
+    const l = raw.landlock as Record<string, unknown>;
+    if (typeof l.enabled === "boolean") out.landlock.enabled = l.enabled;
+    if (typeof l.required === "boolean") out.landlock.required = l.required;
+    if (typeof l.minAbi === "number" && Number.isInteger(l.minAbi) && l.minAbi >= 1 && l.minAbi <= 5) {
+      out.landlock.minAbi = l.minAbi;
+    }
+  }
+
+  return out;
+}
+
 /**
  * Carrega configuração completa com merge de defaults, global e projeto.
+ *
+ * Retorna um clone do DEFAULT_CONFIG: mutações feitas pelo chamador
+ * nunca contaminam o objeto padrão global. JSON com tipos inválidos
+ * é saneado (campos inválidos voltam ao default).
  */
-export function loadConfig(cwd: string): SandboxConfig {
+export function loadConfig(cwd: string, options: LoadConfigOptions = {}): SandboxConfig {
   // Global
   const agentDir = getAgentDir();
   const globalPath = join(agentDir, "extensions", "dev-sandbox.json");
@@ -114,31 +188,30 @@ export function loadConfig(cwd: string): SandboxConfig {
   // Projeto
   const projectPath = join(cwd, CONFIG_DIR_NAME, "sandbox.json");
 
-  let config = DEFAULT_CONFIG;
+  let config = structuredClone(DEFAULT_CONFIG);
 
   const globalOverlay = safeReadJson(globalPath);
   if (globalOverlay) {
     // Normaliza formato antigo → novo antes do merge
     if (globalOverlay.ssh) {
-      (globalOverlay as Record<string, unknown>).ssh = normalizeSshConfig(
-        globalOverlay.ssh as Record<string, unknown>,
-      );
+      (globalOverlay as { ssh?: unknown }).ssh = normalizeSshConfig(globalOverlay.ssh);
     }
     config = deepMerge(config, globalOverlay);
   }
 
-  const projectOverlay = safeReadJson(projectPath);
-  if (projectOverlay) {
-    // Normaliza formato antigo → novo antes do merge
-    if (projectOverlay.ssh) {
-      (projectOverlay as Record<string, unknown>).ssh = normalizeSshConfig(
-        projectOverlay.ssh as Record<string, unknown>,
-      );
+  // Config do projeto só entra para projetos confiáveis
+  if (options.projectTrusted !== false) {
+    const projectOverlay = safeReadJson(projectPath);
+    if (projectOverlay) {
+      // Normaliza formato antigo → novo antes do merge
+      if (projectOverlay.ssh) {
+        (projectOverlay as { ssh?: unknown }).ssh = normalizeSshConfig(projectOverlay.ssh);
+      }
+      config = deepMerge(config, projectOverlay);
     }
-    config = deepMerge(config, projectOverlay);
   }
 
-  return config;
+  return sanitizeConfig(config);
 }
 
 /**
@@ -149,10 +222,9 @@ export function isBwrapAvailable(): boolean {
 	for (const p of paths) {
 		if (existsSync(p)) return true;
 	}
-	// Tenta via which
+	// Tenta via PATH (import ESM — sem require())
 	try {
-		const { execSync } = require("node:child_process");
-		execSync("which bwrap 2>/dev/null || command -v bwrap 2>/dev/null", { encoding: "utf-8" });
+		execFileSync("bwrap", ["--version"], { stdio: "ignore" });
 		return true;
 	} catch {
 		return false;
@@ -252,8 +324,7 @@ export function getRgInstallGuide(): string {
  */
 export function isRgAvailable(): boolean {
 	try {
-		const { execSync } = require("node:child_process");
-		execSync("rg --version 2>/dev/null", { stdio: "ignore" });
+		execFileSync("rg", ["--version"], { stdio: "ignore" });
 		return true;
 	} catch {
 		return false;

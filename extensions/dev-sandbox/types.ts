@@ -88,6 +88,21 @@ export interface SandboxSeccompConfig {
   bpfPath: string;
 }
 
+export interface SandboxLandlockConfig {
+  /** Habilita/desabilita o Landlock (filesystem only). */
+  enabled: boolean;
+  /**
+   * Se true, falha na ativação do Landlock bloqueia a execução.
+   * Se false, opera em modo degradado com warning.
+   */
+  required: boolean;
+  /**
+   * ABI mínima exigida (1-5).
+   * ABI 3 (Linux 6.2) recomendada — inclui suporte a TRUNCATE.
+   */
+  minAbi: number;
+}
+
 export interface SandboxConfig {
   /** Habilita/desabilita todo o sandbox. */
   enabled: boolean;
@@ -101,6 +116,8 @@ export interface SandboxConfig {
   capabilities: SandboxCapabilitiesConfig;
   /** Configuração do filtro seccomp. */
   seccomp: SandboxSeccompConfig;
+  /** Configuração do Landlock (filesystem allowlist). */
+  landlock: SandboxLandlockConfig;
 }
 
 /** Opções para uma chamada bwrap. */
@@ -119,7 +136,9 @@ export interface BwrapCall {
 
 /** Resultado de uma execução bwrap. */
 export interface BwrapResult {
-  stdout: string;
+  /** Stdout como bytes brutos (preserva binário — ex: imagens). */
+  stdout: Buffer;
+  /** Stderr como texto (diagnóstico). */
   stderr: string;
   exitCode: number | null;
   timedOut: boolean;
@@ -173,5 +192,10 @@ export const DEFAULT_CONFIG: SandboxConfig = {
     enabled: true,
     // Resolvido em runtime para <extension-dir>/seccomp.bpf
     bpfPath: "",
+  },
+  landlock: {
+    enabled: true,
+    required: true,
+    minAbi: 3,
   },
 };

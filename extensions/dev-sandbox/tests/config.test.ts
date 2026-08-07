@@ -39,10 +39,10 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import {
-  deepMerge, normalizeSshConfig, loadConfig,
+  deepMerge, normalizeSshConfig, loadConfig, sanitizeConfig,
   readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson,
 } from "../config";
-import { DEFAULT_CONFIG } from "../types";
+import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
 
 const fixtures: string[] = [];
 
@@ -188,6 +188,136 @@ describe("loadConfig", () => {
     expect(config.filesystem.cacheDirs.npm).toBe("/custom/npm");
     expect(config.filesystem.cacheDirs.pip).toBe("");
     expect(config.filesystem.cacheDirs.clones).toBe("");
+  });
+
+  it("projeto não confiável é ignorado (projectTrusted: false)", () => {
+    const agentDir = writeGlobal('{"internet": {"enabled": false}}');
+    state.agentDir = agentDir;
+    const cwd = fixture();
+    writeProject(cwd, '{"internet": {"enabled": true}}');
+
+    const untrusted = loadConfig(cwd, { projectTrusted: false });
+    expect(untrusted.internet.enabled).toBe(false);
+  });
+
+  it("projeto confiável é aplicado (projectTrusted: true)", () => {
+    const agentDir = writeGlobal('{"internet": {"enabled": false}}');
+    state.agentDir = agentDir;
+    const cwd = fixture();
+    writeProject(cwd, '{"internet": {"enabled": true}}');
+
+    const trusted = loadConfig(cwd, { projectTrusted: true });
+    expect(trusted.internet.enabled).toBe(true);
+  });
+
+  it("não muta DEFAULT_CONFIG ao alterar a config retornada", () => {
+    const before = JSON.stringify(DEFAULT_CONFIG);
+    const cfg = loadConfig("/cwd/proj");
+    (cfg as unknown as { seccomp: { bpfPath: string } }).seccomp.bpfPath = "/custom/bpf";
+    (cfg as unknown as { enabled: boolean }).enabled = false;
+    expect(JSON.stringify(DEFAULT_CONFIG)).toBe(before);
+    expect(DEFAULT_CONFIG.seccomp.bpfPath).toBe("");
+    expect(DEFAULT_CONFIG.enabled).toBe(true);
+  });
+});
+
+describe("sanitizeConfig", () => {
+  it("config válida passa intacta", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.internet.enabled = false;
+    cfg.ssh.mode = "none";
+    expect(sanitizeConfig(cfg)).toEqual(cfg);
+  });
+
+  it("campos com tipo errado voltam ao default", () => {
+    const bad = {
+      enabled: "yes",
+      internet: { enabled: "true" },
+      filesystem: {
+        denyPaths: "/sbin",
+        denyFilePatterns: ".env",
+        extraWritable: "x",
+        extraReadonly: 42,
+        cacheDirs: { npm: 123, pip: false, clones: [] },
+      },
+      ssh: { mode: "weird" },
+      capabilities: { drop: "all" },
+      seccomp: { enabled: "on", bpfPath: 7 },
+    } as unknown as SandboxConfig;
+    expect(sanitizeConfig(bad)).toEqual(DEFAULT_CONFIG);
+  });
+
+  it("campos válidos preservados mesmo com outros inválidos", () => {
+    const mixed = {
+      enabled: false,
+      internet: { enabled: false },
+      filesystem: { denyPaths: ["/custom"], denyFilePatterns: "broken" },
+      capabilities: { drop: ["CAP_SYS_ADMIN", 5] },
+    } as unknown as SandboxConfig;
+    const out = sanitizeConfig(mixed);
+    expect(out.enabled).toBe(false);
+    expect(out.internet.enabled).toBe(false);
+    expect(out.filesystem.denyPaths).toEqual(["/custom"]);
+    expect(out.filesystem.denyFilePatterns).toEqual(DEFAULT_CONFIG.filesystem.denyFilePatterns);
+    expect(out.capabilities.drop).toEqual(["CAP_SYS_ADMIN"]);
+  });
+
+  it("loadConfig sanea JSON global com tipos inválidos", () => {
+    const agentDir = writeGlobal('{"enabled": "sim", "ssh": {"mode": "hack"}, "filesystem": {"denyPaths": "tudo"}}');
+    state.agentDir = agentDir;
+    expect(loadConfig("/cwd/proj")).toEqual(DEFAULT_CONFIG);
+  });
+
+  // ── Landlock ───────────────────────────
+
+  it("landlock válido passa intacto", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.landlock.enabled = false;
+    cfg.landlock.required = false;
+    cfg.landlock.minAbi = 5;
+    const out = sanitizeConfig(cfg);
+    expect(out.landlock.enabled).toBe(false);
+    expect(out.landlock.required).toBe(false);
+    expect(out.landlock.minAbi).toBe(5);
+  });
+
+  it("landlock campos inválidos → default", () => {
+    const bad = structuredClone(DEFAULT_CONFIG);
+    (bad.landlock as unknown as Record<string, unknown>).enabled = "sim";
+    (bad.landlock as unknown as Record<string, unknown>).required = 1;
+    (bad.landlock as unknown as Record<string, unknown>).minAbi = 99;
+    const out = sanitizeConfig(bad);
+    expect(out.landlock.enabled).toBe(DEFAULT_CONFIG.landlock.enabled);
+    expect(out.landlock.required).toBe(DEFAULT_CONFIG.landlock.required);
+    expect(out.landlock.minAbi).toBe(DEFAULT_CONFIG.landlock.minAbi);
+  });
+
+  it("landlock minAbi 0 → default", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.landlock.minAbi = 0;
+    expect(sanitizeConfig(cfg).landlock.minAbi).toBe(DEFAULT_CONFIG.landlock.minAbi);
+  });
+
+  it("landlock minAbi 6 → default (range 1-5)", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.landlock.minAbi = 6;
+    expect(sanitizeConfig(cfg).landlock.minAbi).toBe(DEFAULT_CONFIG.landlock.minAbi);
+  });
+
+  it("landlock ausente no objeto → default", () => {
+    const raw = { ...DEFAULT_CONFIG } as Partial<SandboxConfig>;
+    delete (raw as Record<string, unknown>).landlock;
+    const out = sanitizeConfig(raw as SandboxConfig);
+    expect(out.landlock).toEqual(DEFAULT_CONFIG.landlock);
+  });
+
+  it("loadConfig mergeia landlock do global", () => {
+    const agentDir = writeGlobal('{"landlock": {"enabled": false, "minAbi": 1}}');
+    state.agentDir = agentDir;
+    const cfg = loadConfig("/cwd/proj");
+    expect(cfg.landlock.enabled).toBe(false);
+    expect(cfg.landlock.minAbi).toBe(1);
+    expect(cfg.landlock.required).toBe(DEFAULT_CONFIG.landlock.required);
   });
 });
 

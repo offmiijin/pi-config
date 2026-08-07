@@ -5,13 +5,38 @@
  * (scan recursivo que ignora .git/node_modules e degrada com cwd inválido).
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { matchSimpleGlob, findDangerousFiles } from "../bwrap-executor";
+import { matchSimpleGlob, matchPathPattern, findDangerousFiles } from "../bwrap-executor";
+
+// Diretórios cujo readdirSync deve falhar (simula EACCES/ENOENT no scan).
+const state = vi.hoisted(() => ({ failOn: [] as string[], enoentOn: [] as string[] }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readdirSync: (...args: unknown[]) => {
+      const p = args[0] as string;
+      if (state.failOn.some((f) => p.startsWith(f))) {
+        throw Object.assign(new Error(`EACCES: permission denied '${p}'`), { code: "EACCES" });
+      }
+      if (state.enoentOn.some((f) => p.startsWith(f))) {
+        throw Object.assign(new Error(`ENOENT: no such file or directory, scandir '${p}'`), { code: "ENOENT" });
+      }
+      return (actual.readdirSync as (...a: unknown[]) => unknown)(...args);
+    },
+  };
+});
 
 const fixtures: string[] = [];
+
+beforeEach(() => {
+  state.failOn = [];
+  state.enoentOn = [];
+});
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), "sb-deny-"));
@@ -56,7 +81,40 @@ describe("matchSimpleGlob", () => {
   });
 });
 
+describe("matchPathPattern", () => {
+  it("casa path relativo por segmentos", () => {
+    expect(matchPathPattern("secrets/api.key", "secrets/*")).toBe(true);
+    expect(matchPathPattern("api.key", "secrets/*")).toBe(false);
+    expect(matchPathPattern("secrets/x/api.key", "secrets/*")).toBe(false);
+    expect(matchPathPattern("secrets/a.pem", "secrets/*.pem")).toBe(true);
+    expect(matchPathPattern("secrets/a.pem.bak", "secrets/*.pem")).toBe(false);
+  });
+
+  it("* não atravessa segmento", () => {
+    expect(matchPathPattern("a/b/c.key", "a/*.key")).toBe(false);
+    expect(matchPathPattern("a/c.key", "a/*.key")).toBe(true);
+  });
+});
+
 describe("findDangerousFiles", () => {
+  it("padrão com path (secrets/*) casa arquivos aninhados", () => {
+    const root = fixture();
+    mkdirSync(join(root, "secrets"), { recursive: true });
+    writeFileSync(join(root, "secrets", "api.key"), "x");
+    writeFileSync(join(root, "api.key"), "x");
+
+    const found = findDangerousFiles(root, ["secrets/*"]);
+    expect(found).toEqual([join(root, "secrets", "api.key")]);
+  });
+
+  it("padrão basename continua casando em qualquer profundidade", () => {
+    const root = fixture();
+    mkdirSync(join(root, "a", "b"), { recursive: true });
+    writeFileSync(join(root, "a", "b", ".env"), "x");
+    const found = findDangerousFiles(root, [".env"]);
+    expect(found).toEqual([join(root, "a", "b", ".env")]);
+  });
+
   it("encontra arquivos sensíveis recursivamente", () => {
     const root = fixture();
     writeFileSync(join(root, ".env"), "SECRET=1");
@@ -90,6 +148,37 @@ describe("findDangerousFiles", () => {
 
   it("cwd inexistente → degrada sem negar nada", () => {
     expect(findDangerousFiles(join(tmpdir(), "nao-existe-xyz"), [".env"])).toEqual([]);
+  });
+
+  it("diretório ilegível (EACCES) → emite warning e pula (host sem acesso = sandbox sem acesso)", () => {
+    const root = fixture();
+    mkdirSync(join(root, "locked"), { recursive: true });
+    writeFileSync(join(root, "locked", ".env"), "SECRET=1");
+    state.failOn = [join(root, "locked")];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // EACCES não bloqueia — dir ilegível no host é ilegível no sandbox
+      expect(() => findDangerousFiles(root, [".env"])).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("sem permissão para escanear"),
+      );
+    } finally {
+      state.failOn = [];
+      warn.mockRestore();
+    }
+  });
+
+  it("diretório removido durante o scan (ENOENT) → segue sem bloquear", () => {
+    const root = fixture();
+    mkdirSync(join(root, "gone"), { recursive: true });
+    writeFileSync(join(root, "gone", ".env"), "x");
+    state.enoentOn = [join(root, "gone")];
+    try {
+      // o subdir some entre listar e entrar — ENOENT é tolerado (nada a mascarar)
+      expect(() => findDangerousFiles(root, [".env"])).not.toThrow();
+    } finally {
+      state.enoentOn = [];
+    }
   });
 
   it("padrão wildcard múltiplo (ex: secrets/*)", () => {
