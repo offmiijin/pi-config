@@ -8,6 +8,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { getAgentDir, CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "./types";
@@ -164,10 +165,9 @@ export function isBwrapAvailable(): boolean {
 	for (const p of paths) {
 		if (existsSync(p)) return true;
 	}
-	// Tenta via which
+	// Tenta via PATH (import ESM — sem require())
 	try {
-		const { execSync } = require("node:child_process");
-		execSync("which bwrap 2>/dev/null || command -v bwrap 2>/dev/null", { encoding: "utf-8" });
+		execFileSync("bwrap", ["--version"], { stdio: "ignore" });
 		return true;
 	} catch {
 		return false;
@@ -267,8 +267,7 @@ export function getRgInstallGuide(): string {
  */
 export function isRgAvailable(): boolean {
 	try {
-		const { execSync } = require("node:child_process");
-		execSync("rg --version 2>/dev/null", { stdio: "ignore" });
+		execFileSync("rg", ["--version"], { stdio: "ignore" });
 		return true;
 	} catch {
 		return false;

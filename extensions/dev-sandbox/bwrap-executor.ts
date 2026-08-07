@@ -635,6 +635,12 @@ export function execInSandbox(
   opts: BwrapCall,
 ): Promise<BwrapResult> {
   return new Promise((resolve, reject) => {
+    // Sinal já abortado antes do spawn → nem cria o processo
+    if (opts.signal?.aborted) {
+      resolve({ stdout: Buffer.alloc(0), stderr: "", exitCode: null, timedOut: false, aborted: true });
+      return;
+    }
+
     const baseArgs = buildBwrapArgs(config, opts.cwd);
     const args = [...baseArgs];
 
@@ -646,8 +652,9 @@ export function execInSandbox(
         bpfFd = openSync(seccompCfg.bpfPath, "r");
         // FD 3 no child = arquivo BPF
         args.push("--seccomp", "3");
-      } catch {
-        // Degradação segura: segue sem seccomp
+      } catch (err) {
+        // Degradação de segurança → aviso explícito
+        console.warn("[dev-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
         bpfFd = undefined;
       }
     }

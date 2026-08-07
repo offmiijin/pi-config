@@ -22,7 +22,8 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
   }
   try {
     return openSync(cfg.bpfPath, "r");
-  } catch {
+  } catch (err) {
+    console.warn("[dev-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
     return undefined;
   }
 }
@@ -30,6 +31,11 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
 export function createBashOps(config: SandboxConfig, cwd: string): BashOperations {
   return {
     async exec(command, cmdCwd, { onData, signal, timeout, env }) {
+      // Sinal já abortado antes do spawn → nem cria o processo
+      if (signal?.aborted) {
+        throw new Error("aborted");
+      }
+
       const args = buildBwrapArgs(config, cwd);
 
       // ── Seccomp BPF ────────────────────────
