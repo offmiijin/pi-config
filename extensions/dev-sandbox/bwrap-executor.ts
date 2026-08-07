@@ -217,16 +217,40 @@ export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<str
 }
 
 // ─── Cache de argumentos bwrap ──────────────────────────────
+//
+// O cache guarda apenas a parte ESTÁTICA dos args (mounts de
+// sistema, SSH, caches, capabilities, env). A varredura de
+// arquivos sensíveis (denyFilePatterns) é feita a cada chamada:
+// um .env criado após a primeira tool call não pode escapar.
 
 const bwrapArgsCache = new Map<string, string[]>();
+const BWRAP_ARGS_CACHE_MAX = 50;
+
+/**
+ * Impressão digital das env vars que influenciam os args.
+ * Mudanças de HOME, PATH, SSH_AUTH_SOCK, USER ou de qualquer
+ * var da whitelist invalidam o cache.
+ */
+function envFingerprint(): string {
+  const keys = new Set<string>(SAFE_ENV_VARS);
+  keys.add("HOME");
+  keys.add("SSH_AUTH_SOCK");
+  keys.add("USER");
+  const parts: string[] = [];
+  for (const key of keys) {
+    const v = process.env[key];
+    if (v !== undefined) parts.push(`${key}=${v}`);
+  }
+  return parts.join("|");
+}
 
 function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
   const parts = [
     cwd,
+    envFingerprint(),
     String(config.internet.enabled),
     config.ssh.mode,
     config.filesystem.denyPaths.join(","),
-    config.filesystem.denyFilePatterns.join(","),
     config.filesystem.extraWritable.join(","),
     config.filesystem.extraReadonly.join(","),
     config.filesystem.cacheDirs ? Object.values(config.filesystem.cacheDirs).join(",") : "",
@@ -240,13 +264,39 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
 /**
  * Constrói o array de argumentos base do bwrap.
  * Estes argumentos são comuns a todas as tools.
- * Cache por config+cwd para evitar reconstrução a cada tool call.
+ * Cache por config+cwd+env para evitar reconstrução a cada tool call.
+ *
+ * A parte cacheada é estática (mounts, capabilities, env). A
+ * varredura de denyFilePatterns roda a cada chamada e os binds
+ * de /dev/null são anexados ao final — assim um arquivo sensível
+ * criado depois da primeira execução não escapa do sandbox.
  */
 export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   const key = getBwrapCacheKey(config, cwd);
-  const cached = bwrapArgsCache.get(key);
-  if (cached) return [...cached];
+  let cached = bwrapArgsCache.get(key);
+  if (!cached) {
+    cached = buildStaticArgs(config, cwd);
+    if (bwrapArgsCache.size >= BWRAP_ARGS_CACHE_MAX) {
+      const oldest = bwrapArgsCache.keys().next().value;
+      if (oldest !== undefined) bwrapArgsCache.delete(oldest);
+    }
+    bwrapArgsCache.set(key, cached);
+  }
+  const args = [...cached];
 
+  // Arquivos sensíveis no projeto — substituídos por /dev/null.
+  // Anexados ao final (após binds de extraWritable/cache) para que
+  // a negação SEMPRE vença sobre binds de diretórios read-write.
+  appendSensitiveMounts(args, config, cwd);
+
+  return args;
+}
+
+/**
+ * Monta a parte estática dos args (independe do estado atual dos
+ * arquivos no workspace). O resultado é cacheado.
+ */
+function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
   const home = process.env.HOME || "/root";
   const args: string[] = [
     "--unshare-all",
@@ -341,16 +391,6 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
 
   // Projeto read-write (ponto central do sandbox)
   args.push("--bind", cwd, cwd);
-
-  // Arquivos sensíveis no projeto — substituídos por /dev/null (vazio/imutável)
-  const sensitivePatterns = config.filesystem.denyFilePatterns;
-  if (sensitivePatterns.length > 0) {
-    const sensitiveFiles = findDangerousFiles(cwd, sensitivePatterns);
-    for (const f of sensitiveFiles) {
-      // /dev/null já existe porque --dev /dev é adicionado no início
-      args.push("--ro-bind", "/dev/null", f);
-    }
-  }
 
   // Rede do host
   if (config.internet.enabled) {
@@ -525,8 +565,22 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   args.push("--setenv", "HOME", home);
   args.push("--setenv", "USER", process.env.USER || "root");
 
-  bwrapArgsCache.set(key, [...args]);
   return args;
+}
+
+/**
+ * Anexa binds /dev/null para arquivos que correspondem a
+ * denyFilePatterns. Re-escaneado a cada chamada para cobrir
+ * arquivos criados após o cache ter sido construído.
+ */
+function appendSensitiveMounts(args: string[], config: SandboxConfig, cwd: string): void {
+  const sensitivePatterns = config.filesystem.denyFilePatterns;
+  if (sensitivePatterns.length === 0) return;
+  const sensitiveFiles = findDangerousFiles(cwd, sensitivePatterns);
+  for (const f of sensitiveFiles) {
+    // /dev/null já existe porque --dev /dev é adicionado no início
+    args.push("--ro-bind", "/dev/null", f);
+  }
 }
 
 // ─── Execução ─────────────────────────────────────────────────
