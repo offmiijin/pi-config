@@ -9,7 +9,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { matchSimpleGlob, findDangerousFiles } from "../bwrap-executor";
+import { matchSimpleGlob, matchPathPattern, findDangerousFiles } from "../bwrap-executor";
 
 const fixtures: string[] = [];
 
@@ -56,7 +56,40 @@ describe("matchSimpleGlob", () => {
   });
 });
 
+describe("matchPathPattern", () => {
+  it("casa path relativo por segmentos", () => {
+    expect(matchPathPattern("secrets/api.key", "secrets/*")).toBe(true);
+    expect(matchPathPattern("api.key", "secrets/*")).toBe(false);
+    expect(matchPathPattern("secrets/x/api.key", "secrets/*")).toBe(false);
+    expect(matchPathPattern("secrets/a.pem", "secrets/*.pem")).toBe(true);
+    expect(matchPathPattern("secrets/a.pem.bak", "secrets/*.pem")).toBe(false);
+  });
+
+  it("* não atravessa segmento", () => {
+    expect(matchPathPattern("a/b/c.key", "a/*.key")).toBe(false);
+    expect(matchPathPattern("a/c.key", "a/*.key")).toBe(true);
+  });
+});
+
 describe("findDangerousFiles", () => {
+  it("padrão com path (secrets/*) casa arquivos aninhados", () => {
+    const root = fixture();
+    mkdirSync(join(root, "secrets"), { recursive: true });
+    writeFileSync(join(root, "secrets", "api.key"), "x");
+    writeFileSync(join(root, "api.key"), "x");
+
+    const found = findDangerousFiles(root, ["secrets/*"]);
+    expect(found).toEqual([join(root, "secrets", "api.key")]);
+  });
+
+  it("padrão basename continua casando em qualquer profundidade", () => {
+    const root = fixture();
+    mkdirSync(join(root, "a", "b"), { recursive: true });
+    writeFileSync(join(root, "a", "b", ".env"), "x");
+    const found = findDangerousFiles(root, [".env"]);
+    expect(found).toEqual([join(root, "a", "b", ".env")]);
+  });
+
   it("encontra arquivos sensíveis recursivamente", () => {
     const root = fixture();
     writeFileSync(join(root, ".env"), "SECRET=1");

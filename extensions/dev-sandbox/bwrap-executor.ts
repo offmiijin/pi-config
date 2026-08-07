@@ -9,7 +9,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
 
 // ─── Env vars seguras (whitelist) ──────────────────────────
@@ -43,19 +43,32 @@ const SAFE_ENV_VARS = new Set([
 // ─── Detection de arquivos sensíveis ───────────────────────────
 
 /**
- * Casamento simples com wildcard `*`.
- * - `*` corresponde a qualquer sequência (exceto `/`).
+ * Casamento com glob simples.
+ * - `*` = qualquer sequência de caracteres (não atravessa `/`).
  * - Sem `*` = igualdade exata.
  *
  * Exportado para testes (security scan).
  */
 export function matchSimpleGlob(name: string, pattern: string): boolean {
   if (!pattern.includes("*")) return name === pattern;
-  const [prefix, suffix] = pattern.split("*", 2);
-  if (prefix && !name.startsWith(prefix)) return false;
-  if (suffix && !name.endsWith(suffix)) return false;
-  if (prefix && suffix) return name.length >= prefix.length + suffix.length;
-  return true;
+  // Escapa regex chars, depois transforma `*` em wildcard por segmento
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = escaped.replace(/\\\*/g, "[^/]*");
+  return new RegExp(`^${re}$`).test(name);
+}
+
+/**
+ * Casa um glob com `/` contra um path relativo ao workspace.
+ * Cada segmento é casado independentemente — `*` não atravessa `/`.
+ * Ex: `secrets/*` casa `secrets/api.key`, mas não `api.key` nem `secrets/x/api.key`.
+ *
+ * Exportado para testes (security scan).
+ */
+export function matchPathPattern(relPath: string, pattern: string): boolean {
+  const pathSegs = relPath.split("/");
+  const patSegs = pattern.split("/");
+  if (pathSegs.length !== patSegs.length) return false;
+  return patSegs.every((seg, i) => matchSimpleGlob(pathSegs[i], seg));
 }
 
 /**
@@ -69,6 +82,9 @@ export function matchSimpleGlob(name: string, pattern: string): boolean {
 export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   if (patterns.length === 0) return [];
 
+  // Padrões sem "/" casam basename (compat); com "/" casam path relativo
+  const namePatterns = patterns.filter((p) => !p.includes("/"));
+  const pathPatterns = patterns.filter((p) => p.includes("/"));
   const results: string[] = [];
 
   function walk(current: string) {
@@ -92,13 +108,29 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
       // Só arquivos regulares
       if (!entry.isFile()) continue;
 
-      // Testa contra cada padrão
-      for (const pattern of patterns) {
+      const fullPath = join(current, name);
+      let matched = false;
+
+      // Basename: testa o nome do arquivo
+      for (const pattern of namePatterns) {
         if (matchSimpleGlob(name, pattern)) {
-          results.push(join(current, name));
+          matched = true;
           break;
         }
       }
+
+      // Path: testa o caminho relativo ao workspace (ex: "secrets/*")
+      if (!matched && pathPatterns.length > 0) {
+        const rel = relative(cwd, fullPath);
+        for (const pattern of pathPatterns) {
+          if (matchPathPattern(rel, pattern)) {
+            matched = true;
+            break;
+          }
+        }
+      }
+
+      if (matched) results.push(fullPath);
     }
   }
 
@@ -106,8 +138,11 @@ export function findDangerousFiles(cwd: string, patterns: string[]): string[] {
   try {
     if (!existsSync(cwd)) return results;
     walk(cwd);
-  } catch {
-    // Degradação segura: segue sem negar arquivos
+  } catch (err) {
+    console.warn(
+      "[dev-sandbox] Falha ao escanear denyFilePatterns — arquivos podem não ser mascarados:",
+      err,
+    );
   }
 
   return results;

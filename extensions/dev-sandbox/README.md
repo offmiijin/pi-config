@@ -130,10 +130,14 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 }
 ```
 
-> **`denyFilePatterns`**: lista de padrões de nomes de arquivo.
+> **`denyFilePatterns`**: lista de padrões de arquivos a mascarar.
 > O sandbox escaneia $PWD recursivamente e substitui cada arquivo
-> correspondente por `/dev/null` (vazio, read-only). Suporta `*` como
-> wildcard. Ignora `.git/` e `node_modules/` (performance).
+> correspondente por `/dev/null` (vazio, read-only). Ignora `.git/` e
+> `node_modules/` (performance).
+> - Padrão **sem `/`** casa o **nome** do arquivo (basename) em
+>   qualquer profundidade (ex: `.env`, `*.pem`).
+> - Padrão **com `/`** casa o **path relativo ao workspace** (ex:
+>   `secrets/*`, `secrets/*.pem`). `*` não atravessa `/`.
 
 ### `cacheDirs` — caches persistentes
 
