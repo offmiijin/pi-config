@@ -227,6 +227,11 @@ Arch, openSUSE, NixOS, Alpine/musl) sem configuração extra:
   `landlock-exec-<arch>` (ex: `landlock-exec-x86_64`, `landlock-exec-aarch64`,
   `landlock-exec-riscv64`) e cai para `landlock-exec` (legado) e
   `gen-seccomp/target/release/` (dev).
+  **Nota de portabilidade**: o binário pré-compilado é glibc-dinâmico
+  (requer GLIBC >= 2.34). Em distros musl (Alpine) ou com glibc antiga ele
+  não executa — o doctor detecta via `--probe-abi` e reporta aviso.
+  Recompile no próprio alvo (`./build.sh`) ou cross-compile estático
+  (`TARGET=x86_64-unknown-linux-musl ./build.sh`, requer toolchain musl).
 - **seccomp.bpf universal**: um ÚNICO filtro cobre x86_64 + aarch64 +
   riscv64 (libseccomp resolve os números de syscall de cada arquitetura;
   syscalls inexistentes viram no-op). Se `seccomp-<arch>.bpf` existir,

@@ -354,6 +354,8 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 
 	// landlock-exec: empacotado por arquitetura (landlock-exec-<arch>),
 	// legado (landlock-exec) ou build de desenvolvimento (target/release).
+	// Validado por EXECUÇÃO real (--probe-abi): pega binário inexecutável
+	// (arch errada, glibc antiga/musl) que existsSync deixaria passar.
 	const ARCH_TRIPLET_LOCK: Record<string, string> = {
 		x64: "x86_64",
 		arm64: "aarch64",
@@ -365,13 +367,26 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		join(devSandboxDir, "landlock-exec"),
 		join(devSandboxDir, "gen-seccomp", "target", "release", "landlock-exec"),
 	];
-	const landlockOk = landlockCandidates.some(existsSync);
+	let landlockOk = false;
+	let landlockDetail = "não encontrado";
+	for (const candidate of landlockCandidates) {
+		if (!existsSync(candidate)) continue;
+		const probe = runBin(candidate, ["--probe-abi"]);
+		if (probe.ok) {
+			landlockOk = true;
+			landlockDetail = `presente (ABI ${probe.version ?? "?"})`;
+			break;
+		}
+		landlockDetail = `encontrado mas inexecutável (glibc/arch incompatível?): ${candidate}`;
+	}
 	checks.push({
 		id: "landlock-exec",
 		label: "landlock-exec (sandbox)",
 		status: landlockOk ? "ok" : "warn",
-		detail: landlockOk ? "presente" : "não encontrado",
-		fix: landlockOk ? undefined : "sandbox opera sem a camada Landlock; rode gen-seccomp/build.sh para compilar (dev-sandbox/README)",
+		detail: landlockDetail,
+		fix: landlockOk
+			? undefined
+			: "sandbox opera sem a camada Landlock; rode gen-seccomp/build.sh para compilar (dev-sandbox/README)",
 	});
 
 	// User namespaces (bwrap depende)
