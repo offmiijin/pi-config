@@ -47,7 +47,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
-import { DEFAULT_CONFIG, type SandboxConfig } from "./types";
+import type { SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs } from "./bwrap-executor";
 import { createReadOps } from "./tools/read-ops";
@@ -174,113 +174,78 @@ export default function (pi: ExtensionAPI) {
     );
   }
 
+  /** Shape mínimo de uma tool (para o wrapper genérico). */
+  type ToolLike = {
+    name: string;
+    [key: string]: unknown;
+    execute(...args: any[]): unknown;
+  };
+
+  /**
+   * Cria wrapper sandboxed de uma tool built-in.
+   * - Schema/descrição vêm da tool original (makeTool).
+   * - Sandbox ativo → makeSandboxed (ops via bwrap).
+   * - Opt-out explícito (--no-sandbox / enabled:false) → makeTool (host).
+   * - Fail-closed → erro sandboxBlockedError.
+   */
+  function sandboxTool(
+    makeTool: (cwd: string) => ToolLike,
+    makeSandboxed: (config: SandboxConfig, cwd: string) => ToolLike,
+    label?: string,
+  ): ToolLike {
+    const base = makeTool(localCwd);
+    return {
+      ...base,
+      ...(label !== undefined ? { label } : {}),
+      async execute(id, params, signal, onUpdate, ctx) {
+        const cwd = ctx?.cwd ?? localCwd;
+        if (!enabled || !config) {
+          if (fallbackToHost) return makeTool(cwd).execute(id, params, signal, onUpdate, ctx);
+          throw sandboxBlockedError(base.name);
+        }
+        return makeSandboxed(config, cwd).execute(id, params, signal, onUpdate, ctx);
+      },
+    };
+  }
+
   // ── Substitui todas as tools ───────────────────
 
-  pi.registerTool({
-    ...createReadTool(localCwd),
-    async execute(id, params, signal, onUpdate, ctx) {
-      const cwd = ctx?.cwd ?? localCwd;
-      if (!enabled || !config) {
-        if (fallbackToHost) return createReadTool(cwd).execute(id, params, signal, onUpdate);
-        throw sandboxBlockedError("read");
-      }
-      const tool = createReadTool(cwd, {
-        operations: createReadOps(config, cwd),
-      });
-      return tool.execute(id, params, signal, onUpdate);
-    },
-  });
+  pi.registerTool(sandboxTool(
+    (cwd) => createReadTool(cwd),
+    (config, cwd) => createReadTool(cwd, { operations: createReadOps(config, cwd) }),
+  ));
 
-  pi.registerTool({
-    ...createWriteTool(localCwd),
-    async execute(id, params, signal, onUpdate, ctx) {
-      const cwd = ctx?.cwd ?? localCwd;
-      if (!enabled || !config) {
-        if (fallbackToHost) return createWriteTool(cwd).execute(id, params, signal, onUpdate);
-        throw sandboxBlockedError("write");
-      }
-      const tool = createWriteTool(cwd, {
-        operations: createWriteOps(config, cwd),
-      });
-      return tool.execute(id, params, signal, onUpdate);
-    },
-  });
+  pi.registerTool(sandboxTool(
+    (cwd) => createWriteTool(cwd),
+    (config, cwd) => createWriteTool(cwd, { operations: createWriteOps(config, cwd) }),
+  ));
 
-  pi.registerTool({
-    ...createEditTool(localCwd),
-    async execute(id, params, signal, onUpdate, ctx) {
-      const cwd = ctx?.cwd ?? localCwd;
-      if (!enabled || !config) {
-        if (fallbackToHost) return createEditTool(cwd).execute(id, params, signal, onUpdate);
-        throw sandboxBlockedError("edit");
-      }
-      const tool = createEditTool(cwd, {
-        operations: createEditOps(config, cwd),
-      });
-      return tool.execute(id, params, signal, onUpdate);
-    },
-  });
+  pi.registerTool(sandboxTool(
+    (cwd) => createEditTool(cwd),
+    (config, cwd) => createEditTool(cwd, { operations: createEditOps(config, cwd) }),
+  ));
 
   // ── Bash tool unificado com bwrap operations ──
-  pi.registerTool({
-    ...createBashTool(localCwd),
-    label: "bash (sandboxed)",
+  pi.registerTool(sandboxTool(
+    (cwd) => createBashTool(cwd),
+    (config, cwd) => createBashTool(cwd, { operations: createBashOps(config, cwd) }),
+    "bash (sandboxed)",
+  ));
 
-    async execute(id: string, params: any, signal: any, onUpdate: any, ctx: any) {
-      const cwd = ctx?.cwd ?? localCwd;
-      if (!enabled || !config) {
-        if (fallbackToHost) return createBashTool(cwd).execute(id, params, signal, onUpdate);
-        throw sandboxBlockedError("bash");
-      }
-      const tool = createBashTool(cwd, {
-        operations: createBashOps(config, cwd),
-      });
-      return tool.execute(id, params, signal, onUpdate);
-    },
-  });
+  pi.registerTool(sandboxTool(
+    (cwd) => createFindTool(cwd),
+    (config, cwd) => createFindTool(cwd, { operations: createFindOps(config, cwd) }),
+  ));
 
-  pi.registerTool({
-    ...createFindTool(localCwd),
-    async execute(id, params, signal, onUpdate, ctx) {
-      const cwd = ctx?.cwd ?? localCwd;
-      if (!enabled || !config) {
-        if (fallbackToHost) return createFindTool(cwd).execute(id, params, signal, onUpdate);
-        throw sandboxBlockedError("find");
-      }
-      const tool = createFindTool(cwd, {
-        operations: createFindOps(config, cwd),
-      });
-      return tool.execute(id, params, signal, onUpdate);
-    },
-  });
+  pi.registerTool(sandboxTool(
+    (cwd) => createLsTool(cwd),
+    (config, cwd) => createLsTool(cwd, { operations: createLsOps(config, cwd) }),
+  ));
 
-  pi.registerTool({
-    ...createLsTool(localCwd),
-    async execute(id, params, signal, onUpdate, ctx) {
-      const cwd = ctx?.cwd ?? localCwd;
-      if (!enabled || !config) {
-        if (fallbackToHost) return createLsTool(cwd).execute(id, params, signal, onUpdate);
-        throw sandboxBlockedError("ls");
-      }
-      const tool = createLsTool(cwd, {
-        operations: createLsOps(config, cwd),
-      });
-      return tool.execute(id, params, signal, onUpdate);
-    },
-  });
-
-  pi.registerTool({
-    ...createGrepTool(localCwd, DEFAULT_CONFIG),
-    async execute(id, params, signal, onUpdate, ctx) {
-      const cwd = ctx?.cwd ?? localCwd;
-      if (!enabled || !config) {
-        if (fallbackToHost) return createGrepToolSdk(cwd).execute(id, params, signal, onUpdate, ctx);
-        throw sandboxBlockedError("grep");
-      }
-      const tool = createGrepTool(cwd, config);
-      return tool.execute(id, params, signal, onUpdate, ctx);
-    },
-  });
+  pi.registerTool(sandboxTool(
+    (cwd) => createGrepToolSdk(cwd),
+    (config, cwd) => createGrepTool(cwd, config),
+  ));
 
   // ── user_bash (!comando e !!comando) ──────────
   pi.on("user_bash", (_event, ctx) => {
