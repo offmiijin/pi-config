@@ -267,6 +267,58 @@ describe("sanitizeConfig", () => {
     state.agentDir = agentDir;
     expect(loadConfig("/cwd/proj")).toEqual(DEFAULT_CONFIG);
   });
+
+  // ── Landlock ───────────────────────────
+
+  it("landlock válido passa intacto", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.landlock.enabled = false;
+    cfg.landlock.required = false;
+    cfg.landlock.minAbi = 5;
+    const out = sanitizeConfig(cfg);
+    expect(out.landlock.enabled).toBe(false);
+    expect(out.landlock.required).toBe(false);
+    expect(out.landlock.minAbi).toBe(5);
+  });
+
+  it("landlock campos inválidos → default", () => {
+    const bad = structuredClone(DEFAULT_CONFIG);
+    (bad.landlock as unknown as Record<string, unknown>).enabled = "sim";
+    (bad.landlock as unknown as Record<string, unknown>).required = 1;
+    (bad.landlock as unknown as Record<string, unknown>).minAbi = 99;
+    const out = sanitizeConfig(bad);
+    expect(out.landlock.enabled).toBe(DEFAULT_CONFIG.landlock.enabled);
+    expect(out.landlock.required).toBe(DEFAULT_CONFIG.landlock.required);
+    expect(out.landlock.minAbi).toBe(DEFAULT_CONFIG.landlock.minAbi);
+  });
+
+  it("landlock minAbi 0 → default", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.landlock.minAbi = 0;
+    expect(sanitizeConfig(cfg).landlock.minAbi).toBe(DEFAULT_CONFIG.landlock.minAbi);
+  });
+
+  it("landlock minAbi 6 → default (range 1-5)", () => {
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.landlock.minAbi = 6;
+    expect(sanitizeConfig(cfg).landlock.minAbi).toBe(DEFAULT_CONFIG.landlock.minAbi);
+  });
+
+  it("landlock ausente no objeto → default", () => {
+    const raw = { ...DEFAULT_CONFIG } as Partial<SandboxConfig>;
+    delete (raw as Record<string, unknown>).landlock;
+    const out = sanitizeConfig(raw as SandboxConfig);
+    expect(out.landlock).toEqual(DEFAULT_CONFIG.landlock);
+  });
+
+  it("loadConfig mergeia landlock do global", () => {
+    const agentDir = writeGlobal('{"landlock": {"enabled": false, "minAbi": 1}}');
+    state.agentDir = agentDir;
+    const cfg = loadConfig("/cwd/proj");
+    expect(cfg.landlock.enabled).toBe(false);
+    expect(cfg.landlock.minAbi).toBe(1);
+    expect(cfg.landlock.required).toBe(DEFAULT_CONFIG.landlock.required);
+  });
 });
 
 describe("readOsRelease / matchesOsRelease / guias", () => {

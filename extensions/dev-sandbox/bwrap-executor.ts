@@ -704,6 +704,11 @@ export function probeLandlockAbi(helperPath: string): number | null {
   return landlockAbiCache;
 }
 
+/** Reseta o cache de ABI (uso interno — testes). */
+export function resetLandlockAbiCache() {
+  landlockAbiCache = undefined;
+}
+
 /**
  * Constrói os argumentos do landlock-exec com allowlist de paths.
  *
