@@ -9,9 +9,11 @@
  *      [--max-count N] [--ignore-case] [-C N] [-g GLOB]
  *      <pattern> <path>
  *
- * Limite global de matches: o pipeline `rg | head` é executado com
- * `set -o pipefail` (preserva o exit code do rg) e os argumentos do
- * rg são passados via "$@" — sem shell injection de pattern/path.
+ * Limite GLOBAL de matches: o pipeline `rg --json | head` é executado com
+ * `set -o pipefail` e os argumentos do rg são passados via "$@" — sem
+ * shell injection de pattern/path. O head corta só depois de garantir
+ * `limit` matches completos (com contexto) e o NDJSON é parseado contando
+ * eventos "match" — linhas de contexto NÃO contam para o limite.
  */
 
 import { Type, type Static } from "typebox";
@@ -25,6 +27,69 @@ interface GrepToolResult {
 }
 
 const DEFAULT_GREP_LIMIT = 100;
+
+interface RgJsonEventData {
+  path?: { text?: string };
+  line_number?: number;
+  lines?: { text?: string };
+}
+
+interface RgJsonEvent {
+  type?: string;
+  data?: RgJsonEventData;
+}
+
+/** Reconstrói "path:line:conteúdo" a partir de um evento do rg --json. */
+function formatRgEvent(data: RgJsonEventData | undefined): string {
+  const path = data?.path?.text ?? "";
+  const line = data?.line_number;
+  let text = data?.lines?.text ?? "";
+  if (text.endsWith("\n")) text = text.slice(0, -1);
+  return line !== undefined ? `${path}:${line}:${text}` : text;
+}
+
+/**
+ * Parseia o NDJSON do `rg --json`, contando MATCHES (eventos "match") —
+ * linhas de contexto NÃO contam para o limite. Trunca no `limit`-ésimo
+ * match preservando o bloco de contexto que o segue.
+ */
+function parseRgJsonOutput(raw: string, limit: number): { lines: string[]; matchCount: number } {
+  const display: Array<{ type: "match" | "context"; text: string }> = [];
+  let matchCount = 0;
+
+  for (const rawLine of raw.split("\n")) {
+    if (!rawLine) continue;
+    let ev: RgJsonEvent;
+    try {
+      ev = JSON.parse(rawLine) as RgJsonEvent;
+    } catch {
+      // NDJSON íntegro nunca falha — linha malformada é ignorada
+      continue;
+    }
+    if (ev.type === "match") {
+      matchCount++;
+      display.push({ type: "match", text: formatRgEvent(ev.data) });
+    } else if (ev.type === "context") {
+      display.push({ type: "context", text: formatRgEvent(ev.data) });
+    }
+  }
+
+  // Trunca após o `limit`-ésimo match, mantendo o contexto que o segue
+  let cut = display.length;
+  let seen = 0;
+  for (let i = 0; i < display.length; i++) {
+    if (display[i].type === "match") {
+      seen++;
+      if (seen === limit) {
+        cut = i + 1;
+        while (cut < display.length && display[cut].type === "context") cut++;
+        break;
+      }
+    }
+  }
+
+  return { lines: display.slice(0, cut).map((d) => d.text), matchCount };
+}
 
 const GrepParamsSchema = Type.Object({
   pattern: Type.String({ description: "Pattern to search for (regex by default)" }),
@@ -87,13 +152,7 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
       const searchCwd = cwd;
 
       // Constrói comando rg (args passados via "$@" — sem shell injection)
-      const rgArgs: string[] = [
-        "--no-heading",
-        "--with-filename",
-        "--line-number",
-        "--no-messages",
-        "--color", "never",
-      ];
+      const rgArgs: string[] = ["--json", "--no-messages"];
 
       if (params.literal) {
         rgArgs.push("--fixed-strings");
@@ -103,18 +162,29 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
         rgArgs.push("--ignore-case");
       }
 
-      if (typeof params.context === "number" && params.context > 0) {
-        rgArgs.push("-C", String(params.context));
+      const context =
+        typeof params.context === "number" &&
+        Number.isFinite(params.context) &&
+        params.context > 0
+          ? Math.floor(params.context)
+          : 0;
+      if (context > 0) {
+        rgArgs.push("-C", String(context));
       }
 
       if (typeof params.glob === "string" && params.glob) {
         rgArgs.push("--glob", params.glob);
       }
 
-      // Limite global (head) — sem --max-count por arquivo
-      const limit = typeof params.limit === "number" && params.limit > 0
-        ? params.limit
-        : DEFAULT_GREP_LIMIT;
+      // Limite GLOBAL de matches — sem --max-count por arquivo. O head
+      // corta o rg só depois de garantir `limit` matches COMPLETOS (com
+      // seus blocos de contexto) e o NDJSON é contado por eventos "match".
+      const limit =
+        typeof params.limit === "number" &&
+        Number.isFinite(params.limit) &&
+        params.limit > 0
+          ? Math.floor(params.limit)
+          : DEFAULT_GREP_LIMIT;
 
       rgArgs.push("--", pattern);
 
@@ -123,16 +193,26 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
         : ".";
       rgArgs.push(searchPath);
 
-      // pipefail preserva o exit code do rg; head aplica o limite global
-      const script = `set -o pipefail; rg "$@" | head -n ${limit + 1}`;
+      // Cada match gera até (2*context + 1) eventos (match + contexto),
+      // mais begin/end por arquivo. Cap para `limit + 1` matches garante
+      // que o head nunca corte no meio de um bloco e que o match excedente
+      // apareça no stdout quando existir (matchCount > limit → aviso).
+      const eventsPerMatch = 2 * context + 3;
+      const cap = (limit + 1) * eventsPerMatch + 4;
+      const script = `set -o pipefail; rg "$@" | head -n ${cap}`;
       const { stdout, stderr, exitCode } = await execInSandbox(config, {
         command: ["bash", "-c", script, "_", ...rgArgs],
         cwd: searchCwd,
         signal,
       });
 
-      // rg exit code: 0 = matches found, 1 = no matches, 2 = error
-      if (exitCode === 2 || (exitCode !== 0 && exitCode !== 1)) {
+      const { lines, matchCount } = parseRgJsonOutput(stdout.toString(), limit);
+      const limitReached = matchCount > limit;
+
+      // rg exit code: 0 = matches, 1 = sem matches (ou pipe cortado pelo
+      // head quando o limite é atingido), 2 = erro. Qualquer outro valor
+      // com limite não atingido também é erro.
+      if (exitCode === 2 || (exitCode !== 0 && exitCode !== 1 && !limitReached)) {
         const errText = stderr.trim() || `grep failed (exit code ${exitCode})`;
         return {
           content: [{ type: "text", text: `Error: ${errText}` }],
@@ -140,20 +220,7 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
         };
       }
 
-      let lines = stdout.toString().split("\n");
-      // Remove trailing vazio (stdout termina com \n)
-      if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-
-      let details: Record<string, unknown> | undefined;
-      let text: string;
-
-      if (lines.length > limit) {
-        lines = lines.slice(0, limit);
-        details = { matchLimitReached: limit };
-        text = lines.join("\n") + `\n\n[${limit} matches limit reached]`;
-      } else {
-        text = lines.join("\n");
-      }
+      const text = lines.join("\n");
 
       if (!text.trim()) {
         return {
@@ -162,9 +229,16 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
         };
       }
 
+      if (limitReached) {
+        return {
+          content: [{ type: "text", text: text + `\n\n[${limit} matches limit reached]` }],
+          details: { matchLimitReached: limit },
+        };
+      }
+
       return {
         content: [{ type: "text", text }],
-        details,
+        details: undefined,
       };
     },
   };

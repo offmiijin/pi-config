@@ -1,9 +1,10 @@
 /**
  * Testes do tool grep (ripgrep via sandbox).
  *
- * Cobre: construção do comando bash (pipefail + head p/ limite global),
- * passagem dos args do rg via "$@" (sem shell injection), exit codes
- * (0/1/2), validação de pattern e aviso de limite atingido.
+ * Cobre: construção do comando bash (pipefail + head com cap que preserva
+ * contexto), passagem dos args do rg via "$@" (sem shell injection), parse
+ * do NDJSON do rg --json (matches contam pro limite, contexto não), exit
+ * codes (0/1/2) e aviso de limite atingido.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -42,6 +43,19 @@ function mockResult(stdout: string, exitCode = 0) {
   return { stdout: Buffer.from(stdout), stderr: "", exitCode, timedOut: false, aborted: false };
 }
 
+/** Evento NDJSON do rg --json. */
+function jsonEvent(type: string, path: string, line: number | undefined, text: string): string {
+  const data: Record<string, unknown> = { path: { text: path }, lines: { text: text + "\n" } };
+  if (line !== undefined) data.line_number = line;
+  return JSON.stringify({ type, data });
+}
+function matchEvent(path: string, line: number, text: string): string {
+  return jsonEvent("match", path, line, text);
+}
+function contextEvent(path: string, line: number, text: string): string {
+  return jsonEvent("context", path, line, text);
+}
+
 beforeEach(() => {
   execMock.mockReset();
 });
@@ -55,7 +69,7 @@ describe("grep — validação", () => {
 });
 
 describe("grep — construção do comando", () => {
-  it("bash com pipefail e head para limite global; args via \$@", async () => {
+  it("bash com pipefail e head com cap; rg com --json", async () => {
     execMock.mockResolvedValue(mockResult(""));
     await run({ pattern: "foo" });
     const [, call] = execMock.mock.calls[0];
@@ -65,13 +79,12 @@ describe("grep — construção do comando", () => {
     const script = cmd[2] as string;
     expect(script).toContain("set -o pipefail");
     expect(script).toContain('rg "$@"');
-    expect(script).toContain("head -n 101"); // limit default 100 + 1
+    // limit default 100, sem contexto: cap = (100+1)*(2*0+3)+4 = 307
+    expect(script).toContain("head -n 307");
 
     const rg = rgArgsOf(call);
-    for (const flag of ["--no-heading", "--with-filename", "--line-number", "--no-messages", "--color", "never"]) {
-      expect(rg).toContain(flag);
-    }
-    // sem --max-count por arquivo (limite agora é global via head)
+    expect(rg).toContain("--json");
+    expect(rg).toContain("--no-messages");
     expect(rg).not.toContain("--max-count");
     expect(rg[rg.length - 1]).toBe(".");
     expect(rg[rg.length - 2]).toBe("foo");
@@ -89,12 +102,15 @@ describe("grep — construção do comando", () => {
     expect(rgArgsOf(execMock.mock.calls[0][1])).toContain("--ignore-case");
   });
 
-  it("context → -C N", async () => {
+  it("context → -C N e head com cap que preserva contexto", async () => {
     execMock.mockResolvedValue(mockResult(""));
     await run({ pattern: "x", context: 3 });
     const rg = rgArgsOf(execMock.mock.calls[0][1]);
     expect(rg).toContain("-C");
     expect(rg[rg.indexOf("-C") + 1]).toBe("3");
+    // cap = (100+1)*(2*3+3)+4 = 913
+    const script = (execMock.mock.calls[0][1].command as string[])[2] as string;
+    expect(script).toContain("head -n 913");
   });
 
   it("glob → --glob", async () => {
@@ -105,11 +121,12 @@ describe("grep — construção do comando", () => {
     expect(rg[rg.indexOf("--glob") + 1]).toBe("*.ts");
   });
 
-  it("limit custom → head -n N+1", async () => {
+  it("limit custom → head com cap proporcional", async () => {
     execMock.mockResolvedValue(mockResult(""));
     await run({ pattern: "x", limit: 5 });
+    // cap = (5+1)*(2*0+3)+4 = 22
     const script = (execMock.mock.calls[0][1].command as string[])[2] as string;
-    expect(script).toContain("head -n 6");
+    expect(script).toContain("head -n 22");
   });
 
   it("path param vira último argumento do rg", async () => {
@@ -129,8 +146,8 @@ describe("grep — construção do comando", () => {
 });
 
 describe("grep — exit codes e saída", () => {
-  it("exit 0 com matches → texto", async () => {
-    execMock.mockResolvedValue(mockResult("src/a.ts:1:foo\n"));
+  it("exit 0 com matches → texto file:line:content", async () => {
+    execMock.mockResolvedValue(mockResult(matchEvent("src/a.ts", 1, "foo")));
     const res = await run({ pattern: "foo" });
     expect(res.content[0].text).toBe("src/a.ts:1:foo");
   });
@@ -159,9 +176,9 @@ describe("grep — exit codes e saída", () => {
     expect(res.content[0].text).toContain("exit code 3");
   });
 
-  it("limite atingido → aviso [N matches limit reached] e conteúdo truncado", async () => {
-    const lines = Array.from({ length: 101 }, (_, i) => `f${i}.ts:1:x`);
-    execMock.mockResolvedValue(mockResult(lines.join("\n")));
+  it("limite atingido → trunca em N matches e avisa", async () => {
+    const events = Array.from({ length: 101 }, (_, i) => matchEvent(`f${i}.ts`, 1, "x"));
+    execMock.mockResolvedValue(mockResult(events.join("\n")));
     const res = await run({ pattern: "x" });
     expect(res.content[0].text).toContain("[100 matches limit reached]");
     expect(res.details?.matchLimitReached).toBe(100);
@@ -169,9 +186,43 @@ describe("grep — exit codes e saída", () => {
     expect(contentLines).toHaveLength(100);
   });
 
+  it("exit 1 com pipe cortado e matches acima do limite → aviso, não erro", async () => {
+    // rg encerra com exit 1 quando o head corta o pipe após o cap
+    const events = Array.from({ length: 150 }, (_, i) => matchEvent(`f${i}.ts`, 1, "x"));
+    execMock.mockResolvedValue(mockResult(events.join("\n"), 1));
+    const res = await run({ pattern: "x" });
+    expect(res.content[0].text).not.toContain("Error");
+    expect(res.content[0].text).toContain("[100 matches limit reached]");
+  });
+
+  it("contexto NÃO conta pro limite; bloco completo preservado", async () => {
+    const events = [
+      contextEvent("a.ts", 0, "pre"),
+      matchEvent("a.ts", 1, "x1"),
+      contextEvent("a.ts", 2, "pos1"),
+      matchEvent("a.ts", 3, "x2"),
+      contextEvent("a.ts", 4, "pos2"),
+      matchEvent("a.ts", 5, "x3"),
+      contextEvent("a.ts", 6, "pos3"),
+    ];
+    execMock.mockResolvedValue(mockResult(events.join("\n")));
+    const res = await run({ pattern: "x", context: 1, limit: 2 });
+    const text = res.content[0].text;
+    expect(text).toContain("a.ts:1:x1");
+    expect(text).toContain("a.ts:2:pos1");
+    expect(text).toContain("a.ts:3:x2");
+    expect(text).toContain("a.ts:4:pos2"); // contexto do 2º match preservado
+    expect(text).toContain("[2 matches limit reached]");
+    expect(text).not.toContain("x3"); // 3º match truncado
+    expect(res.details?.matchLimitReached).toBe(2);
+  });
+
   it("abaixo do limite → sem aviso", async () => {
-    execMock.mockResolvedValue(mockResult("a.ts:1:x\nb.ts:1:x\n"));
+    execMock.mockResolvedValue(mockResult(
+      matchEvent("a.ts", 1, "x") + "\n" + matchEvent("b.ts", 1, "x"),
+    ));
     const res = await run({ pattern: "x" });
     expect(res.content[0].text).not.toContain("matches limit reached");
+    expect(res.content[0].text).toContain("a.ts:1:x");
   });
 });
