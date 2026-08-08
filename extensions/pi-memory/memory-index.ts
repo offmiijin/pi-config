@@ -21,7 +21,7 @@
  * Fase 1: abertura/schema/validação FTS5 + rebuild completo.
  * Fase 2: sincronização de escrita (upsertDocument/removeDocument/syncDocuments/updateConfidence).
  * Fase 3: busca FTS5/BM25 (buildFtsQuery + search com pesos por coluna;
- *         confiança/recência só desempatam; snippet).
+ *         confiança/recência só desempatam; componentes via coluna norm).
  * Fase 4: sync incremental (syncIncremental) por content_hash — detecta
  *         edição manual/deleção fora das tools.
  */
@@ -71,7 +71,7 @@ const DatabaseCtor = await resolveDatabaseCtor();
 
 export const INDEX_DB_FILENAME = ".index.sqlite";
 export const INDEX_DB_PATH = join(MEMORIES_ROOT, INDEX_DB_FILENAME);
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memory_documents (
@@ -95,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_docs_type ON memory_documents(type);
 CREATE INDEX IF NOT EXISTS idx_docs_confidence ON memory_documents(confidence);
 CREATE INDEX IF NOT EXISTS idx_docs_updated ON memory_documents(updated);
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-  title, summary, tags, body,
+  title, summary, tags, body, norm,
   tokenize = "unicode61 remove_diacritics 2 tokenchars '_'"
 );
 CREATE TABLE IF NOT EXISTS index_meta (
@@ -167,13 +167,36 @@ export function cleanBody(body: string): string {
 		.trim();
 }
 
+/**
+ * Texto normalizado para busca por componentes de identificador (coluna
+ * `norm`): `_`, `-`, `/`, `.` viram espaços (colapsados). A coluna original
+ * mantém o token exato (ex.: id_snake_case inteiro); a `norm` permite
+ * encontrar "snake" e "case" isolados, com peso menor no BM25 — um match
+ * no campo real sempre rankeia acima.
+ */
+export function normalizeForSearch(
+	title: string,
+	summary: string | null,
+	tags: string[],
+	body: string,
+): string {
+	return [title, summary ?? "", tags.join(" "), body]
+		.join(" ")
+		.replace(/[_\-/.]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
 // ── Busca FTS5/BM25 (Fase 3) ──────────────────────────────────────────────
 
 /**
  * Monta uma query FTS5 a partir de termos crus (OR entre termos).
  * FTS5 não tem escape por barra invertida — cada termo vira uma frase
  * entre aspas (aspas internas duplicadas) com `*` no último token, que dá
- * matching por prefixo (≈ substring do rg antigo).
+ * matching por PREFIXO de token (NÃO substring — um termo só casa token
+ * que começa com ele). Componentes internos de identificador (ex.: "snake"
+ * em id_snake_case) são encontráveis pela coluna `norm` (separadores viram
+ * espaços; peso menor no BM25).
  */
 export function buildFtsQuery(terms: string[]): string {
 	const parts: string[] = [];
@@ -318,8 +341,11 @@ export class MemoryIndex {
 
 	/**
 	 * Abre o banco, aplica pragmas (WAL, busy_timeout), cria o schema e valida
-	 * FTS5. Banco novo ou versão antiga ⇒ needsRebuild = true (não reconstrói
-	 * aqui — quem chama decide quando).
+	 * FTS5. Banco novo ⇒ needsRebuild = true (quem chama decide quando).
+	 * Versão de schema ANTIGA ⇒ migra: recria a tabela FTS com a estrutura
+	 * atual e reindexa TODOS os docs a partir do markdown (fonte da verdade),
+	 * preservando docs de outros projetos. Falha de migração fecha o banco e
+	 * relança — o chamador cai no fallback rg.
 	 */
 	open(): void {
 		if (this.isOpen) return;
@@ -350,7 +376,59 @@ export class MemoryIndex {
 		this.opened = true;
 
 		const version = this.getMeta("schema_version");
-		this.needsRebuild = version === null || Number(version) !== SCHEMA_VERSION;
+		if (version !== null && Number(version) !== SCHEMA_VERSION) {
+			try {
+				this.migrateSchema(Number(version));
+			} catch (err) {
+				// Rollback aplicado na migração — banco fechado; chamador cai no rg.
+				this.close();
+				throw err;
+			}
+			this.setMeta("schema_version", String(SCHEMA_VERSION));
+			this.setMeta("rebuilt_at", new Date().toISOString());
+			this.needsRebuild = false;
+		} else {
+			this.needsRebuild = version === null || Number(version) !== SCHEMA_VERSION;
+		}
+	}
+
+	/**
+	 * Migra um banco de versão antiga: recria a tabela FTS (estrutura pode ter
+	 * mudado — ex.: coluna `norm` do v2) e reindexa TODOS os docs de
+	 * memory_documents a partir do markdown, em transação única. Arquivo
+	 * ausente/ilegível ⇒ doc removido (índice derivado; markdown é canônico).
+	 * Falha ⇒ ROLLBACK (banco volta ao estado antigo) e relança.
+	 */
+	private migrateSchema(_oldVersion: number): void {
+		const db = this.requireDb();
+		db.exec("BEGIN");
+		try {
+			db.exec("DROP TABLE IF EXISTS memory_fts");
+			this.ensureSchema();
+
+			const rows = db
+				.prepare("SELECT id, path FROM memory_documents")
+				.all() as { id: number | bigint; path: string }[];
+			const now = new Date().toISOString();
+			for (const row of rows) {
+				const abs = join(this.memoriesRoot, row.path);
+				if (!existsSync(abs)) {
+					db.prepare("DELETE FROM memory_documents WHERE id = ?").run(row.id);
+					continue;
+				}
+				try {
+					this.upsertDocAndFts(db, readMemoryDocFromFile(abs, row.path), now);
+				} catch (err) {
+					// Arquivo ilegível — remove do índice (consistência doc × FTS).
+					console.warn(`[pi-memory] migrate: pulou ${row.path}: ${(err as Error).message}`);
+					db.prepare("DELETE FROM memory_documents WHERE id = ?").run(row.id);
+				}
+			}
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
 	}
 
 	close(): void {
@@ -607,10 +685,12 @@ export class MemoryIndex {
 
 	/**
 	 * Busca FTS5/BM25 com filtros SQL. Ordenação por relevância LEXICAL:
-	 * BM25 ponderado por coluna (título > summary > tags > corpo) decide o
-	 * ranking; confiança e recência entram SÓ como desempate (ORDER BY
-	 * secundário), nunca como penalidade aditiva no score — um match de
-	 * título antigo/confiança baixa vence um match de corpo recente/alta.
+	 * BM25 ponderado por coluna (título 8 > summary 4 > tags 2 > corpo 1 >
+	 * norm 0.5) decide o ranking; confiança e recência entram SÓ como
+	 * desempate (ORDER BY secundário), nunca como penalidade aditiva no
+	 * score — um match de título antigo/confiança baixa vence um match de
+	 * corpo recente/alta. A coluna `norm` (componentes de identificador)
+	 * tem peso menor: match exato em campo real rankeia acima.
 	 *
 	 * Convenção FTS5: bm25() retorna NEGATIVO e menor (mais negativo) =
 	 * mais relevante. O campo exposto `score` = -bm25 (maior = melhor),
@@ -659,11 +739,11 @@ export class MemoryIndex {
 				`SELECT d.path, d.scope, d.project_id, d.type, d.context, d.title, d.summary,
 				        d.confidence, d.updated,
 				        snippet(memory_fts, 3, '', '', '…', 24) AS snippet_text,
-				        -bm25(memory_fts, 8.0, 4.0, 2.0, 1.0) AS score
+				        -bm25(memory_fts, 8.0, 4.0, 2.0, 1.0, 0.5) AS score
 				 FROM memory_fts
 				 JOIN memory_documents d ON d.id = memory_fts.rowid
 				 WHERE memory_fts MATCH ? AND ${scopeSql}
-				 ORDER BY bm25(memory_fts, 8.0, 4.0, 2.0, 1.0) ASC,
+				 ORDER BY bm25(memory_fts, 8.0, 4.0, 2.0, 1.0, 0.5) ASC,
 				          d.confidence DESC,
 				          d.updated DESC,
 				          d.path ASC
@@ -735,8 +815,15 @@ export class MemoryIndex {
 		const id = this.docIdByPath(db, doc.path);
 		db.prepare("DELETE FROM memory_fts WHERE rowid = ?").run(id);
 		db.prepare(
-			"INSERT INTO memory_fts (rowid, title, summary, tags, body) VALUES (?, ?, ?, ?, ?)",
-		).run(id, doc.title, doc.summary ?? "", doc.tags.join(" "), doc.body);
+			"INSERT INTO memory_fts (rowid, title, summary, tags, body, norm) VALUES (?, ?, ?, ?, ?, ?)",
+		).run(
+			id,
+			doc.title,
+			doc.summary ?? "",
+			doc.tags.join(" "),
+			doc.body,
+			normalizeForSearch(doc.title, doc.summary, doc.tags, doc.body),
+		);
 	}
 
 	private docIdByPath(db: DatabaseLike, path: string): number {

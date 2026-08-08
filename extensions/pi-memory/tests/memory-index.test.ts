@@ -21,6 +21,7 @@ import {
 	hashContent,
 	inferFromRelPath,
 	listActiveMemoryFiles,
+	normalizeForSearch,
 	readMemoryDocFromFile,
 } from "../memory-index.ts";
 import type { IndexDocument } from "../memory-index.ts";
@@ -339,23 +340,40 @@ describe("MemoryIndex", () => {
 		idx.close();
 	});
 
-	it("versão de schema divergente marca needsRebuild no reopen", () => {
+	it("schema divergente (v1) migra no reopen: FTS recriado com norm + reindex do markdown", () => {
 		const idx = new MemoryIndex(dbPath, root);
 		idx.open();
 		idx.rebuild(projectA);
 		expect(idx.needsRebuild).toBeFalse();
 
-		// Corrompe a versão por fora
+		// Simula banco v1: FTS sem coluna norm + versão antiga.
 		const raw = new DatabaseSync(dbPath);
-		raw.prepare("UPDATE index_meta SET value = '999' WHERE key = 'schema_version'").run();
+		raw.exec("DROP TABLE memory_fts");
+		raw.exec(
+			`CREATE VIRTUAL TABLE memory_fts USING fts5(title, summary, tags, body, ` +
+				`tokenize = "unicode61 remove_diacritics 2 tokenchars '_'")`,
+		);
+		raw
+			.prepare("UPDATE index_meta SET value = '1' WHERE key = 'schema_version'")
+			.run();
 		raw.close();
 		idx.close();
 
 		const reopened = new MemoryIndex(dbPath, root);
-		reopened.open();
-		expect(reopened.needsRebuild).toBeTrue();
-		reopened.rebuild(projectA);
+		reopened.open(); // migra v1 → v2
 		expect(reopened.needsRebuild).toBeFalse();
+		expect(reopened.getMeta("schema_version")).toBe(String(SCHEMA_VERSION));
+
+		// FTS recriado com coluna norm
+		const probe = openProbe(dbPath);
+		const cols = probe.prepare("PRAGMA table_info(memory_fts)").all() as { name: string }[];
+		expect(cols.map((c) => c.name)).toContain("norm");
+		probe.close();
+
+		// Reindexado a partir do markdown — busca continua funcionando
+		expect(
+			reopened.search({ terms: ["cache"], projectId: projectA }).length,
+		).toBeGreaterThanOrEqual(1);
 		reopened.close();
 	});
 
@@ -728,10 +746,11 @@ describe("MemoryIndex search (Fase 3)", () => {
 		expect(paths(search(["invalidacao"]))).toContain("_global/gotchas/titulo.md");
 	});
 
-	it("underscore é token único (tokenchars '_')", () => {
+	it("identificador underscore: exato/prefixo no token original; componente via norm", () => {
 		expect(paths(search(["id_snake_case"]))).toContain("_global/gotchas/underscore.md");
 		expect(paths(search(["id_snake"]))).toContain("_global/gotchas/underscore.md");
-		expect(paths(search(["snake"]))).not.toContain("_global/gotchas/underscore.md");
+		// "snake" é componente interno — encontrado pela coluna norm (Fase 7)
+		expect(paths(search(["snake"]))).toContain("_global/gotchas/underscore.md");
 	});
 
 	it("OR entre termos", () => {
@@ -966,6 +985,260 @@ describe("MemoryIndex ranking (Fase 6: lexical decide; metadado só desempata)",
 		expect(velho).toBeGreaterThanOrEqual(0);
 		expect(novo).toBeGreaterThanOrEqual(0);
 		expect(novo).toBeLessThan(velho);
+	});
+});
+
+// ── Busca por componentes (#7) ─────────────────────────────────────────────
+
+describe("MemoryIndex busca por componentes (Fase 7: coluna norm)", () => {
+	let root: string;
+	let dbDir: string;
+	let dbPath: string;
+	let proj: string;
+	let idx: MemoryIndex;
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), "pi-memory-norm-root-"));
+		dbDir = mkdtempSync(join(tmpdir(), "pi-memory-norm-db-"));
+		dbPath = join(dbDir, "norm.sqlite");
+		proj = `__test_norm_${Date.now()}`;
+
+		writeFixture(
+			root,
+			"_global/gotchas/underscore.md",
+			"type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n",
+			"## [2026-08-01 10:00:00] Underscore\n\nvariavel id_snake_case aqui\n",
+		);
+		// Só a norm casa "snake" (id_ prefixa o token original) vs. token
+		// isolado no corpo (casa no campo real + norm).
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/comp.md`,
+			"type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n",
+			"## [2026-08-01 10:00:00] Comp\n\nid_snake_case no corpo\n",
+		);
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/exact.md`,
+			"type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n",
+			"## [2026-08-01 10:00:00] Exact\n\ntermo snake isolado aqui\n",
+		);
+		// - / . já eram separadores no unicode61 — norm não deve regredir.
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/paths.md`,
+			"type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n",
+			"## [2026-08-01 10:00:00] Paths\n\ncaminho a/b c.d e-f\n",
+		);
+
+		idx = new MemoryIndex(dbPath, root);
+		idx.open();
+		idx.rebuild(proj);
+	});
+
+	afterAll(() => {
+		idx.close();
+		rmSync(root, { recursive: true, force: true });
+		rmSync(dbDir, { recursive: true, force: true });
+	});
+
+	function search(
+		terms: string[],
+		opts: Partial<Parameters<MemoryIndex["search"]>[0]> = {},
+	): ReturnType<MemoryIndex["search"]> {
+		return idx.search({ terms, projectId: proj, ...opts });
+	}
+
+	function paths(results: ReturnType<MemoryIndex["search"]>): string[] {
+		return results.map((r) => r.path);
+	}
+
+	it("componente interno de identificador (snake de id_snake_case) é encontrável", () => {
+		const p = paths(search(["snake"]));
+		expect(p).toContain("_global/gotchas/underscore.md");
+		expect(p).toContain(`projects/${proj}/gotchas/comp.md`);
+	});
+
+	it("identificador exato e prefixo continuam casando", () => {
+		expect(paths(search(["id_snake_case"]))).toContain("_global/gotchas/underscore.md");
+		expect(paths(search(["id_snake"]))).toContain("_global/gotchas/underscore.md");
+	});
+
+	it("match no campo real rankeia acima de match só-norm", () => {
+		const results = search(["snake"]);
+		const exact = results.findIndex((r) => r.path.includes("exact.md"));
+		const comp = results.findIndex((r) => r.path.includes("comp.md"));
+		expect(exact).toBeGreaterThanOrEqual(0);
+		expect(comp).toBeGreaterThanOrEqual(0);
+		expect(exact).toBeLessThan(comp);
+	});
+
+	it("- / . seguem separando tokens (sem regressão)", () => {
+		expect(paths(search(["b"]))).toContain(`projects/${proj}/gotchas/paths.md`);
+		expect(paths(search(["e"]))).toContain(`projects/${proj}/gotchas/paths.md`);
+	});
+});
+
+describe("normalizeForSearch", () => {
+	it("separa _ - / . e colapsa espaços", () => {
+		expect(normalizeForSearch("a_b", "x", ["t1"], "c.d e-f g/h")).toBe(
+			"a b x t1 c d e f g h",
+		);
+	});
+
+	it("sem summary/tags", () => {
+		expect(normalizeForSearch("t", null, [], "corpo")).toBe("t corpo");
+	});
+});
+
+// ── Migração de schema (#7) ────────────────────────────────────────────────
+
+describe("MemoryIndex migração de schema v1 → v2", () => {
+	it("reindexa FTS com coluna norm a partir do markdown, preservando docs", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-memory-mig-root-"));
+		const dbDir = mkdtempSync(join(tmpdir(), "pi-memory-mig-db-"));
+		const dbPath = join(dbDir, "v1.sqlite");
+		const projA = `__test_mig_a_${Date.now()}`;
+		const projB = `__test_mig_b_${Date.now()}`;
+
+		// Markdown canônico (fonte da verdade)
+		writeFixture(
+			root,
+			"_global/gotchas/g1.md",
+			"type: gotchas\nconfidence: 0.7\nupdated: 2026-08-01\n",
+			"## [2026-08-01 10:00:00] Global\n\nvariavel id_snake_case global\n",
+		);
+		writeFixture(
+			root,
+			`projects/${projA}/gotchas/p1.md`,
+			"type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n",
+			"## [2026-08-01 10:00:00] A\n\nconteúdo projeto A\n",
+		);
+		writeFixture(
+			root,
+			`projects/${projB}/gotchas/p2.md`,
+			"type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n",
+			"## [2026-08-01 10:00:00] B\n\nconteúdo projeto B\n",
+		);
+
+		// Banco v1 construído à mão (FTS de 4 colunas, sem norm)
+		const raw = new DatabaseSync(dbPath);
+		raw.exec(`CREATE TABLE memory_documents (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			path TEXT NOT NULL UNIQUE,
+			scope TEXT NOT NULL CHECK (scope IN ('global','project')),
+			project_id TEXT,
+			type TEXT NOT NULL,
+			context TEXT NOT NULL,
+			title TEXT NOT NULL,
+			summary TEXT,
+			tags_json TEXT NOT NULL DEFAULT '[]',
+			confidence REAL NOT NULL,
+			updated TEXT NOT NULL,
+			content_hash TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			modified_at TEXT NOT NULL)`);
+		raw.exec(
+			`CREATE VIRTUAL TABLE memory_fts USING fts5(title, summary, tags, body, ` +
+				`tokenize = "unicode61 remove_diacritics 2 tokenchars '_'")`,
+		);
+		raw.exec("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+		raw.exec("INSERT INTO index_meta VALUES ('schema_version', '1')");
+		const ins = raw.prepare(
+			`INSERT INTO memory_documents
+			   (path, scope, project_id, type, context, title, confidence, updated,
+			    content_hash, created_at, modified_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		);
+		ins.run(
+			"_global/gotchas/g1.md",
+			"global",
+			null,
+			"gotchas",
+			"g1",
+			"Global",
+			0.7,
+			"2026-08-01",
+			"h1",
+			"now",
+			"now",
+		);
+		ins.run(
+			`projects/${projA}/gotchas/p1.md`,
+			"project",
+			projA,
+			"gotchas",
+			"p1",
+			"A",
+			0.6,
+			"2026-08-01",
+			"h2",
+			"now",
+			"now",
+		);
+		ins.run(
+			`projects/${projB}/gotchas/p2.md`,
+			"project",
+			projB,
+			"gotchas",
+			"p2",
+			"B",
+			0.6,
+			"2026-08-01",
+			"h3",
+			"now",
+			"now",
+		);
+		raw.close();
+
+		try {
+			const idx = new MemoryIndex(dbPath, root);
+			idx.open(); // migra v1 → v2
+			expect(idx.needsRebuild).toBeFalse();
+			expect(idx.getMeta("schema_version")).toBe(String(SCHEMA_VERSION));
+
+			// FTS recriado com coluna norm; doc × FTS consistentes
+			const probe = openProbe(dbPath);
+			const cols = probe.prepare("PRAGMA table_info(memory_fts)").all() as {
+				name: string;
+			}[];
+			expect(cols.map((c) => c.name)).toContain("norm");
+			expect(
+				Number(
+					(probe.prepare("SELECT count(*) AS c FROM memory_documents").get() as { c: number })
+						.c,
+				),
+			).toBe(3);
+			expect(
+				Number(
+					(probe.prepare("SELECT count(*) AS c FROM memory_fts").get() as { c: number })
+						.c,
+				),
+			).toBe(3);
+			probe.close();
+
+			// Busca por componente (norm) funciona pós-migração
+			expect(
+				idx
+					.search({ terms: ["snake"], projectId: projA })
+					.some((r) => r.path === "_global/gotchas/g1.md"),
+			).toBeTrue();
+			// Outros projetos preservados
+			expect(
+				idx
+					.search({ terms: ["projeto"], projectId: projA })
+					.some((r) => r.path === `projects/${projA}/gotchas/p1.md`),
+			).toBeTrue();
+			expect(
+				idx
+					.search({ terms: ["projeto"], scope: "project", projectId: projB })
+					.some((r) => r.path === `projects/${projB}/gotchas/p2.md`),
+			).toBeTrue();
+			idx.close();
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			rmSync(dbDir, { recursive: true, force: true });
+		}
 	});
 });
 
