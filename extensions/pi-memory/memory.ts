@@ -143,7 +143,7 @@ export interface MemoryIndexEntry {
 }
 
 /** Extracts the title of the LAST entry from a memory body. */
-function extractLastEntryTitle(body: string): string | undefined {
+export function extractLastEntryTitle(body: string): string | undefined {
 	const matches = [...body.matchAll(/^## \[[^\]]+\]\s+(.+)$/gm)];
 	if (matches.length === 0) return undefined;
 	return matches[matches.length - 1][1].trim();
