@@ -226,6 +226,37 @@ export interface NewEpisode {
 	eligibilityScore?: number;
 }
 
+/** Dados para inserir uma evidência (linha da tabela evidence). */
+export interface NewEvidence {
+	episodeId: string;
+	entryId?: string;
+	toolCallId?: string;
+	kind: string;
+	toolName?: string;
+	payloadJson: string;
+	contentHash: string;
+	tokenEstimate: number;
+	redactionFlags: number;
+	isError: number;
+	priority: number;
+}
+
+/** Registro completo de uma evidência (linha da tabela evidence). */
+export interface EvidenceRecord {
+	id: string;
+	episodeId: string;
+	entryId?: string;
+	toolCallId?: string;
+	kind: string;
+	toolName?: string;
+	payloadJson: string;
+	contentHash: string;
+	tokenEstimate: number;
+	redactionFlags: number;
+	isError: boolean;
+	priority: number;
+}
+
 function mapEpisodeRow(row: Record<string, unknown>): EpisodeRecord {
 	return {
 		id: String(row.id),
@@ -240,6 +271,23 @@ function mapEpisodeRow(row: Record<string, unknown>): EpisodeRecord {
 		tokenEstimate: Number(row.token_estimate),
 		eligibilityScore: Number(row.eligibility_score),
 		status: row.status as EpisodeStatus,
+	};
+}
+
+function mapEvidenceRow(row: Record<string, unknown>): EvidenceRecord {
+	return {
+		id: String(row.id),
+		episodeId: String(row.episode_id),
+		entryId: row.entry_id === null ? undefined : String(row.entry_id),
+		toolCallId: row.tool_call_id === null ? undefined : String(row.tool_call_id),
+		kind: String(row.kind),
+		toolName: row.tool_name === null ? undefined : String(row.tool_name),
+		payloadJson: String(row.payload_json),
+		contentHash: String(row.content_hash),
+		tokenEstimate: Number(row.token_estimate),
+		redactionFlags: Number(row.redaction_flags),
+		isError: Number(row.is_error) === 1,
+		priority: Number(row.priority),
 	};
 }
 
@@ -375,6 +423,74 @@ export class PipelineDB {
 		const row = this.requireDb()
 			.prepare(`SELECT COUNT(*) AS n FROM episodes${where}`)
 			.get(...params) as { n: number };
+		return Number(row.n);
+	}
+
+	/** Busca episódio por id. */
+	getEpisode(id: string): EpisodeRecord | undefined {
+		const row = this.requireDb()
+			.prepare("SELECT * FROM episodes WHERE id = ?")
+			.get(id) as Record<string, unknown> | undefined;
+		return row ? mapEpisodeRow(row) : undefined;
+	}
+
+	/**
+	 * Fecha a normalização de um episódio em transação única: insere as
+	 * evidências e marca o status final (normalized | ignored). Falha faz
+	 * ROLLBACK — episódio permanece no status anterior (retry seguro).
+	 */
+	finalizeEpisode(episodeId: string, evidence: NewEvidence[], status: EpisodeStatus): void {
+		const db = this.requireDb();
+		db.exec("BEGIN");
+		try {
+			const stmt = db.prepare(
+				`INSERT INTO evidence
+				   (id, episode_id, entry_id, tool_call_id, kind, tool_name,
+				    payload_json, content_hash, token_estimate, redaction_flags,
+				    is_error, priority)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			);
+			for (const ev of evidence) {
+				stmt.run(
+					newPipelineId("ev_"),
+					ev.episodeId,
+					ev.entryId ?? null,
+					ev.toolCallId ?? null,
+					ev.kind,
+					ev.toolName ?? null,
+					ev.payloadJson,
+					ev.contentHash,
+					ev.tokenEstimate,
+					ev.redactionFlags,
+					ev.isError,
+					ev.priority,
+				);
+			}
+			db.prepare("UPDATE episodes SET status = ? WHERE id = ?").run(status, episodeId);
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Lista evidências de um episódio (ordem de inserção). */
+	listEvidenceByEpisode(episodeId: string): EvidenceRecord[] {
+		const rows = this.requireDb()
+			.prepare("SELECT * FROM evidence WHERE episode_id = ? ORDER BY rowid")
+			.all(episodeId) as Record<string, unknown>[];
+		return rows.map(mapEvidenceRow);
+	}
+
+	/** Conta evidências, opcionalmente de um episódio específico. */
+	countEvidence(episodeId?: string): number {
+		const sql =
+			episodeId !== undefined
+				? "SELECT COUNT(*) AS n FROM evidence WHERE episode_id = ?"
+				: "SELECT COUNT(*) AS n FROM evidence";
+		const row = this.requireDb().prepare(sql).get(...(episodeId !== undefined ? [episodeId] : [])) as {
+			n: number;
+		};
 		return Number(row.n);
 	}
 }

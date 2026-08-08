@@ -58,6 +58,7 @@ import {
 	buildEpisodeFingerprint,
 	estimateEpisodeTokens,
 } from "./pipeline.ts";
+import { normalizeEpisode } from "./evidence.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -424,7 +425,7 @@ export default function (pi: ExtensionAPI) {
 			// episódio (harness) — a impressão digital cobre o range inteiro.
 			if (pipeline.findEpisodeByFingerprint(state.currentSessionHash, fingerprint)) return;
 
-			pipeline.insertEpisode({
+			const episodeId = pipeline.insertEpisode({
 				projectId: state.projectId,
 				sessionId: state.currentSessionHash,
 				sessionFile: sm.getSessionFile() ?? "",
@@ -434,6 +435,15 @@ export default function (pi: ExtensionAPI) {
 				fingerprint,
 				tokenEstimate: estimateEpisodeTokens(range),
 			});
+
+			// Fase 1: normaliza o episódio recém-capturado (determinístico, sem
+			// LLM — só leitura do JSONL + classificação). Se a sessão ainda não
+			// foi persistida no disco, normalizeEpisode mantém o episódio em
+			// pending para retry do worker (Fase 2). Falha nunca derruba o turno.
+			const captured = pipeline.getEpisode(episodeId);
+			if (captured) {
+				normalizeEpisode(pipeline, captured);
+			}
 		} catch (err) {
 			console.warn(`[pi-memory] captura de episódio falhou: ${(err as Error).message}`);
 		}
