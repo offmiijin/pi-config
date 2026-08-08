@@ -23,7 +23,7 @@
  *   tools/*.ts          — um arquivo por tool (status, save, search, decay, extract)
  */
 
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	ENABLE_LEGACY_OBSERVATIONS,
@@ -50,8 +50,13 @@ import {
 	shouldRemindSave,
 	type ToolObservation,
 } from "./session.ts";
-import { formatMemoryIndexText, listMemoryIndex } from "./memory.ts";
-import { INDEX_DB_PATH, MemoryIndex } from "./memory-index.ts";
+import { formatMemoryIndexText, findMemoryFile, listMemoryIndex, parseFrontmatter, saveMemory } from "./memory.ts";
+import {
+	INDEX_DB_PATH,
+	MemoryIndex,
+	readMemoryDocFromFile,
+	relFromMemoriesRoot,
+} from "./memory-index.ts";
 import {
 	PIPELINE_DB_PATH,
 	PipelineDB,
@@ -71,6 +76,7 @@ import {
 	type ExtractionModelRef,
 	type ModelRegistryLike,
 } from "./processor.ts";
+import type { MemoryFileRef } from "./validator.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -149,6 +155,75 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
+	// Fase 4: localiza memória existente pelo context key (dedup/contradição
+	// e validação de supersede). Best-effort — falha vira "sem memória".
+	const findExistingMemory = async (context: string): Promise<MemoryFileRef | null> => {
+		try {
+			const fp = findMemoryFile(state.projectId, context);
+			if (!fp) return null;
+			const { meta, body } = parseFrontmatter(readFileSync(fp, "utf-8"));
+			return {
+				context,
+				scope: fp.includes("_global") ? "global" : "project",
+				type: typeof meta.type === "string" ? meta.type : "",
+				confidence: typeof meta.confidence === "number" ? meta.confidence : 0.5,
+				summary: typeof meta.summary === "string" ? meta.summary : null,
+				content: body.trim(),
+			};
+		} catch {
+			return null;
+		}
+	};
+
+	// Fase 4: grava a memória no markdown (canônico) e sincroniza o índice
+	// FTS5. Falha de índice degrada e segue (próximo syncIncremental reconcilia).
+	const commitMemory = async (candidate: {
+		context: string;
+		action: string;
+		type: string | null;
+		scope: string | null;
+		title: string | null;
+		summary: string | null;
+		content: string | null;
+		confidence: number | null;
+		supersedes: string | null;
+	}): Promise<{ ok: boolean; error?: string }> => {
+		try {
+			if (!candidate.type || !candidate.scope || !candidate.title || !candidate.content) {
+				return { ok: false, error: "candidato incompleto para commit" };
+			}
+			const result = saveMemory(state.projectId, {
+				type: candidate.type,
+				context: candidate.context,
+				title: candidate.title,
+				content: candidate.content,
+				scope: candidate.scope as "global" | "project",
+				confidence: candidate.confidence ?? 0.5,
+				summary: candidate.summary ?? undefined,
+				tags: [],
+				mode: candidate.action === "update" ? "consolidate" : "append",
+				supersedes:
+					candidate.action === "supersede" ? candidate.supersedes ?? undefined : undefined,
+			});
+			if (result.action === "error") return { ok: false, error: result.error };
+
+			if (state.index?.isOpen && result.file) {
+				try {
+					state.index.syncMutationSafe({
+						upsert: [readMemoryDocFromFile(result.file, relFromMemoriesRoot(result.file))],
+						remove: (result.archived ?? []).map((p) => relFromMemoriesRoot(p)),
+					});
+				} catch {
+					// degrada — próximo syncIncremental reconcilia
+				}
+			}
+			state.cachedIndexText = null; // invalida o índice do system prompt
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: (err as Error).message ?? String(err) };
+		}
+	};
+
 	pi.on("tool_result", async (event) => {
 		const e = event as unknown as {
 			toolCallId?: string;
@@ -214,7 +289,12 @@ export default function (pi: ExtensionAPI) {
 			if (pipeline) {
 				pipeline.recoverStuckJobs();
 				worker = new PipelineWorker(pipeline, {
-					processor: createExtractionProcessor({ getModel, getRelatedMemories }),
+					processor: createExtractionProcessor({
+						getModel,
+						getRelatedMemories,
+						findExistingMemory,
+						commitMemory,
+					}),
 					includeClaimed: true,
 				});
 				worker.setProject(state.projectId);

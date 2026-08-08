@@ -194,6 +194,11 @@ export function sanitizeEvidenceText(text: string): { text: string; redacted: bo
 	return { text: out, redacted };
 }
 
+/** True se o texto contém algum padrão de segredo. */
+export function hasSecret(text: string): boolean {
+	return SECRET_PATTERNS.some((re) => re.test(text));
+}
+
 function budgetChars(tokens: number): number {
 	return tokens * CHARS_PER_TOKEN;
 }

@@ -120,13 +120,14 @@ describe("createExtractionProcessor", () => {
 		expect(candidates.length).toBe(1);
 		expect(candidates[0].context).toBe("sessao-cache");
 		expect(candidates[0].evidenceIds).toEqual([evidenceId]);
-		expect(candidates[0].status).toBe("pending");
+		expect(candidates[0].status).toBe("committed"); // auto-accept (Fase 4)
 
 		const updated = pipeline.getJob(jobId)!;
 		expect(updated.model).toBe("fake/fake-model");
 		expect(updated.inputTokens).toBe(150);
 		expect(updated.outputTokens).toBe(30);
 		expect(updated.promptVersion).toBe(1);
+		expect(result.details?.committed).toBe(1);
 	});
 
 	it("é idempotente: re-execução substitui candidatos do job", async () => {
@@ -235,5 +236,159 @@ describe("createExtractionProcessor", () => {
 		expect(captured?.reasoningEffort).toBe("medium");
 		expect(captured?.cacheRetention).toBe("default");
 		expect(captured?.sessionId.length).toBeGreaterThan(0);
+	});
+});
+
+describe("Fase 4: validação, revisor e commit", () => {
+	type Messages = { content: { type: string; text?: string }[] }[];
+
+	/** Fake que distingue o prompt de extração do prompt do revisor. */
+	function makeSmartFake(
+		extractionResponse: string,
+		reviewResponse?: string | (() => { content: { type: string; text: string }[] }),
+	) {
+		return {
+			provider: "fake",
+			id: "fake-model",
+			complete: async (messages: Messages) => {
+				const text = messages
+					.map((m) => m.content.map((c) => c.text ?? "").join(""))
+					.join("");
+				if (text.includes("Revise esta memória candidata")) {
+					if (typeof reviewResponse === "function") return reviewResponse();
+					return { content: [{ type: "text", text: reviewResponse ?? '{"action":"accept","reason":"ok"}' }] };
+			}
+			return { content: [{ type: "text", text: extractionResponse }] };
+		},
+	};
+	}
+
+	const candidateJson = (over: Record<string, unknown> = {}, evidenceIds: string[] = []) =>
+		JSON.stringify({
+			memories: [
+				{
+					action: "create",
+					context: "ctx-f4",
+					type: "gotchas",
+					scope: "project",
+					title: "Bug de cache",
+					summary: "Cache invalida errado",
+					content: "A invalidação do cache acontecia depois da leitura.",
+					confidence: 0.8,
+					evidence_ids: evidenceIds,
+					...over,
+				},
+			],
+		});
+
+	async function runOnce(
+		proj: string,
+		buildResponse: (evidenceId: string) => string,
+		reviewResponse?: string | (() => { content: { type: string; text: string }[] }),
+	) {
+		const { evidenceId } = makeEpisodeWithEvidence(proj);
+		const jobId = pipeline.createJob(proj, "tokens");
+		const commits: { title: string | null; context: string }[] = [];
+		const model = makeSmartFake(buildResponse(evidenceId), reviewResponse);
+		const processor = createExtractionProcessor({
+			getModel: async () => model,
+			getRelatedMemories: async () => "",
+			findExistingMemory: async () => null,
+			commitMemory: async (c) => {
+				commits.push({ title: c.title, context: c.context });
+				return { ok: true };
+			},
+		});
+		const job = pipeline.getJob(jobId)!;
+		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
+		const result = await processor(pipeline, job, selection);
+		const candidates = pipeline.listCandidatesByJob(jobId);
+		return { result, candidates, commits, jobId };
+	}
+
+	it("auto-accept commita e marca committed", async () => {
+		const { result, candidates, commits } = await runOnce(
+			"proj-f4-accept",
+			(evId) => candidateJson({}, [evId]),
+		);
+		expect(result.details?.committed).toBe(1);
+		expect(commits.length).toBe(1);
+		expect(candidates[0].status).toBe("committed");
+	});
+
+	it("rejeição determinística (conf 0.4) → rejected sem commit", async () => {
+		const { result, candidates, commits } = await runOnce(
+			"proj-f4-reject",
+			(evId) => candidateJson({ confidence: 0.4 }, [evId]),
+		);
+		expect(result.details?.rejected).toBe(1);
+		expect(commits.length).toBe(0);
+		expect(candidates[0].status).toBe("rejected");
+		expect(candidates[0].rejectionReason).toContain("confidence");
+	});
+
+	it("_rules → revisor; accept → committed", async () => {
+		const { result, candidates, commits } = await runOnce(
+			"proj-f4-review",
+			(evId) => candidateJson({ type: "_rules" }, [evId]),
+			'{"action":"accept","reason":"regra durável"}',
+		);
+		expect(result.details?.reviewed).toBe(1);
+		expect(commits.length).toBe(1);
+		expect(candidates[0].status).toBe("committed");
+	});
+
+	it("revisor modify → commit com correções", async () => {
+		const { commits } = await runOnce(
+			"proj-f4-modify",
+			(evId) => candidateJson({ type: "_rules" }, [evId]),
+			'{"action":"modify","reason":"título melhor","modified":{"title":"Regra: invalidação antes da leitura"}}',
+		);
+		expect(commits[0].title).toBe("Regra: invalidação antes da leitura");
+	});
+
+	it("revisor reject → rejected sem commit", async () => {
+		const { result, candidates, commits } = await runOnce(
+			"proj-f4-rev-reject",
+			(evId) => candidateJson({ type: "_rules" }, [evId]),
+			'{"action":"reject","reason":"não é regra, é caso pontual"}',
+		);
+		expect(result.details?.rejected).toBe(1);
+		expect(commits.length).toBe(0);
+		expect(candidates[0].status).toBe("rejected");
+		expect(candidates[0].rejectionReason).toContain("caso pontual");
+	});
+
+	it("revisor indisponível → candidato fica pending", async () => {
+		const { result, candidates, commits } = await runOnce(
+			"proj-f4-pending",
+			(evId) => candidateJson({ type: "_rules" }, [evId]),
+			() => {
+				throw new Error("revisor fora do ar");
+			},
+		);
+		expect(result.details?.pending).toBe(1);
+		expect(commits.length).toBe(0);
+		expect(candidates[0].status).toBe("pending");
+	});
+
+	it("falha no commit → candidato fica pending com erro", async () => {
+		const proj = "proj-f4-commitfail";
+		const { evidenceId } = makeEpisodeWithEvidence(proj);
+		const jobId = pipeline.createJob(proj, "tokens");
+		const model = makeSmartFake(candidateJson({}, [evidenceId]));
+		const processor = createExtractionProcessor({
+			getModel: async () => model,
+			getRelatedMemories: async () => "",
+			findExistingMemory: async () => null,
+			commitMemory: async () => ({ ok: false, error: "índice quebrado" }),
+		});
+		const job = pipeline.getJob(jobId)!;
+		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
+		const result = await processor(pipeline, job, selection);
+		const candidates = pipeline.listCandidatesByJob(jobId);
+		expect(result.details?.pending).toBe(1);
+		expect(candidates[0].status).toBe("pending");
+		expect(candidates[0].rejectionReason).toContain("índice quebrado");
 	});
 });

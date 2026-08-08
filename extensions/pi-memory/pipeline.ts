@@ -910,6 +910,13 @@ export class PipelineDB {
 		return Number(row.n);
 	}
 
+	/** Atualiza status (e motivo de rejeição) de um candidato. */
+	updateCandidateStatus(id: string, status: string, rejectionReason?: string | null): void {
+		this.requireDb()
+			.prepare("UPDATE candidates SET status = ?, rejection_reason = ? WHERE id = ?")
+			.run(status, rejectionReason ?? null, id);
+	}
+
 	/** Conta jobs, opcionalmente filtrado por projeto e/ou status. */
 	countJobs(projectId?: string, status?: JobStatus): number {
 		const clauses: string[] = [];
