@@ -495,7 +495,7 @@ export default async function (pi: Pi): Promise<void> {
 	// ── Comando /doctor ─────────────────────────────
 	pi.registerCommand("doctor", {
 		description:
-			"🧑⚕️ Diagnóstico de dependências das extensões (pacotes npm, binários, sandbox, web search). Ex: /doctor",
+			"Diagnóstico de dependências das extensões (pacotes npm, binários, sandbox, web search). Ex: /doctor",
 		handler: async () => {
 			await buildReport(true);
 		},
