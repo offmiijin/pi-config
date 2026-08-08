@@ -211,6 +211,38 @@ npx vitest run
 - **ripgrep** (`apt install ripgrep`) — para tool grep
 - Linux com `kernel.unprivileged_userns_clone=1`
 
+## Portabilidade (Linux)
+
+O sandbox funciona em qualquer distro Linux (Debian/Ubuntu, Fedora/RHEL,
+Arch, openSUSE, Alpine/musl) sem configuração extra:
+
+- **Paths de sistema detectados por distro** (`portability.ts`): bases
+  `/usr`, `/bin`, `/lib` + condicionais: `/lib64` (Fedora/RHEL),
+  `/lib32`/`/libx32` (multilib), `/nix` + `/etc/static` (nix),
+  `/etc/ssl`/`/etc/ca-certificates` (TLS). Nenhum path fixo de distro.
+- **`/etc` seletivo**: inclui `ld.so.cache`/`ld.so.conf` quando presentes
+  (Debian/Ubuntu/Fedora usam cache do linker — sem ele, libs podem não
+  resolver), além de `gitconfig`, `localtime`, `hostname`.
+- **landlock-exec multi-arquitetura**: o runtime procura
+  `landlock-exec-<arch>` (ex: `landlock-exec-x86_64`, `landlock-exec-aarch64`,
+  `landlock-exec-riscv64`) e cai para `landlock-exec` (legado) e
+  `gen-seccomp/target/release/` (dev).
+  **Nota de portabilidade**: o binário pré-compilado é glibc-dinâmico
+  (requer GLIBC >= 2.34). Em distros musl (Alpine) ou com glibc antiga ele
+  não executa — o doctor detecta via `--probe-abi` e reporta aviso.
+  Recompile no próprio alvo (`./build.sh`) ou cross-compile estático
+  (`TARGET=x86_64-unknown-linux-musl ./build.sh`, requer toolchain musl).
+- **seccomp.bpf universal**: um ÚNICO filtro cobre x86_64 + aarch64 +
+  riscv64 (libseccomp resolve os números de syscall de cada arquitetura;
+  syscalls inexistentes viram no-op). Se `seccomp-<arch>.bpf` existir,
+  é preferido.
+- **User namespaces**: probe em `session_start` (`unshare --user true`)
+  — aviso não-bloqueante se indisponíveis (bwrap falha → fail-closed).
+- **Build dos artefatos**: `gen-seccomp/build.sh` gera
+  `landlock-exec-<arch>` (nativo ou `TARGET=...` cross) e regenera o
+  `seccomp.bpf` universal. Cross-compile requer rustup target + cross
+  gcc + libseccomp do alvo.
+
 ## Limitações
 
 - Linux apenas (bwrap depende de namespaces do kernel)
@@ -321,8 +353,7 @@ array `DEFAULT_BLOCKED`, recompile e regere o BPF:
 
 ```bash
 cd extensions/dev-sandbox/gen-seccomp
-cargo build --release
-./target/release/gen-seccomp > ../seccomp.bpf
+./build.sh   # regera landlock-exec-<arch> + seccomp.bpf universal
 ```
 
 ### Desabilitar completamente

@@ -47,6 +47,12 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
+import {
+  resolveLandlockExecPath,
+  resolveSeccompBpfPath,
+  probeUserNamespaces,
+  archTriplet,
+} from "./portability";
 import type { SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath } from "./bwrap-executor";
@@ -123,10 +129,22 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
+      // User namespaces — bwrap depende deles; aviso não-bloqueante
+      // (se falhar de verdade, o bwrap falha e as tools ficam fail-closed).
+      if (!probeUserNamespaces() && ctx.hasUI) {
+        ctx.ui.notify(
+          "⚠️ User namespaces parecem indisponíveis — bwrap pode falhar ao iniciar.\n" +
+          "Verifique kernel.unprivileged_userns_clone=1 (sysctl) ou o AppArmor do container.",
+          "warning",
+        );
+      }
+
       // ── Seccomp BPF ───────────────────────────
-      // Resolve caminho do BPF se não configurado explicitamente
+      // Seleciona por arquitetura: seccomp-<arch>.bpf → seccomp.bpf (universal,
+      // cobre x86_64 + aarch64 + riscv64 num único filtro).
       if (!config.seccomp.bpfPath) {
-        config.seccomp.bpfPath = join(EXT_DIR, "seccomp.bpf");
+        config.seccomp.bpfPath =
+          resolveSeccompBpfPath(EXT_DIR) ?? join(EXT_DIR, "seccomp.bpf");
       }
       if (config.seccomp.enabled && !existsSync(config.seccomp.bpfPath)) {
         if (ctx.hasUI) {
@@ -141,40 +159,37 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Landlock ────────────────────────────
+      // Landlock é a 4ª camada de defesa (após namespaces, capabilities, seccomp).
+      // Se o helper não existir ou o kernel não suportar, opera em modo degradado
+      // com aviso — NUNCA bloqueia o sandbox (as outras 3 camadas já protegem).
       if (config.landlock.enabled) {
-        const hostPath = join(EXT_DIR, "gen-seccomp", "target", "release", "landlock-exec");
-        if (!existsSync(hostPath)) {
-          if (config.landlock.required) {
-            if (ctx.hasUI) {
-              ctx.ui.notify(
-                `Landlock está habilitado e é obrigatório, mas o helper não foi encontrado.\n` +
-                `Caminho esperado: ${hostPath}\n` +
-                "Compile com: cd extensions/dev-sandbox/gen-seccomp && cargo build --release\n" +
-                'Ou desabilite: {"landlock": {"enabled": false}}',
-                "error",
-              );
-            }
-            return; // fail-closed: sandbox não ativa
+        // Helper da arquitetura atual (landlock-exec-<arch> → landlock-exec → target/release)
+        const hostPath = resolveLandlockExecPath(EXT_DIR);
+        if (!hostPath) {
+          const msg =
+            `Landlock helper não encontrado (procurado: landlock-exec-${archTriplet()} em ${EXT_DIR}).\n` +
+            "Landlock desabilitado — sandbox opera com namespaces + capabilities + seccomp.\n" +
+            "Compile com: cd extensions/dev-sandbox/gen-seccomp && ./build.sh";
+          if (config.landlock.required && ctx.hasUI) {
+            ctx.ui.notify(msg, "warning");
           }
           console.warn("[dev-sandbox] landlock-exec não encontrado — Landlock desabilitado.");
           config.landlock.enabled = false;
+          config.landlock.required = false;
         } else {
           const abi = probeLandlockAbi(hostPath);
           if (abi === null || abi < config.landlock.minAbi) {
-            if (config.landlock.required) {
-              if (ctx.hasUI) {
-                ctx.ui.notify(
-                  `Landlock requer ABI >= ${config.landlock.minAbi}, ` +
-                  `detectada: ${abi ?? "indisponível"}. Execução bloqueada.`,
-                  "error",
-                );
-              }
-              return; // fail-closed
+            const msg =
+              `Landlock requer ABI >= ${config.landlock.minAbi}, ` +
+              `detectada: ${abi ?? "indisponível"}. Landlock desabilitado.`;
+            if (config.landlock.required && ctx.hasUI) {
+              ctx.ui.notify(msg, "warning");
             }
             console.warn(
               `[dev-sandbox] Landlock ABI insuficiente (${abi ?? "N/A"} < ${config.landlock.minAbi}) — modo degradado.`
             );
             config.landlock.enabled = false;
+            config.landlock.required = false;
           } else {
             // Helper disponível e ABI compatível — registra para montagem
             setLandlockExecPath(hostPath);

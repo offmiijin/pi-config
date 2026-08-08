@@ -6,7 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
+
+// identifyProject aceita um runner de git injetado (2º parâmetro) — os
+// testes de remote usam fake, sem depender do binário git nem de mocking
+// de módulo (git init real falha dentro do sandbox: /dev/null bloqueado).
 
 import {
 	MEMORIES_ROOT,
@@ -55,22 +58,12 @@ describe("identifyProject", () => {
 	});
 
 	it("extracts project id from git remote origin (SSH format)", () => {
-		execSync("git init", { cwd: tmpDir, stdio: "pipe" });
-		execSync("git remote add origin git@github.com:user/my-project.git", {
-			cwd: tmpDir,
-			stdio: "pipe",
-		});
-		expect(identifyProject(tmpDir)).toBe("github.com_user_my-project");
+		expect(identifyProject(tmpDir, () => "git@github.com:user/my-project.git")).toBe("github.com_user_my-project");
 	});
 
 	it("extracts project id from git remote origin (HTTPS format)", () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-memory-https-"));
-		execSync("git init", { cwd: dir, stdio: "pipe" });
-		execSync("git remote add origin https://github.com/org/repo-name.git", {
-			cwd: dir,
-			stdio: "pipe",
-		});
-		expect(identifyProject(dir)).toBe("github.com_org_repo-name");
+		expect(identifyProject(dir, () => "https://github.com/org/repo-name.git")).toBe("github.com_org_repo-name");
 		rmSync(dir, { recursive: true, force: true });
 	});
 

@@ -117,15 +117,20 @@ describe("execInSandbox — degradação do seccomp", () => {
 
     const cfg = structuredClone(DEFAULT_CONFIG);
     cfg.seccomp.bpfPath = "/x/seccomp.bpf";
+    const cwd = mkdtempSync(join(tmpdir(), "sb-seccomp-"));
 
-    const promise = execInSandbox(cfg, { command: ["echo", "x"], cwd: "/tmp" });
-    child.emit("close", 0);
-    const res = await promise;
+    try {
+      const promise = execInSandbox(cfg, { command: ["echo", "x"], cwd });
+      child.emit("close", 0);
+      const res = await promise;
 
-    expect(res.exitCode).toBe(0);
-    expect(spawnMock).toHaveBeenCalledTimes(1);
-    expect(spawnMock.mock.calls[0][1]).not.toContain("--seccomp");
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+      expect(res.exitCode).toBe(0);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock.mock.calls[0][1]).not.toContain("--seccomp");
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

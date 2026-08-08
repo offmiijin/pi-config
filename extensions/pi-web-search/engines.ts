@@ -7,6 +7,8 @@
 
 export type { SearchResult, EngineResult } from "./engines/types";
 
+export { createAbortController } from "./engines/types";
+
 export { searchSearxng } from "./engines/searxng";
 export { searchTavily } from "./engines/tavily";
 export { searchExa } from "./engines/exa";

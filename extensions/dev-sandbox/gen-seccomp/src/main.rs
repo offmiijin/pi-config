@@ -104,11 +104,15 @@ fn build_filter(syscall_names: &[String]) -> Result<(), Box<dyn std::error::Erro
     // Filtro com default ALLOW — só bloqueia o que está explicitado
     let mut filter = ScmpFilterContext::new_filter(ScmpAction::Allow)?;
 
-    // Arquitetura x86_64 (a única relevante para o sandbox)
-    // A arquitetura nativa já está presente por padrão; no x86_64, Native == X8664,
-    // então apenas garantimos que X8664 esteja presente.
-    if !filter.is_arch_present(ScmpArch::X8664)? {
-        filter.add_arch(ScmpArch::X8664)?;
+    // Arquiteturas suportadas (números de syscall variam por arquitetura).
+    // Um único filtro cobre x86_64, aarch64 e riscv64: libseccomp resolve
+    // cada syscall pelo número correto de cada arquitetura (as regras são
+    // traduzidas automaticamente; syscalls inexistentes numa arch viram no-op).
+    // A arquitetura nativa já está presente por padrão.
+    for arch in [ScmpArch::X8664, ScmpArch::Aarch64, ScmpArch::Riscv64] {
+        if !filter.is_arch_present(arch)? {
+            filter.add_arch(arch)?;
+        }
     }
 
     // Ação para arquitetura não reconhecida: matar processo
@@ -130,7 +134,7 @@ fn build_filter(syscall_names: &[String]) -> Result<(), Box<dyn std::error::Erro
                 blocked += 1;
             }
             Err(_) => {
-                eprintln!("gen-seccomp: aviso — syscall '{name}' não encontrada na tabela x86_64");
+                eprintln!("gen-seccomp: aviso — syscall '{name}' não encontrada na tabela de syscalls");
                 not_found += 1;
             }
         }
