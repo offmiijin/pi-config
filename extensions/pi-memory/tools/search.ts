@@ -10,7 +10,7 @@ import { SearchSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 
 /** Formata resultados do índice (BM25) para o modelo. */
-function formatIndexResults(results: IndexSearchResult[]): string {
+export function formatIndexResults(results: IndexSearchResult[]): string {
 	const lines: string[] = [`Found ${results.length} result(s):`, ""];
 	for (const r of results) {
 		lines.push(`  memories/${r.path} (${r.confidence}, ${r.updated})`);
