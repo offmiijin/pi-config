@@ -287,6 +287,40 @@ export interface JobRecord {
 	details: string | null;
 }
 
+/** Dados para inserir um candidato (memória proposta pelo modelo). */
+export interface NewCandidate {
+	jobId: string;
+	action: string;
+	context: string;
+	type: string | null;
+	scope: string | null;
+	title: string | null;
+	summary: string | null;
+	content: string | null;
+	confidence: number | null;
+	evidenceIds: string[];
+	supersedes: string | null;
+	status: string;
+}
+
+/** Registro completo de um candidato (linha da tabela candidates). */
+export interface CandidateRecord {
+	id: string;
+	jobId: string;
+	action: string;
+	context: string;
+	type: string | null;
+	scope: string | null;
+	title: string | null;
+	summary: string | null;
+	content: string | null;
+	confidence: number | null;
+	evidenceIds: string[];
+	supersedes: string | null;
+	status: string;
+	rejectionReason: string | null;
+}
+
 /** Campos atualizáveis de um job (whitelist — sem SQL dinâmico arbitrário). */
 export interface JobUpdatePatch {
 	status?: JobStatus;
@@ -355,6 +389,25 @@ function mapJobRow(row: Record<string, unknown>): JobRecord {
 		error: row.error === null ? null : String(row.error),
 		nextAttemptAt: row.next_attempt_at === null ? null : String(row.next_attempt_at),
 		details: row.details === null ? null : String(row.details),
+	};
+}
+
+function mapCandidateRow(row: Record<string, unknown>): CandidateRecord {
+	return {
+		id: String(row.id),
+		jobId: String(row.job_id),
+		action: String(row.action),
+		context: String(row.context),
+		type: row.type === null ? null : String(row.type),
+		scope: row.scope === null ? null : String(row.scope),
+		title: row.title === null ? null : String(row.title),
+		summary: row.summary === null ? null : String(row.summary),
+		content: row.content === null ? null : String(row.content),
+		confidence: row.confidence === null ? null : Number(row.confidence),
+		evidenceIds: JSON.parse(String(row.evidence_ids)) as string[],
+		supersedes: row.supersedes === null ? null : String(row.supersedes),
+		status: String(row.status),
+		rejectionReason: row.rejection_reason === null ? null : String(row.rejection_reason),
 	};
 }
 
@@ -666,13 +719,14 @@ export class PipelineDB {
 	}
 
 	/**
-	 * Completa um job de seleção em transação única: vincula os episódios ao
-	 * job (job_episodes), marca-os como selected e finaliza o job em 'done'
-	 * com o details de auditoria.
+	 * Completa um job em transação única: vincula os episódios ao job
+	 * (job_episodes), marca-os com o status terminal (selected para seleção,
+	 * processed para extração) e finaliza o job em 'done' com auditoria.
 	 */
-	completeJobWithSelection(
+	completeJobWithEpisodes(
 		jobId: string,
 		episodeIds: string[],
+		episodeStatus: EpisodeStatus,
 		details: Record<string, unknown> | null,
 	): void {
 		const db = this.requireDb();
@@ -684,7 +738,7 @@ export class PipelineDB {
 			const claim = db.prepare("UPDATE episodes SET status = ? WHERE id = ?");
 			for (const epId of episodeIds) {
 				link.run(jobId, epId);
-				claim.run(EPISODE_STATUS.SELECTED, epId);
+				claim.run(episodeStatus, epId);
 			}
 			db.prepare(
 				"UPDATE jobs SET status = ?, finished_at = ?, details = ?, error = NULL WHERE id = ?",
@@ -694,6 +748,15 @@ export class PipelineDB {
 			db.exec("ROLLBACK");
 			throw err;
 		}
+	}
+
+	/** Alias Fase 2: completa job de seleção (episódios → selected). */
+	completeJobWithSelection(
+		jobId: string,
+		episodeIds: string[],
+		details: Record<string, unknown> | null,
+	): void {
+		this.completeJobWithEpisodes(jobId, episodeIds, EPISODE_STATUS.SELECTED, details);
 	}
 
 	/** Menor next_attempt_at entre retries pendentes do projeto (ms) ou null. */
@@ -719,25 +782,39 @@ export class PipelineDB {
 		return row !== undefined;
 	}
 
-	/** Agregação de episódios elegíveis (normalized) do projeto. */
-	aggregateNormalizedEpisodes(projectId: string): { tokens: number; count: number } {
+	/** Agregação de episódios pendentes de extração (normalized + selected). */
+	aggregatePendingEpisodes(projectId: string): { tokens: number; count: number } {
 		const row = this.requireDb()
 			.prepare(
 				"SELECT COALESCE(SUM(token_estimate), 0) AS tokens, COUNT(*) AS n " +
-					"FROM episodes WHERE project_id = ? AND status = ?",
+					"FROM episodes WHERE project_id = ? AND status IN (?, ?)",
 			)
-			.get(projectId, EPISODE_STATUS.NORMALIZED) as { tokens: number; n: number };
+			.get(projectId, EPISODE_STATUS.NORMALIZED, EPISODE_STATUS.SELECTED) as {
+			tokens: number;
+			n: number;
+		};
 		return { tokens: Number(row.tokens), count: Number(row.n) };
 	}
 
 	/** Lista episódios por status do projeto (mais antigos primeiro). */
 	listEpisodesByStatus(projectId: string, status: EpisodeStatus, limit = 200): EpisodeRecord[] {
+		return this.listEpisodesByStatuses(projectId, [status], limit);
+	}
+
+	/** Lista episódios por múltiplos status do projeto (mais antigos primeiro). */
+	listEpisodesByStatuses(
+		projectId: string,
+		statuses: EpisodeStatus[],
+		limit = 200,
+	): EpisodeRecord[] {
+		if (statuses.length === 0) return [];
+		const placeholders = statuses.map(() => "?").join(", ");
 		const rows = this.requireDb()
 			.prepare(
-				"SELECT * FROM episodes WHERE project_id = ? AND status = ? " +
+				`SELECT * FROM episodes WHERE project_id = ? AND status IN (${placeholders}) ` +
 					"ORDER BY settled_at ASC LIMIT ?",
 			)
-			.all(projectId, status, limit) as Record<string, unknown>[];
+			.all(projectId, ...statuses, limit) as Record<string, unknown>[];
 		return rows.map(mapEpisodeRow);
 	}
 
@@ -762,6 +839,75 @@ export class PipelineDB {
 			)
 			.run(JOB_STATUS.QUEUED);
 		return Number(result.changes);
+	}
+
+	/**
+	 * Insere candidatos de um job em transação única. Idempotente: candidatos
+	 * anteriores do MESMO job são removidos antes (retry de job não duplica).
+	 * Retorna o número inserido.
+	 */
+	insertCandidates(jobId: string, candidates: NewCandidate[]): number {
+		if (candidates.length === 0) return 0;
+		const db = this.requireDb();
+		db.exec("BEGIN");
+		try {
+			db.prepare("DELETE FROM candidates WHERE job_id = ?").run(jobId);
+			const stmt = db.prepare(
+				`INSERT INTO candidates
+				   (id, job_id, action, context, type, scope, title, summary, content,
+				    confidence, evidence_ids, supersedes, status)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			);
+			for (const c of candidates) {
+				stmt.run(
+					newPipelineId("cand_"),
+					c.jobId,
+					c.action,
+					c.context,
+					c.type,
+					c.scope,
+					c.title,
+					c.summary,
+					c.content,
+					c.confidence,
+					JSON.stringify(c.evidenceIds),
+					c.supersedes,
+					c.status,
+				);
+			}
+			db.exec("COMMIT");
+			return candidates.length;
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Lista candidatos de um job (ordem de inserção). */
+	listCandidatesByJob(jobId: string): CandidateRecord[] {
+		const rows = this.requireDb()
+			.prepare("SELECT * FROM candidates WHERE job_id = ? ORDER BY rowid")
+			.all(jobId) as Record<string, unknown>[];
+		return rows.map(mapCandidateRow);
+	}
+
+	/** Conta candidatos, opcionalmente por job e/ou status. */
+	countCandidates(jobId?: string, status?: string): number {
+		const clauses: string[] = [];
+		const params: (string | number)[] = [];
+		if (jobId) {
+			clauses.push("job_id = ?");
+			params.push(jobId);
+		}
+		if (status) {
+			clauses.push("status = ?");
+			params.push(status);
+		}
+		const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+		const row = this.requireDb()
+			.prepare(`SELECT COUNT(*) AS n FROM candidates${where}`)
+			.get(...params) as { n: number };
+		return Number(row.n);
 	}
 
 	/** Conta jobs, opcionalmente filtrado por projeto e/ou status. */

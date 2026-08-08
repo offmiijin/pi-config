@@ -60,6 +60,17 @@ import {
 } from "./pipeline.ts";
 import { normalizeEpisode } from "./evidence.ts";
 import { PipelineWorker, maybeCreateJob } from "./worker.ts";
+import {
+	EXTRACTION_MODEL_ID,
+	EXTRACTION_MODEL_PROVIDER,
+} from "./config.ts";
+import { formatExistingMemories } from "./extractor.ts";
+import {
+	createExtractionProcessor,
+	type CompletionResponse,
+	type ExtractionModelRef,
+	type ModelRegistryLike,
+} from "./processor.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -96,6 +107,47 @@ export default function (pi: ExtensionAPI) {
 	// Worker assíncrono (Fase 2): consome jobs do projeto atual. Null se o
 	// pipeline não abriu — a fila espera a próxima sessão.
 	let worker: PipelineWorker | null = null;
+	// Registry de modelos capturado dos event handlers — o processor de
+	// extração resolve o modelo FIXO de config.ts em runtime (não herda o
+	// modelo interativo da sessão).
+	let extractionModelRegistry: ModelRegistryLike | null = null;
+
+	// Fase 3: resolução do modelo de extração + contexto de memórias
+	// relacionadas (FTS5). Melhor-esforço — falha degrada o prompt, não o job.
+	const getModel = async (): Promise<ExtractionModelRef | null> => {
+		const registry = extractionModelRegistry;
+		if (!registry) return null;
+		const model = registry.find(EXTRACTION_MODEL_PROVIDER, EXTRACTION_MODEL_ID);
+		if (!model) return null;
+		if (!registry.hasConfiguredAuth(model)) return null;
+		return {
+			provider: EXTRACTION_MODEL_PROVIDER,
+			id: EXTRACTION_MODEL_ID,
+			complete: (messages, opts) =>
+				registry.complete(model, { messages }, opts) as unknown as Promise<CompletionResponse>,
+		};
+	};
+
+	const getRelatedMemories = async (projectId: string, terms: string[]): Promise<string> => {
+		const index = state.index;
+		if (!index?.isOpen || index.needsRebuild || terms.length === 0) return "";
+		try {
+			const results = index.search({ terms, scope: "all", projectId, limit: 8 });
+			return formatExistingMemories(
+				results.map((r) => ({
+					scope: r.scope,
+					type: r.type,
+					context: r.context,
+					confidence: r.confidence,
+					title: r.title,
+					summary: r.summary,
+					snippet: r.snippet,
+				})),
+			);
+		} catch {
+			return "";
+		}
+	};
 
 	pi.on("tool_result", async (event) => {
 		const e = event as unknown as {
@@ -120,6 +172,7 @@ export default function (pi: ExtensionAPI) {
 
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		state.currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
+		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
 
 		// Índice SQLite/FTS5: abre + sync incremental (rebuild automático se
 		// banco novo/schema antigo). Falha de índice não derruba a sessão —
@@ -154,12 +207,16 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] pipeline indisponível: ${(err as Error).message}`);
 		}
 
-		// Fase 2: worker assíncrono. Recupera jobs presos (crash/reload) e
-		// inicia o consumer do projeto atual. Falha não derruba a sessão.
+		// Fase 2/3: worker assíncrono com o processor de extração real.
+		// Recupera jobs presos (crash/reload) e inicia o consumer do projeto
+		// atual. Falha não derruba a sessão.
 		try {
 			if (pipeline) {
 				pipeline.recoverStuckJobs();
-				worker = new PipelineWorker(pipeline);
+				worker = new PipelineWorker(pipeline, {
+					processor: createExtractionProcessor({ getModel, getRelatedMemories }),
+					includeClaimed: true,
+				});
 				worker.setProject(state.projectId);
 				worker.start();
 			}
@@ -190,6 +247,7 @@ export default function (pi: ExtensionAPI) {
 		state.projectId = nextProjectId;
 		// Worker segue aberto entre projetos; passa a consumir o novo.
 		worker?.setProject(nextProjectId);
+		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
 
 		// Sincroniza o índice para o novo projeto (global + projeto novo).
 		// Falha no sync não derruba a sessão: fecha o índice (estado

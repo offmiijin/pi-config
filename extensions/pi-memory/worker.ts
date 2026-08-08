@@ -57,6 +57,11 @@ export interface JobExecutionResult {
 	retryable?: boolean;
 	error?: string;
 	details?: Record<string, unknown>;
+	/**
+	 * Status terminal dos episódios no sucesso: 'selected' (seleção, Fase 2)
+	 * ou 'processed' (extração, Fase 3). Default: 'selected'.
+	 */
+	episodesStatus?: EpisodeStatus;
 }
 
 export type JobProcessor = (
@@ -69,6 +74,12 @@ export interface WorkerOptions {
 	processor?: JobProcessor;
 	maxAttempts?: number;
 	backoffMs?: number[];
+	/**
+	 * Inclui episódios 'selected' (claimados por job anterior) na seleção —
+	 * usado pela extração (Fase 3) para processar o que a seleção (Fase 2)
+	 * deixou em espera. Default: false.
+	 */
+	includeClaimed?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -84,12 +95,15 @@ export interface WorkerOptions {
 export function selectEpisodesForJob(
 	pipeline: PipelineDB,
 	projectId: string,
-	opts: { targetTokens?: number; hardCap?: number } = {},
+	opts: { targetTokens?: number; hardCap?: number; includeClaimed?: boolean } = {},
 ): SelectedEpisodes {
 	const target = opts.targetTokens ?? DEFAULT_SELECTION_TOKEN_BUDGET;
 	const hardCap = opts.hardCap ?? SELECTION_HARD_CAP;
+	const statuses = opts.includeClaimed
+		? [EPISODE_STATUS.NORMALIZED, EPISODE_STATUS.SELECTED]
+		: [EPISODE_STATUS.NORMALIZED];
 
-	const episodes = pipeline.listEpisodesByStatus(projectId, EPISODE_STATUS.NORMALIZED);
+	const episodes = pipeline.listEpisodesByStatuses(projectId, statuses);
 	const picked: EpisodeRecord[] = [];
 	let total = 0;
 
@@ -138,7 +152,7 @@ export function maybeCreateJob(
 	const maxTokens = opts.maxEligibleTokens ?? DEFAULT_ELIGIBLE_TOKENS;
 	const maxEpisodes = opts.maxEligibleEpisodes ?? DEFAULT_ELIGIBLE_EPISODES;
 
-	const { tokens, count } = pipeline.aggregateNormalizedEpisodes(projectId);
+	const { tokens, count } = pipeline.aggregatePendingEpisodes(projectId);
 
 	let reason: string | null = null;
 	if (force) {
@@ -171,6 +185,7 @@ export async function selectionOnlyProcessor(
 ): Promise<JobExecutionResult> {
 	return {
 		ok: true,
+		episodesStatus: EPISODE_STATUS.SELECTED,
 		details: {
 			phase: "selection",
 			episodes: selection.episodeIds.length,
@@ -199,12 +214,14 @@ export class PipelineWorker {
 	// entre o fim do drain e o início da espera.
 	private wakeResolve: (() => void) | null = null;
 	private wakePending = false;
+	private includeClaimed: boolean;
 
 	constructor(pipeline: PipelineDB, opts: WorkerOptions = {}) {
 		this.pipeline = pipeline;
 		this.processor = opts.processor ?? selectionOnlyProcessor;
 		this.maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 		this.backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
+		this.includeClaimed = opts.includeClaimed ?? false;
 	}
 
 	get isRunning(): boolean {
@@ -305,7 +322,9 @@ export class PipelineWorker {
 			startedAt: new Date().toISOString(),
 		});
 
-		const selection = selectEpisodesForJob(this.pipeline, job.projectId);
+		const selection = selectEpisodesForJob(this.pipeline, job.projectId, {
+			includeClaimed: this.includeClaimed,
+		});
 
 		let result: JobExecutionResult;
 		try {
@@ -315,7 +334,13 @@ export class PipelineWorker {
 		}
 
 		if (result.ok) {
-			this.pipeline.completeJobWithSelection(job.id, selection.episodeIds, result.details ?? null);
+			const episodeStatus = result.episodesStatus ?? EPISODE_STATUS.SELECTED;
+			this.pipeline.completeJobWithEpisodes(
+				job.id,
+				selection.episodeIds,
+				episodeStatus,
+				result.details ?? null,
+			);
 			return;
 		}
 

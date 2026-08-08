@@ -97,3 +97,41 @@ export const ExtractSchema = Type.Object({
 		Type.String({ description: "Session file path (default: current session)" }),
 	),
 });
+
+/* ------------------------------------------------------------------ */
+/* Extração (Fase 3) — schema da resposta do modelo                    */
+/* ------------------------------------------------------------------ */
+
+export const ExtractionCandidateSchema = Type.Object({
+	action: Type.Union([
+		Type.Literal("create"),
+		Type.Literal("update"),
+		Type.Literal("supersede"),
+		Type.Literal("ignore"),
+	]),
+	context: Type.String({ minLength: 1 }),
+	type: Type.Optional(
+		Type.Union([
+			Type.Literal("_rules"),
+			Type.Literal("decisions"),
+			Type.Literal("gotchas"),
+			Type.Literal("lessons"),
+			Type.Literal("patterns"),
+		]),
+	),
+	scope: Type.Optional(Type.Union([Type.Literal("global"), Type.Literal("project")])),
+	title: Type.Optional(Type.String()),
+	summary: Type.Optional(Type.String()),
+	content: Type.Optional(Type.String()),
+	confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+	evidence_ids: Type.Optional(Type.Array(Type.String())),
+	supersedes: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	reason: Type.Optional(Type.String()),
+});
+
+export const ExtractionResponseSchema = Type.Object({
+	memories: Type.Array(ExtractionCandidateSchema),
+});
+
+export type ExtractionCandidate = (typeof ExtractionCandidateSchema)["static"];
+export type ExtractionResponse = (typeof ExtractionResponseSchema)["static"];
