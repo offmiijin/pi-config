@@ -46,6 +46,7 @@ import {
 	type ToolObservation,
 } from "./session.ts";
 import { formatMemoryIndexText, listMemoryIndex } from "./memory.ts";
+import { INDEX_DB_PATH, MemoryIndex } from "./memory-index.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -63,6 +64,7 @@ export default function (pi: ExtensionAPI) {
 		lastPromptedBucket: -1,
 		consecutiveEmptySearches: 0,
 		cachedIndexText: null,
+		index: null,
 	};
 
 	// Auto-extraction trigger state (used only by event handlers)
@@ -102,6 +104,18 @@ export default function (pi: ExtensionAPI) {
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		state.currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
 
+		// Índice SQLite/FTS5: abre + sync incremental (rebuild automático se
+		// banco novo/schema antigo). Falha de índice não derruba a sessão —
+		// memory_search cai no fallback rg.
+		try {
+			state.index = new MemoryIndex(INDEX_DB_PATH);
+			state.index.open();
+			state.index.syncIncremental(state.projectId);
+		} catch (err) {
+			state.index = null;
+			console.warn(`[pi-memory] índice indisponível: ${(err as Error).message} — busca via rg`);
+		}
+
 		// Reset auto-extraction trigger state
 		state.lastPromptedBucket = -1;
 		extractionDueCount = 0;
@@ -127,6 +141,15 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		state.projectId = nextProjectId;
+
+		// Sincroniza o índice para o novo projeto (global + projeto novo)
+		if (state.index?.isOpen) {
+			try {
+				state.index.syncIncremental(nextProjectId);
+			} catch (err) {
+				console.warn(`[pi-memory] índice não sincronizado p/ ${nextProjectId}: ${(err as Error).message}`);
+			}
+		}
 
 		// Reset trigger state on project change
 		state.lastPromptedBucket = -1;
@@ -336,6 +359,12 @@ export default function (pi: ExtensionAPI) {
 		// Resetting the guard here (not in before_agent_start) guarantees at most
 		// 1 reminder per USER turn, even with long tool turns.
 		saveReminderSent = false;
+	});
+
+	// ── Fecha o índice SQLite no fim da sessão (WAL checkpoint) ──
+	pi.on("session_shutdown", async () => {
+		state.index?.close();
+		state.index = null;
 	});
 
 	// ── Tools ──────────────────────────────────────────────────────────────

@@ -5,8 +5,23 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MAX_MEMORY_SEARCH_ATTEMPTS } from "../constants.ts";
 import { buildSearchPattern, searchMemories } from "../memory-search.ts";
+import type { IndexSearchResult } from "../memory-index.ts";
 import { SearchSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
+
+/** Formata resultados do índice (BM25) para o modelo. */
+function formatIndexResults(results: IndexSearchResult[]): string {
+	const lines: string[] = [`Found ${results.length} result(s):`, ""];
+	for (const r of results) {
+		lines.push(`  memories/${r.path} (${r.confidence}, ${r.updated})`);
+		lines.push(`    tipo: ${r.type} · contexto: ${r.context} · escopo: ${r.scope}`);
+		lines.push(`    título: ${r.title}`);
+		if (r.summary) lines.push(`    resumo: ${r.summary}`);
+		if (r.snippet) lines.push(`    trecho: ${r.snippet}`);
+		lines.push("");
+	}
+	return lines.join("\n");
+}
 
 export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -59,16 +74,51 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 					};
 				}
 
-				const results = searchMemories({
-					query: buildSearchPattern(params.query),
-					scope: params.scope ?? "all",
-					type: params.type,
-					minConfidence: params.min_confidence,
-					limit: params.limit,
-					projectId: state.projectId,
-				});
+				// Índice SQLite/FTS5 (primário); ripgrep como fallback quando o
+				// índice não está disponível (falha de abertura/sync no startup).
+				const indexReady =
+					state.index !== null && state.index.isOpen && !state.index.needsRebuild;
+				let count = 0;
+				let text = "";
+				if (indexReady) {
+					const results = state.index!.search({
+						terms: params.query,
+						scope: params.scope ?? "all",
+						type: params.type,
+						minConfidence: params.min_confidence,
+						limit: params.limit,
+						projectId: state.projectId,
+					});
+					count = results.length;
+					if (count > 0) text = formatIndexResults(results);
+				} else {
+					const results = searchMemories({
+						query: buildSearchPattern(params.query),
+						scope: params.scope ?? "all",
+						type: params.type,
+						minConfidence: params.min_confidence,
+						limit: params.limit,
+						projectId: state.projectId,
+					});
+					count = results.length;
+					if (count > 0) {
+						const lines: string[] = [`Found ${count} result(s):`, ""];
+						for (const r of results) {
+							const displayPath = r.file.replace(/^.*\/memories\//, "memories/");
+							lines.push(`  ${displayPath}`);
+							for (const l of r.lines.slice(0, 5)) {
+								lines.push(`    ${l}`);
+							}
+							if (r.lines.length > 5) {
+								lines.push(`    ... ${r.lines.length - 5} more matches`);
+							}
+							lines.push("");
+						}
+						text = lines.join("\n");
+					}
+				}
 
-				if (results.length === 0) {
+				if (count === 0) {
 					state.consecutiveEmptySearches++;
 					if (state.consecutiveEmptySearches >= MAX_MEMORY_SEARCH_ATTEMPTS) {
 						return {
@@ -80,10 +130,15 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 										"stop searching memories and continue searching the code instead.",
 								},
 							],
-							details: { count: 0, limit_reached: true, consecutive_empty: state.consecutiveEmptySearches },
+							details: {
+								count: 0,
+								limit_reached: true,
+								consecutive_empty: state.consecutiveEmptySearches,
+							},
 						};
 					}
-					const remaining = MAX_MEMORY_SEARCH_ATTEMPTS - state.consecutiveEmptySearches;
+					const remaining =
+						MAX_MEMORY_SEARCH_ATTEMPTS - state.consecutiveEmptySearches;
 					return {
 						content: [
 							{
@@ -99,24 +154,9 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 				// Found results — reset empty-search counter (can keep searching)
 				state.consecutiveEmptySearches = 0;
 
-				// Format results as text for the LLM
-				const lines: string[] = [`Found ${results.length} result(s):`, ""];
-				for (const r of results) {
-					// Show relative path from MEMORIES_ROOT
-					const displayPath = r.file.replace(/^.*\/memories\//, "memories/");
-					lines.push(`  ${displayPath}`);
-					for (const l of r.lines.slice(0, 5)) {
-						lines.push(`    ${l}`);
-					}
-					if (r.lines.length > 5) {
-						lines.push(`    ... ${r.lines.length - 5} more matches`);
-					}
-					lines.push("");
-				}
-
 				return {
-					content: [{ type: "text", text: lines.join("\n") }],
-					details: { count: results.length, results },
+					content: [{ type: "text", text }],
+					details: { count, engine: indexReady ? "sqlite" : "rg" },
 				};
 			} catch (e: unknown) {
 				const msg = (e as Error).message ?? String(e);

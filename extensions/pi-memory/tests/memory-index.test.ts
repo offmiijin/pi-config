@@ -696,3 +696,100 @@ describe("MemoryIndex search (Fase 3)", () => {
 		expect(paths(search(["alterado"]))).not.toContain(relFile);
 	});
 });
+
+// ── Sync incremental (Fase 4) ───────────────────────────────────────────────
+
+describe("MemoryIndex syncIncremental (Fase 4)", () => {
+	let root: string;
+	let dbDir: string;
+	let dbPath: string;
+	let proj: string;
+	let otherProj: string;
+	let idx: MemoryIndex;
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), "pi-memory-syncinc-root-"));
+		dbDir = mkdtempSync(join(tmpdir(), "pi-memory-syncinc-db-"));
+		dbPath = join(dbDir, "syncinc.sqlite");
+		proj = `__test_syncinc_${Date.now()}`;
+		otherProj = `${proj}_other`;
+
+		// Outro projeto (teste de isolamento) + projeto alvo + global
+		writeFixture(root, `projects/${otherProj}/gotchas/outro.md`, "type: gotchas\nconfidence: 0.7\n", "## [2026-08-01 10:00:00] Outro\n\nconteúdo do outro projeto\n");
+		writeFixture(root, "_global/_rules/regra.md", "type: _rules\nconfidence: 0.8\n", "## [2026-08-01 10:00:00] Regra\n\nregra global\n");
+		writeFixture(root, `projects/${proj}/gotchas/base.md`, "type: gotchas\nconfidence: 0.6\n", "## [2026-08-01 10:00:00] Base\n\nconteúdo base original\n");
+
+		idx = new MemoryIndex(dbPath, root);
+		idx.open();
+		idx.rebuild(otherProj); // indexa outro (fica no banco)
+		idx.rebuild(proj); // indexa regra + base; preserva outro
+	});
+
+	afterAll(() => {
+		idx.close();
+		rmSync(root, { recursive: true, force: true });
+		rmSync(dbDir, { recursive: true, force: true });
+	});
+
+	function search(terms: string[], opts: Partial<Parameters<MemoryIndex["search"]>[0]> = {}): ReturnType<MemoryIndex["search"]> {
+		return idx.search({ terms, projectId: proj, ...opts });
+	}
+
+	function paths(results: ReturnType<MemoryIndex["search"]>): string[] {
+		return results.map((r) => r.path);
+	}
+
+	it("banco novo: sync = rebuild (added = total)", () => {
+		const freshDb = join(dbDir, "fresh.sqlite");
+		const fresh = new MemoryIndex(freshDb, root);
+		fresh.open();
+		expect(fresh.needsRebuild).toBeTrue();
+		const s = fresh.syncIncremental(proj);
+		expect(s.added).toBe(2); // regra (global) + base (projeto)
+		expect(s.updated).toBe(0);
+		expect(s.removed).toBe(0);
+		expect(fresh.needsRebuild).toBeFalse();
+		// Sem mudanças depois — segundo sync é no-op
+		const s2 = fresh.syncIncremental(proj);
+		expect(s2.added).toBe(0);
+		expect(s2.updated).toBe(0);
+		expect(s2.removed).toBe(0);
+		fresh.close();
+	});
+
+	it("sem mudanças no disco: no-op", () => {
+		const s = idx.syncIncremental(proj);
+		expect(s).toEqual({ added: 0, updated: 0, removed: 0, skipped: 0 });
+	});
+
+	it("arquivo novo no disco é adicionado e vira buscável", () => {
+		writeFixture(root, `projects/${proj}/lessons/nova.md`, "type: lessons\nconfidence: 0.6\n", "## [2026-08-02 10:00:00] Nova\n\nconteúdo totalmente novo aqui\n");
+		const s = idx.syncIncremental(proj);
+		expect(s.added).toBe(1);
+		expect(paths(search(["totalmente"]))).toContain(`projects/${proj}/lessons/nova.md`);
+	});
+
+	it("edição manual fora das tools (hash diverge) atualiza", () => {
+		writeFixture(root, `projects/${proj}/gotchas/base.md`, "type: gotchas\nconfidence: 0.6\n", "## [2026-08-01 10:00:00] Base editada\n\nconteúdo base ORIGINAL editado à mão\n");
+		const s = idx.syncIncremental(proj);
+		expect(s.updated).toBe(1);
+		expect(s.added).toBe(0);
+		// Conteúdo antigo sumiu da busca; novo apareceu
+		expect(paths(search(["original"]))).toContain(`projects/${proj}/gotchas/base.md`);
+		const oldHits = search(["original"]).filter((r) => r.path === `projects/${proj}/gotchas/base.md`);
+		// O termo "ORIGINAL editado à mão" — sem o termo antigo "conteúdo base original" como frase única
+		expect(oldHits.length).toBe(1);
+	});
+
+	it("arquivo deletado do disco é removido do índice", () => {
+		rmSync(join(root, `projects/${proj}/lessons/nova.md`), { force: true });
+		const s = idx.syncIncremental(proj);
+		expect(s.removed).toBe(1);
+		expect(paths(search(["totalmente"]))).not.toContain(`projects/${proj}/lessons/nova.md`);
+	});
+
+	it("não mexe em documentos de outros projetos", () => {
+		idx.syncIncremental(proj);
+		expect(docPaths(dbPath)).toContain(`projects/${otherProj}/gotchas/outro.md`);
+	});
+});

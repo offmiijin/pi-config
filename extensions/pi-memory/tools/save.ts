@@ -4,6 +4,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MEMORY_LANGUAGE_RULE } from "../constants.ts";
+import { readMemoryDocFromFile, relFromMemoriesRoot } from "../memory-index.ts";
 import { saveMemory } from "../memory.ts";
 import { SaveSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
@@ -48,6 +49,19 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 					content: [{ type: "text", text: `Error saving memory: ${result.error}` }],
 					details: result,
 				};
+			}
+
+			// Sincroniza o índice SQLite — falha de indexação NÃO reverte a escrita
+			// markdown (canônico); avisa e segue.
+			if (result.file && state.index?.isOpen) {
+				try {
+					const rel = relFromMemoriesRoot(result.file);
+					state.index.upsertDocument(readMemoryDocFromFile(result.file, rel));
+				} catch (err) {
+					console.warn(
+						`[pi-memory] save: índice não sincronizado (${result.file}): ${(err as Error).message}`,
+					);
+				}
 			}
 
 			const text =

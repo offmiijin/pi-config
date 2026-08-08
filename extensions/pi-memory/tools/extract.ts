@@ -8,6 +8,11 @@ import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MEMORIES_ROOT } from "../constants.ts";
 import { archiveSessionFile, getSessionFilePath, resetSessionFile } from "../session.ts";
+import {
+	readMemoryDocFromFile,
+	relFromMemoriesRoot,
+	type IndexDocument,
+} from "../memory-index.ts";
 import { saveMemory, summarizeExistingMemories } from "../memory.ts";
 import {
 	buildExtractionPrompt,
@@ -169,6 +174,8 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 			// 3. Save each memory — collects failures, doesn't abort on the first error
 			const saved: { context: string; action: string; error?: string }[] = [];
 			const failures: string[] = [];
+			// Acumula docs salvos para sincronizar o índice SQLite em lote
+			const docsToIndex: IndexDocument[] = [];
 			for (const mem of memories) {
 				try {
 					const result = saveMemory(state.projectId, {
@@ -190,11 +197,33 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 					});
 					if (result.action === "error") {
 						failures.push(`${mem.context}: ${result.error}`);
+					} else if (result.file) {
+						// Falha de indexação não reverte o save — segue e avisa
+						try {
+							docsToIndex.push(
+								readMemoryDocFromFile(result.file, relFromMemoriesRoot(result.file)),
+							);
+						} catch (err) {
+							console.warn(
+								`[pi-memory] extract: não leu ${result.file} p/ índice: ${(err as Error).message}`,
+							);
+						}
 					}
 				} catch (e: unknown) {
 					const msg = (e as Error).message ?? String(e);
 					saved.push({ context: mem.context, action: "error", error: msg });
 					failures.push(`${mem.context}: ${msg}`);
+				}
+			}
+
+			// Sincroniza o índice SQLite em lote (1 transação)
+			if (docsToIndex.length > 0 && state.index?.isOpen) {
+				try {
+					state.index.syncDocuments(docsToIndex);
+				} catch (err) {
+					console.warn(
+						`[pi-memory] extract: índice não sincronizado: ${(err as Error).message}`,
+					);
 				}
 			}
 

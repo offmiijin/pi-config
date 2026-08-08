@@ -4,6 +4,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { relFromMemoriesRoot } from "../memory-index.ts";
 import {
 	applyDecay,
 	findMemoryFile,
@@ -60,6 +61,8 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 				const supPath = moveToSupersedes(filePath, {
 					superseded_reason: reason,
 				});
+				// Sai do índice ativo (arquivo movido para .supersedes/)
+				state.index?.removeDocument(relFromMemoriesRoot(filePath));
 				return {
 					content: [
 						{
@@ -78,6 +81,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 				const supPath = moveToSupersedes(filePath, {
 					superseded_reason: reason,
 				});
+				state.index?.removeDocument(relFromMemoriesRoot(filePath));
 				return {
 					content: [
 						{
@@ -90,9 +94,11 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 			}
 
 			// Update confidence in place
+			const today = new Date().toISOString().slice(0, 10);
 			meta.confidence = newConf;
-			meta.updated = new Date().toISOString().slice(0, 10);
+			meta.updated = today;
 			writeFileSync(filePath, formatFrontmatter(meta) + body);
+			state.index?.updateConfidence(relFromMemoriesRoot(filePath), newConf, today);
 
 			return {
 				content: [

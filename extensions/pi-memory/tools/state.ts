@@ -6,6 +6,8 @@
  * stays as local variables in index.ts.
  */
 
+import type { MemoryIndex } from "../memory-index.ts";
+
 export interface ToolState {
 	projectId: string;
 	currentSessionHash: string;
@@ -15,4 +17,6 @@ export interface ToolState {
 	consecutiveEmptySearches: number;
 	/** Memory index cache in the system prompt (invalidated on writes). */
 	cachedIndexText: string | null;
+	/** Índice SQLite/FTS5 aberto na sessão (null se indisponível → fallback rg). */
+	index: MemoryIndex | null;
 }

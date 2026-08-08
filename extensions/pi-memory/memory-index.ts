@@ -20,7 +20,8 @@
  * Fase 2: sincronização de escrita (upsertDocument/removeDocument/syncDocuments/updateConfidence).
  * Fase 3: busca FTS5/BM25 (buildFtsQuery + search com pesos por coluna, boost
  *         de confiança/recência e snippet).
- * Fase 4 (pendente): sync incremental no startup por content_hash.
+ * Fase 4: sync incremental (syncIncremental) por content_hash — detecta
+ *         edição manual/deleção fora das tools.
  */
 
 import { createHash } from "node:crypto";
@@ -242,6 +243,19 @@ export interface RebuildStats {
 	dbPath: string;
 }
 
+export interface SyncStats {
+	added: number;
+	updated: number;
+	removed: number;
+	skipped: number;
+}
+
+/** Caminho relativo a MEMORIES_ROOT a partir de um path absoluto. */
+export function relFromMemoriesRoot(absPath: string): string {
+	const prefix = MEMORIES_ROOT + "/";
+	return absPath.startsWith(prefix) ? absPath.slice(prefix.length) : absPath;
+}
+
 export class MemoryIndex {
 	private db: Database | null = null;
 	private opened = false;
@@ -422,6 +436,80 @@ export class MemoryIndex {
 		db.query(
 			"UPDATE memory_documents SET confidence = ?, updated = ?, modified_at = ? WHERE path = ?",
 		).run(confidence, updated, new Date().toISOString(), path);
+	}
+
+	// ── Sincronização incremental (Fase 4) ────────────────────────────────────
+
+	/**
+	 * Cruza disco × banco por content_hash (global + projeto alvo).
+	 * - arquivo novo no disco → insere
+	 * - hash divergente (edição manual fora das tools) → atualiza
+	 * - path no banco sem arquivo em disco → remove
+	 * Banco novo/schema antigo (needsRebuild) → rebuild completo (mais barato
+	 * que diff parcial). Não mexe em docs de OUTROS projetos.
+	 */
+	syncIncremental(projectId: string): SyncStats {
+		const db = this.requireDb();
+
+		if (this.needsRebuild) {
+			const r = this.rebuild(projectId);
+			return { added: r.added, updated: 0, removed: r.removed, skipped: r.skipped };
+		}
+
+		const disk = new Map<string, IndexDocument>();
+		let skipped = 0;
+		for (const rel of listActiveMemoryFiles(projectId, this.memoriesRoot)) {
+			try {
+				disk.set(rel, readMemoryDocFromFile(join(this.memoriesRoot, rel), rel));
+			} catch (err) {
+				skipped++;
+				console.warn(`[pi-memory] sync: pulou ${rel}: ${(err as Error).message}`);
+			}
+		}
+
+		const existing = new Map(
+			(
+				db.query(
+					"SELECT path, content_hash FROM memory_documents WHERE scope = 'global' OR project_id = ?",
+				).all(projectId) as { path: string; content_hash: string }[]
+			).map((r) => [r.path, r.content_hash]),
+		);
+
+		const now = new Date().toISOString();
+		let added = 0;
+		let updated = 0;
+		db.exec("BEGIN");
+		try {
+			for (const [rel, doc] of disk) {
+				const hash = existing.get(rel);
+				if (hash === undefined) {
+					this.upsertDocAndFts(db, doc, now);
+					added++;
+				} else if (hash !== doc.contentHash) {
+					this.upsertDocAndFts(db, doc, now);
+					updated++;
+				}
+			}
+
+			let removed = 0;
+			for (const path of existing.keys()) {
+				if (disk.has(path)) continue;
+				const row = db
+					.query("SELECT id FROM memory_documents WHERE path = ?")
+					.get(path) as { id: number | bigint } | undefined;
+				if (!row) continue;
+				db.query("DELETE FROM memory_fts WHERE rowid = ?").run(row.id);
+				db.query("DELETE FROM memory_documents WHERE id = ?").run(row.id);
+				removed++;
+			}
+
+			db.exec("COMMIT");
+			this.restrictDbFiles();
+			return { added, updated, removed, skipped };
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
 	}
 
 	// ── Busca (Fase 3) ───────────────────────────────────────────────────────
