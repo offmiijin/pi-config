@@ -20,8 +20,8 @@
  *
  * Fase 1: abertura/schema/validação FTS5 + rebuild completo.
  * Fase 2: sincronização de escrita (upsertDocument/removeDocument/syncDocuments/updateConfidence).
- * Fase 3: busca FTS5/BM25 (buildFtsQuery + search com pesos por coluna, boost
- *         de confiança/recência e snippet).
+ * Fase 3: busca FTS5/BM25 (buildFtsQuery + search com pesos por coluna;
+ *         confiança/recência só desempatam; snippet).
  * Fase 4: sync incremental (syncIncremental) por content_hash — detecta
  *         edição manual/deleção fora das tools.
  */
@@ -209,7 +209,7 @@ export interface IndexSearchResult {
 	updated: string;
 	/** Trecho relevante (coluna body), vazio quando o corpo é vazio. */
 	snippet: string;
-	/** Maior = melhor (BM25 ponderado + boost confiança/recência). */
+	/** Maior = melhor (BM25 ponderado — apenas lexical; metadados não entram). */
 	score: number;
 }
 
@@ -606,9 +606,15 @@ export class MemoryIndex {
 	// ── Busca (Fase 3) ───────────────────────────────────────────────────────
 
 	/**
-	 * Busca FTS5/BM25 com filtros SQL. Score = -bm25 ponderado por coluna
-	 * (título > summary > tags > corpo) com boost pequeno de confiança e
-	 * recência — match lexical nunca perde para metadado.
+	 * Busca FTS5/BM25 com filtros SQL. Ordenação por relevância LEXICAL:
+	 * BM25 ponderado por coluna (título > summary > tags > corpo) decide o
+	 * ranking; confiança e recência entram SÓ como desempate (ORDER BY
+	 * secundário), nunca como penalidade aditiva no score — um match de
+	 * título antigo/confiança baixa vence um match de corpo recente/alta.
+	 *
+	 * Convenção FTS5: bm25() retorna NEGATIVO e menor (mais negativo) =
+	 * mais relevante. O campo exposto `score` = -bm25 (maior = melhor),
+	 * só para diagnóstico — o modelo não o consome.
 	 */
 	search(options: IndexSearchOptions): IndexSearchResult[] {
 		const db = this.requireDb();
@@ -653,17 +659,14 @@ export class MemoryIndex {
 				`SELECT d.path, d.scope, d.project_id, d.type, d.context, d.title, d.summary,
 				        d.confidence, d.updated,
 				        snippet(memory_fts, 3, '', '', '…', 24) AS snippet_text,
-				        -bm25(memory_fts, 8.0, 4.0, 2.0, 1.0)
-				          - 0.4 * (1.0 - d.confidence)
-				          - COALESCE(
-				              CASE WHEN d.updated = '' THEN 0.3
-				                   ELSE 0.3 * MIN(MAX((julianday('now') - julianday(d.updated)) / 90.0, 0.0), 1.0)
-				              END, 0.3
-				            ) AS score
+				        -bm25(memory_fts, 8.0, 4.0, 2.0, 1.0) AS score
 				 FROM memory_fts
 				 JOIN memory_documents d ON d.id = memory_fts.rowid
 				 WHERE memory_fts MATCH ? AND ${scopeSql}
-				 ORDER BY score DESC
+				 ORDER BY bm25(memory_fts, 8.0, 4.0, 2.0, 1.0) ASC,
+				          d.confidence DESC,
+				          d.updated DESC,
+				          d.path ASC
 				 LIMIT ?`,
 			)
 			.all(...params) as Record<string, unknown>[];

@@ -843,6 +843,132 @@ describe("MemoryIndex search (Fase 3)", () => {
 	});
 });
 
+// ── Ranking adversarial (#6) ───────────────────────────────────────────────
+
+describe("MemoryIndex ranking (Fase 6: lexical decide; metadado só desempata)", () => {
+	let root: string;
+	let dbDir: string;
+	let dbPath: string;
+	let proj: string;
+	let idx: MemoryIndex;
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), "pi-memory-rank-root-"));
+		dbDir = mkdtempSync(join(tmpdir(), "pi-memory-rank-db-"));
+		dbPath = join(dbDir, "rank.sqlite");
+		proj = `__test_rank_${Date.now()}`;
+
+		// Adversarial: match no TÍTULO, antigo e confiança baixa — deve vencer
+		// match no CORPO, recente e confiança alta (regressão do boost aditivo).
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/title-antigo.md`,
+			"type: gotchas\nconfidence: 0.5\nupdated: 2020-01-01\n",
+			"## [2020-01-01 10:00:00] needle exato no título\n\nconteúdo genérico\n",
+		);
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/body-novo.md`,
+			"type: gotchas\nconfidence: 0.9\nupdated: 2026-08-08\n",
+			"## [2026-08-08 10:00:00] Outra lição\n\nneedle aparece só no corpo\n",
+		);
+
+		// Empate lexical no corpo (mesmo texto/coluna) → confiança desempata.
+		const corpo = "## [2026-08-08 10:00:00] X\n\nneedle no corpo do documento\n";
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/corpo-velho.md`,
+			"type: gotchas\nconfidence: 0.5\nupdated: 2026-01-01\n",
+			corpo,
+		);
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/corpo-recente.md`,
+			"type: gotchas\nconfidence: 0.9\nupdated: 2026-08-08\n",
+			corpo,
+		);
+
+		// Empate lexical + confiança → updated desempata.
+		const tie = "## [2026-08-08 10:00:00] T\n\nneedle único de desempate\n";
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/tie-velho.md`,
+			"type: gotchas\nconfidence: 0.7\nupdated: 2020-05-05\n",
+			tie,
+		);
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/tie-novo.md`,
+			"type: gotchas\nconfidence: 0.7\nupdated: 2026-08-08\n",
+			tie,
+		);
+
+		// Irrelevante: recente e confiança alta, mas SEM o termo.
+		writeFixture(
+			root,
+			`projects/${proj}/gotchas/irrelevante.md`,
+			"type: gotchas\nconfidence: 0.95\nupdated: 2099-01-01\n",
+			"## [2099-01-01 10:00:00] Irrelevante\n\nnada a ver com nada\n",
+		);
+
+		idx = new MemoryIndex(dbPath, root);
+		idx.open();
+		idx.rebuild(proj);
+	});
+
+	afterAll(() => {
+		idx.close();
+		rmSync(root, { recursive: true, force: true });
+		rmSync(dbDir, { recursive: true, force: true });
+	});
+
+	function search(
+		terms: string[],
+		opts: Partial<Parameters<MemoryIndex["search"]>[0]> = {},
+	): ReturnType<MemoryIndex["search"]> {
+		return idx.search({ terms, projectId: proj, ...opts });
+	}
+
+	function paths(results: ReturnType<MemoryIndex["search"]>): string[] {
+		return results.map((r) => r.path);
+	}
+
+	it("match no título vence match no corpo mesmo com confiança/recência contra", () => {
+		const results = search(["needle"]);
+		const title = results.find((r) => r.path.includes("title-antigo.md"));
+		const body = results.find((r) => r.path.includes("body-novo.md"));
+		expect(results[0].path).toContain("title-antigo.md");
+		expect(title).toBeDefined();
+		expect(body).toBeDefined();
+		// score é lexical (-bm25): título (peso 8) > corpo (peso 1)
+		expect(title!.score).toBeGreaterThan(body!.score);
+	});
+
+	it("memória recente/confiança alta sem o termo não aparece", () => {
+		expect(paths(search(["needle"]))).not.toContain(
+			`projects/${proj}/gotchas/irrelevante.md`,
+		);
+	});
+
+	it("empate lexical desempata por confiança", () => {
+		const results = search(["needle"]);
+		const velho = results.findIndex((r) => r.path.includes("corpo-velho.md"));
+		const recente = results.findIndex((r) => r.path.includes("corpo-recente.md"));
+		expect(velho).toBeGreaterThanOrEqual(0);
+		expect(recente).toBeGreaterThanOrEqual(0);
+		expect(recente).toBeLessThan(velho);
+	});
+
+	it("empate lexical + confiança desempata por updated", () => {
+		const results = search(["needle"]);
+		const velho = results.findIndex((r) => r.path.includes("tie-velho.md"));
+		const novo = results.findIndex((r) => r.path.includes("tie-novo.md"));
+		expect(velho).toBeGreaterThanOrEqual(0);
+		expect(novo).toBeGreaterThanOrEqual(0);
+		expect(novo).toBeLessThan(velho);
+	});
+});
+
 // ── Sync incremental (Fase 4) ───────────────────────────────────────────────
 
 describe("MemoryIndex syncIncremental (Fase 4)", () => {
