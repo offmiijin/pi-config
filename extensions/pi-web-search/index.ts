@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { search, isSearxngReachable, validateProvider } from "./search";
 import { fetchPages } from "./fetch";
 import { registerWebAgent } from "./agent";
-import { getConfigSummary, setKey, getConfiguredProviders, getSearxngUrl } from "./config";
+import { getConfigSummary, setKey, getConfiguredProviders, getSearxngUrl, getSearxngKey } from "./config";
 
 export default function (pi: ExtensionAPI) {
 	// Aviso de startup — 1x por processo, só quando nada está funcionando
