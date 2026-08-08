@@ -5,17 +5,17 @@
  * MEMORIES_ROOT real nem no .index.sqlite de produção.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { expect } from "./expect-shim.ts";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Database } from "bun:sqlite";
+import { DatabaseSync } from "node:sqlite";
 
 import { ensureFileDir } from "../session.ts";
 import {
 	MemoryIndex,
 	SCHEMA_VERSION,
-	IndexDocument,
 	buildFtsQuery,
 	cleanBody,
 	hashContent,
@@ -23,6 +23,7 @@ import {
 	listActiveMemoryFiles,
 	readMemoryDocFromFile,
 } from "../memory-index.ts";
+import type { IndexDocument } from "../memory-index.ts";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -39,14 +40,14 @@ function writeFixture(root: string, relPath: string, fm: string, body: string): 
 	return relPath;
 }
 
-function openProbe(dbPath: string): Database {
-	return new Database(dbPath, { readonly: true });
+function openProbe(dbPath: string): DatabaseSync {
+	return new DatabaseSync(dbPath, { readOnly: true });
 }
 
 function tableNames(dbPath: string): string[] {
 	const probe = openProbe(dbPath);
 	try {
-		const rows = probe.query("SELECT name FROM sqlite_master").all() as { name: string }[];
+		const rows = probe.prepare("SELECT name FROM sqlite_master").all() as { name: string }[];
 		return rows.map((r) => r.name);
 	} finally {
 		probe.close();
@@ -56,7 +57,7 @@ function tableNames(dbPath: string): string[] {
 function docPaths(dbPath: string): string[] {
 	const probe = openProbe(dbPath);
 	try {
-		const rows = probe.query("SELECT path FROM memory_documents").all() as { path: string }[];
+		const rows = probe.prepare("SELECT path FROM memory_documents").all() as { path: string }[];
 		return rows.map((r) => r.path);
 	} finally {
 		probe.close();
@@ -286,7 +287,7 @@ describe("MemoryIndex", () => {
 
 		// FTS recebe as mesmas 4 linhas (rowid = doc id)
 		const probe = openProbe(dbPath);
-		const n = probe.query("SELECT count(*) AS c FROM memory_fts").get() as { c: number };
+		const n = probe.prepare("SELECT count(*) AS c FROM memory_fts").get() as { c: number };
 		expect(Number(n.c)).toBe(4);
 		probe.close();
 		idx.close();
@@ -345,8 +346,8 @@ describe("MemoryIndex", () => {
 		expect(idx.needsRebuild).toBeFalse();
 
 		// Corrompe a versão por fora
-		const raw = new Database(dbPath);
-		raw.query("UPDATE index_meta SET value = '999' WHERE key = 'schema_version'").run();
+		const raw = new DatabaseSync(dbPath);
+		raw.prepare("UPDATE index_meta SET value = '999' WHERE key = 'schema_version'").run();
 		raw.close();
 		idx.close();
 
@@ -398,8 +399,8 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 	function counts(): { docs: number; fts: number } {
 		const probe = openProbe(dbPath);
 		try {
-			const d = probe.query("SELECT count(*) AS c FROM memory_documents").get() as { c: number };
-			const f = probe.query("SELECT count(*) AS c FROM memory_fts").get() as { c: number };
+			const d = probe.prepare("SELECT count(*) AS c FROM memory_documents").get() as { c: number };
+			const f = probe.prepare("SELECT count(*) AS c FROM memory_fts").get() as { c: number };
 			return { docs: Number(d.c), fts: Number(f.c) };
 		} finally {
 			probe.close();
@@ -410,7 +411,7 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 		const probe = openProbe(dbPath);
 		try {
 			const row = probe
-				.query("SELECT title FROM memory_documents WHERE path = ?")
+				.prepare("SELECT title FROM memory_documents WHERE path = ?")
 				.get(path) as { title: string } | undefined;
 			return row?.title ?? "";
 		} finally {
@@ -449,7 +450,7 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 		const rel = `projects/${proj}/gotchas/a.md`;
 		const probe = openProbe(dbPath);
 		const before = probe
-			.query("SELECT id, created_at FROM memory_documents WHERE path = ?")
+			.prepare("SELECT id, created_at FROM memory_documents WHERE path = ?")
 			.get(rel) as { id: number; created_at: string };
 		probe.close();
 
@@ -464,7 +465,7 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 		expect(counts()).toEqual({ docs: 1, fts: 1 });
 		expect(docTitle(rel)).toBe("Memória A v2");
 		const after = openProbe(dbPath)
-			.query("SELECT id, created_at FROM memory_documents WHERE path = ?")
+			.prepare("SELECT id, created_at FROM memory_documents WHERE path = ?")
 			.get(rel) as { id: number; created_at: string };
 		expect(after.id).toBe(before.id);
 		expect(after.created_at).toBe(before.created_at);
@@ -507,11 +508,11 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 		const probe = openProbe(dbPath);
 		try {
 			const doc = probe
-				.query("SELECT confidence, updated FROM memory_documents WHERE path = ?")
+				.prepare("SELECT confidence, updated FROM memory_documents WHERE path = ?")
 				.get(rel) as { confidence: number; updated: string };
 			expect(doc.confidence).toBe(0.4);
 			expect(doc.updated).toBe("2026-08-09");
-			expect(Number((probe.query("SELECT count(*) AS c FROM memory_fts").get() as { c: number }).c)).toBe(2);
+			expect(Number((probe.prepare("SELECT count(*) AS c FROM memory_fts").get() as { c: number }).c)).toBe(2);
 		} finally {
 			probe.close();
 		}

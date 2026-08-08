@@ -2,7 +2,8 @@
  * pi-memory — Tests: memory-extract.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { expect } from "./expect-shim.ts";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

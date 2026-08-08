@@ -6,7 +6,8 @@
  * do pi — aqui testa-se o formatador isolado.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, it } from "node:test";
+import { expect } from "./expect-shim.ts";
 import { formatIndexResults } from "../tools/search.ts";
 import type { IndexSearchResult } from "../memory-index.ts";
 

@@ -4,11 +4,9 @@
  * O markdown continua sendo a fonte da verdade; o SQLite é um índice derivado,
  * descartável e reconstruível. Nenhuma operação de memória escreve pelo banco.
  *
- * Runtime: a extensão roda in-process no pi (BunJS) — `node:sqlite` NÃO existe
- * no Bun ("No such built-in module: node:sqlite"). Usa-se `bun:sqlite`, que
- * embute o mesmo SQLite com FTS5 habilitado e não adiciona dependência npm.
- * O acesso ao banco fica isolado nesta classe: trocar por `node:sqlite`
- * (caso pi migre para Node) é mudança pontual aqui.
+ * Runtime: a extensão roda in-process no pi. Com o pi sob Node, usa-se
+ * `node:sqlite` (nativo, sem dependência npm) — o SQLite embutido do Node
+ * vem com FTS5 habilitado. O acesso ao banco fica isolado nesta classe.
  *
  * Estrutura:
  *   memories/.index.sqlite            — banco único (global + todos os projetos)
@@ -27,7 +25,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
+import { DatabaseSync } from "node:sqlite";
 
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
 import { extractLastEntryTitle, parseFrontmatter } from "./memory.ts";
@@ -257,7 +255,7 @@ export function relFromMemoriesRoot(absPath: string): string {
 }
 
 export class MemoryIndex {
-	private db: Database | null = null;
+	private db: DatabaseSync | null = null;
 	private opened = false;
 	/** Banco novo ou schema antigo — precisa de rebuild antes de servir buscas. */
 	needsRebuild = false;
@@ -281,7 +279,7 @@ export class MemoryIndex {
 	open(): void {
 		if (this.isOpen) return;
 
-		const db = new Database(this.dbPath);
+		const db = new DatabaseSync(this.dbPath);
 		db.exec("PRAGMA journal_mode = WAL");
 		db.exec("PRAGMA busy_timeout = 5000");
 		db.exec("PRAGMA foreign_keys = ON");
@@ -296,9 +294,9 @@ export class MemoryIndex {
 			const msg = (err as Error).message ?? String(err);
 			if (/no such module: fts5/i.test(msg)) {
 				throw new Error(
-					"SQLite deste runtime não tem FTS5 compilado. Bun embute SQLite " +
-						"com FTS5 por padrão (bun:sqlite); se a extensão rodar em outro " +
-						"runtime, verifique o build do SQLite.",
+					"SQLite deste runtime não tem FTS5 compilado. Node embute SQLite " +
+						"com FTS5 habilitado por padrão (node:sqlite); se o binário do Node " +
+						"for customizado, verifique o SQLite compilado.",
 				);
 			}
 			throw err;
@@ -322,7 +320,7 @@ export class MemoryIndex {
 	getMeta(key: string): string | null {
 		const db = this.requireDb();
 		const row = db
-			.query("SELECT value FROM index_meta WHERE key = ?")
+			.prepare("SELECT value FROM index_meta WHERE key = ?")
 			.get(key) as { value: string } | null | undefined;
 		return row ? row.value : null;
 	}
@@ -337,7 +335,7 @@ export class MemoryIndex {
 		const files = listActiveMemoryFiles(projectId, this.memoriesRoot);
 		const now = new Date().toISOString();
 
-		const delFtsById = db.query("DELETE FROM memory_fts WHERE rowid = ?");
+		const delFtsById = db.prepare("DELETE FROM memory_fts WHERE rowid = ?");
 
 		let removed = 0;
 		let added = 0;
@@ -347,13 +345,13 @@ export class MemoryIndex {
 		try {
 			// Limpa global + projeto alvo (FTS primeiro — FK lógica por rowid).
 			const stale = db
-				.query("SELECT id FROM memory_documents WHERE scope = 'global' OR project_id = ?")
+				.prepare("SELECT id FROM memory_documents WHERE scope = 'global' OR project_id = ?")
 				.all(projectId) as { id: number | bigint }[];
 			for (const row of stale) {
 				delFtsById.run(row.id);
 				removed++;
 			}
-			db.query("DELETE FROM memory_documents WHERE scope = 'global' OR project_id = ?").run(
+			db.prepare("DELETE FROM memory_documents WHERE scope = 'global' OR project_id = ?").run(
 				projectId,
 			);
 
@@ -416,13 +414,13 @@ export class MemoryIndex {
 	removeDocument(path: string): void {
 		const db = this.requireDb();
 		const row = db
-			.query("SELECT id FROM memory_documents WHERE path = ?")
+			.prepare("SELECT id FROM memory_documents WHERE path = ?")
 			.get(path) as { id: number | bigint } | undefined;
 		if (!row) return;
 		db.exec("BEGIN");
 		try {
-			db.query("DELETE FROM memory_fts WHERE rowid = ?").run(row.id);
-			db.query("DELETE FROM memory_documents WHERE id = ?").run(row.id);
+			db.prepare("DELETE FROM memory_fts WHERE rowid = ?").run(row.id);
+			db.prepare("DELETE FROM memory_documents WHERE id = ?").run(row.id);
 			db.exec("COMMIT");
 		} catch (err) {
 			db.exec("ROLLBACK");
@@ -433,7 +431,7 @@ export class MemoryIndex {
 	/** Atualiza só metadados (confiança/updated) — corpo não mudou, FTS intocado. */
 	updateConfidence(path: string, confidence: number, updated: string): void {
 		const db = this.requireDb();
-		db.query(
+		db.prepare(
 			"UPDATE memory_documents SET confidence = ?, updated = ?, modified_at = ? WHERE path = ?",
 		).run(confidence, updated, new Date().toISOString(), path);
 	}
@@ -469,7 +467,7 @@ export class MemoryIndex {
 
 		const existing = new Map(
 			(
-				db.query(
+				db.prepare(
 					"SELECT path, content_hash FROM memory_documents WHERE scope = 'global' OR project_id = ?",
 				).all(projectId) as { path: string; content_hash: string }[]
 			).map((r) => [r.path, r.content_hash]),
@@ -495,11 +493,11 @@ export class MemoryIndex {
 			for (const path of existing.keys()) {
 				if (disk.has(path)) continue;
 				const row = db
-					.query("SELECT id FROM memory_documents WHERE path = ?")
+					.prepare("SELECT id FROM memory_documents WHERE path = ?")
 					.get(path) as { id: number | bigint } | undefined;
 				if (!row) continue;
-				db.query("DELETE FROM memory_fts WHERE rowid = ?").run(row.id);
-				db.query("DELETE FROM memory_documents WHERE id = ?").run(row.id);
+				db.prepare("DELETE FROM memory_fts WHERE rowid = ?").run(row.id);
+				db.prepare("DELETE FROM memory_documents WHERE id = ?").run(row.id);
 				removed++;
 			}
 
@@ -558,7 +556,7 @@ export class MemoryIndex {
 		params.push(limit);
 
 		const rows = db
-			.query(
+			.prepare(
 				`SELECT d.path, d.scope, d.project_id, d.type, d.context, d.title, d.summary,
 				        d.confidence, d.updated,
 				        snippet(memory_fts, 3, '', '', '…', 24) AS snippet_text,
@@ -594,7 +592,7 @@ export class MemoryIndex {
 
 	// ── Internos ────────────────────────────────────────────────────────────
 
-	private requireDb(): Database {
+	private requireDb(): DatabaseSync {
 		if (!this.db) throw new Error("MemoryIndex não está aberto — chame open() antes.");
 		return this.db;
 	}
@@ -603,9 +601,9 @@ export class MemoryIndex {
 	 * Upsert do documento relacional + recriação da linha FTS (delete+insert).
 	 * ON CONFLICT(path) preserva o id — a linha FTS mantém rowid = id do doc.
 	 */
-	private upsertDocAndFts(db: Database, doc: IndexDocument, now: string): void {
+	private upsertDocAndFts(db: DatabaseSync, doc: IndexDocument, now: string): void {
 		const res = db
-			.query(
+			.prepare(
 				`INSERT INTO memory_documents
 				   (path, scope, project_id, type, context, title, summary, tags_json,
 				    confidence, updated, content_hash, created_at, modified_at)
@@ -635,15 +633,15 @@ export class MemoryIndex {
 
 		// Upsert faz UPDATE: lastInsertRowid devolve o rowid da linha afetada.
 		const id = Number(res.lastInsertRowid) || this.docIdByPath(db, doc.path);
-			db.query("DELETE FROM memory_fts WHERE rowid = ?").run(id);
-			db.query(
+			db.prepare("DELETE FROM memory_fts WHERE rowid = ?").run(id);
+			db.prepare(
 				"INSERT INTO memory_fts (rowid, title, summary, tags, body) VALUES (?, ?, ?, ?, ?)",
 			).run(id, doc.title, doc.summary ?? "", doc.tags.join(" "), doc.body);
 	}
 
-	private docIdByPath(db: Database, path: string): number {
+	private docIdByPath(db: DatabaseSync, path: string): number {
 		const row = db
-			.query("SELECT id FROM memory_documents WHERE path = ?")
+			.prepare("SELECT id FROM memory_documents WHERE path = ?")
 			.get(path) as { id: number | bigint } | undefined;
 		if (!row) throw new Error(`Documento não encontrado no índice: ${path}`);
 		return Number(row.id);
@@ -655,7 +653,7 @@ export class MemoryIndex {
 
 	private setMeta(key: string, value: string): void {
 		this.requireDb()
-			.query(
+			.prepare(
 				"INSERT INTO index_meta (key, value) VALUES (?, ?) " +
 					"ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 			)

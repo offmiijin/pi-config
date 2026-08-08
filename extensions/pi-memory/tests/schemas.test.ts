@@ -2,7 +2,8 @@
  * pi-memory — Tests: schemas.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, it } from "node:test";
+import { expect } from "./expect-shim.ts";
 
 import {
 	DecaySchema,
