@@ -54,8 +54,6 @@ import { registerMemorySearch } from "./tools/search.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
 import type { ToolState } from "./tools/state.ts";
 
-// ── Extension ──────────────────────────────────────────────────────────────
-
 export default function (pi: ExtensionAPI) {
 	// Shared state between event handlers and tools (tools mutate via reference)
 	const state: ToolState = {
@@ -80,7 +78,6 @@ export default function (pi: ExtensionAPI) {
 	// Tool results buffer for the current turn (toolCallId → observation)
 	const toolResultsBuffer = new Map<string, ToolObservation>();
 
-	// ── Capture tool results during the turn ───────────────────────
 	pi.on("tool_result", async (event) => {
 		const e = event as unknown as {
 			toolCallId?: string;
@@ -96,7 +93,6 @@ export default function (pi: ExtensionAPI) {
 		});
 	});
 
-	// ── Session lifecycle ──────────────────────────────────────────────────
 	pi.on("session_start", async (_event, ctx) => {
 		state.projectId = identifyProject(ctx.cwd);
 		ensureDirectories(state.projectId);
@@ -116,18 +112,14 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] índice indisponível: ${(err as Error).message} — busca via rg`);
 		}
 
-		// Reset auto-extraction trigger state
 		state.lastPromptedBucket = -1;
 		extractionDueCount = 0;
-		// Reset memory search policy state
 		state.consecutiveEmptySearches = 0;
-		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
 		saveReminderSent = false;
 		// Reset session memory index cache
 		state.cachedIndexText = null;
-		// Reset turn dedup state
 		turnDedupState = createTurnDedupState();
 	});
 
@@ -162,22 +154,17 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Reset trigger state on project change
 		state.lastPromptedBucket = -1;
 		extractionDueCount = 0;
-		// Reset memory search policy state
 		state.consecutiveEmptySearches = 0;
-		// Reset save reminder state
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
 		saveReminderSent = false;
 		// Reset session memory index cache
 		state.cachedIndexText = null;
-		// Reset turn dedup state
 		turnDedupState = createTurnDedupState();
 	});
 
-	// ── Append observations at turn_end ────────────────────────────────────
 	pi.on("turn_end", async (event, ctx) => {
 		if (!state.projectId || !state.currentSessionHash) return;
 
@@ -186,7 +173,6 @@ export default function (pi: ExtensionAPI) {
 
 		const agentResponse = extractTextContent(assistantMsg.content);
 
-		// ── Turn dedup ──
 		// The harness can fire turn_end more than once for the SAME turn
 		// (observed in sessions with followUps: duplicated obs, inflated count,
 		// re-fired reminders/triggers). Dedup by event.turnIndex (unique index
@@ -261,7 +247,6 @@ export default function (pi: ExtensionAPI) {
 		const obs = formatObservation(obsNumber, userPrompt, toolResults, agentResponse);
 		appendFileSync(sessionFile, obs + "\n");
 
-		// ── Auto-extraction trigger ──
 		// Send a message to the LLM at each threshold crossing (50, 100, ...).
 		// Delivered via "nextTurn" (not followUp): no intra-turn delay, no
 		// extra cycle. lastPromptedBucket (monotonic) already guarantees 1x/threshold;
@@ -283,7 +268,6 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// ── Memory save reminder ──
 		// Turn changed code and passed the cooldown → remind the LLM to save
 		// durable learning directly via memory_save (without waiting for extract).
 		// Max 1x per USER turn: saveReminderSent guard is reset in
@@ -315,7 +299,6 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	// ── Inject extraction prompt + memory index at next user turn ───────────
 	pi.on("before_agent_start", async (event, ctx) => {
 		// NOTE: do NOT reset saveReminderSent here. before_agent_start also fires
 		// for extension-generated cycles (sendUserMessage), which
@@ -364,7 +347,6 @@ export default function (pi: ExtensionAPI) {
 		return { systemPrompt: withIndex(event.systemPrompt) };
 	});
 
-	// ── End of user prompt → allow a new reminder next turn ─────
 	pi.on("agent_settled", async (_event, _ctx) => {
 		// agent_settled = real end of the prompt (after retries/compaction/followUps).
 		// Resetting the guard here (not in before_agent_start) guarantees at most
@@ -372,13 +354,11 @@ export default function (pi: ExtensionAPI) {
 		saveReminderSent = false;
 	});
 
-	// ── Fecha o índice SQLite no fim da sessão (WAL checkpoint) ──
 	pi.on("session_shutdown", async () => {
 		state.index?.close();
 		state.index = null;
 	});
 
-	// ── Tools ──────────────────────────────────────────────────────────────
 	registerMemoryStatus(pi, state);
 	registerMemorySave(pi, state);
 	registerMemorySearch(pi, state);

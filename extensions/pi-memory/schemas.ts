@@ -4,8 +4,6 @@
 
 import { Type } from "typebox";
 
-// ── Helper: enum from string literals ─────────────────────────────────────
-
 /**
  * Creates a TypeBox union of literal string types.
  * Equivalent to StringEnum from @earendil-works/pi-ai.
@@ -13,8 +11,6 @@ import { Type } from "typebox";
 function StringEnum<T extends readonly string[]>(values: T) {
 	return Type.Union(values.map((v) => Type.Literal(v)));
 }
-
-// ── Reused enums ───────────────────────────────────────────────────────────
 
 export const MemoryTypeEnum = StringEnum(["_rules", "decisions", "gotchas", "lessons", "patterns"] as const);
 export type MemoryType = (typeof MemoryTypeEnum.static)[number];
@@ -27,8 +23,6 @@ export type SearchScope = (typeof SearchScopeEnum.static)[number];
 
 export const SaveModeEnum = StringEnum(["append", "consolidate"] as const);
 export type SaveMode = (typeof SaveModeEnum.static)[number];
-
-// ─── memory_save ──────────────────────────────────────────────────────────
 
 export const SaveSchema = Type.Object({
 	type: MemoryTypeEnum,
@@ -67,8 +61,6 @@ export const SaveSchema = Type.Object({
 	),
 });
 
-// ─── memory_search ────────────────────────────────────────────────────────
-
 export const SearchSchema = Type.Object({
 	query: Type.Array(
 		Type.String({ description: "Keyword to search for (OR semantics — any term matches)" }),
@@ -85,11 +77,7 @@ export const SearchSchema = Type.Object({
 	limit: Type.Optional(Type.Number({ description: "Max results (default 10)" })),
 });
 
-// ─── memory_status ────────────────────────────────────────────────────────
-
 export const StatusSchema = Type.Object({});
-
-// ─── memory_decay ─────────────────────────────────────────────────────────
 
 export const DecaySchema = Type.Object({
 	context: Type.String({ description: "Context key of the memory to decay" }),
@@ -103,8 +91,6 @@ export const DecaySchema = Type.Object({
 		Type.String({ description: "Why this memory is being decayed (PT-BR)" }),
 	),
 });
-
-// ─── memory_extract ───────────────────────────────────────────────────────
 
 export const ExtractSchema = Type.Object({
 	session_file: Type.Optional(

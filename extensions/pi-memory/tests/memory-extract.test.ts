@@ -352,8 +352,6 @@ describe("removeProcessedObservations", () => {
 	});
 });
 
-// ── Persisted summary (#4) ─────────────────────────────────────────────────
-
 describe("parseExtractionResult summary", () => {
 	it("accepts summary string", () => {
 		const json = JSON.stringify({

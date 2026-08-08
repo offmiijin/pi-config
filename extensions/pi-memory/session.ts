@@ -34,8 +34,6 @@ export function generateSessionHash(): string {
 		.slice(0, 12);
 }
 
-// ── Session observation helpers ────────────────────────────────────────────
-
 /**
  * Returns the path to the session file for a given project, date and hash.
  *
@@ -149,15 +147,11 @@ export function extractToolResultText(result: unknown): string {
 	if (Array.isArray(r.content)) {
 		return extractTextContent(r.content);
 	}
-	// Direct text field
 	if (typeof r.text === "string") return r.text;
-	// Bash-style output field
 	if (typeof r.output === "string") return r.output;
 
 	return "";
 }
-
-// ── Turn dedup (turn_end duplication guard) ─────────────────────────────────
 
 /**
  * Persistent state for turn dedup (reset per session).

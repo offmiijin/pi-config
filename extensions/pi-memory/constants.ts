@@ -12,8 +12,6 @@ import { existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
 /** Raiz das memórias — diretório do agente real (env/rebranding-aware). */
 export const MEMORIES_ROOT = join(getAgentDir(), "memories");
 export const OBSERVATION_THRESHOLD = 50;
@@ -47,8 +45,6 @@ export type MemoryType = (typeof MEMORY_TYPES)[number];
 /** Memory content language rule — memories are stored in PT-BR. */
 export const MEMORY_LANGUAGE_RULE =
 	"Write all memory content (title, content, tags) in PT-BR (Brazilian Portuguese).";
-
-// ── Project identification ─────────────────────────────────────────────────
 
 /**
  * Lê a URL do remote origin (git opcional).
@@ -94,8 +90,6 @@ export function identifyProject(
 	const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 12);
 	return `__unmanaged_${hash}`;
 }
-
-// ── Directory management ──────────────────────────────────────────────────
 
 /**
  * Returns the list of all directories that should exist for a given project.

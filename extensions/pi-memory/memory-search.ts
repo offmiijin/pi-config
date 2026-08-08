@@ -9,8 +9,6 @@ import { join } from "node:path";
 import { MEMORIES_ROOT } from "./constants.ts";
 import { parseFrontmatter } from "./memory.ts";
 
-// ── Memory search ─────────────────────────────────────────────────────────
-
 /**
  * Reads the frontmatter confidence from a memory file.
  * Returns undefined if file can't be read or has no confidence.
@@ -127,8 +125,6 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 
 	if (!stdout.trim()) return [];
 
-	// Parse output: file:line:content
-	// Group by file
 	const fileMap = new Map<string, string[]>();
 	for (const line of stdout.trim().split("\n")) {
 		const idx = line.indexOf(":");
@@ -148,7 +144,6 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 		fileMap.get(filePath)!.push(`L${fileLine}: ${content.trim()}`);
 	}
 
-	// Build results, filter by confidence, sort, limit
 	const results: SearchResult[] = [];
 	for (const [file, lines] of fileMap) {
 		if (minConfidence !== undefined) {

@@ -63,8 +63,6 @@ registerHooks({
 	},
 });
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
 interface MockPi {
 	pi: {
 		on(event: string, fn: (...args: unknown[]) => unknown): void;

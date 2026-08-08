@@ -15,15 +15,8 @@
  * Estrutura:
  *   memories/.index.sqlite            — banco único (global + todos os projetos)
  *   memory_documents                  — metadados por arquivo (1 linha = 1 .md ativo)
- *   memory_fts                        — FTS5 (title, summary, tags, body), rowid = doc id
+ *   memory_fts                        — FTS5 (title, summary, tags, body, norm), rowid = doc id
  *   index_meta                        — schema_version, rebuilt_at
- *
- * Fase 1: abertura/schema/validação FTS5 + rebuild completo.
- * Fase 2: sincronização de escrita (upsertDocument/removeDocument/syncDocuments/updateConfidence).
- * Fase 3: busca FTS5/BM25 (buildFtsQuery + search com pesos por coluna;
- *         confiança/recência só desempatam; componentes via coluna norm).
- * Fase 4: sync incremental (syncIncremental) por content_hash — detecta
- *         edição manual/deleção fora das tools.
  */
 
 import { createHash } from "node:crypto";
@@ -32,8 +25,6 @@ import { join } from "node:path";
 
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
 import { extractLastEntryTitle, parseFrontmatter } from "./memory.ts";
-
-// ── Driver SQLite por runtime ─────────────────────────────────────────────
 
 /** Superfície mínima de statement usada pelo índice (comum aos dois drivers). */
 interface StatementLike {
@@ -103,8 +94,6 @@ CREATE TABLE IF NOT EXISTS index_meta (
   value TEXT NOT NULL
 );
 `;
-
-// ── Normalização de documentos ─────────────────────────────────────────────
 
 /** Um documento indexável, normalizado a partir de um arquivo markdown ativo. */
 export interface IndexDocument {
@@ -186,8 +175,6 @@ export function normalizeForSearch(
 		.replace(/\s+/g, " ")
 		.trim();
 }
-
-// ── Busca FTS5/BM25 (Fase 3) ──────────────────────────────────────────────
 
 /**
  * Monta uma query FTS5 a partir de termos crus (OR entre termos).
@@ -288,8 +275,6 @@ export function readMemoryDocFromFile(absPath: string, relPath: string): IndexDo
 		contentHash: hashContent(raw),
 	};
 }
-
-// ── Classe de acesso ao índice ─────────────────────────────────────────────
 
 export interface RebuildStats {
 	projectId: string;
@@ -503,8 +488,6 @@ export class MemoryIndex {
 		return { projectId, added, removed, skipped, rebuiltAt: now, dbPath: this.dbPath };
 	}
 
-	// ── Sincronização de escrita (Fase 2) ────────────────────────────────────
-
 	/** Insere ou atualiza um documento (doc + FTS) em transação própria. */
 	upsertDocument(doc: IndexDocument): void {
 		const db = this.requireDb();
@@ -607,8 +590,6 @@ export class MemoryIndex {
 		).run(confidence, updated, new Date().toISOString(), path);
 	}
 
-	// ── Sincronização incremental (Fase 4) ────────────────────────────────────
-
 	/**
 	 * Cruza disco × banco por content_hash (global + projeto alvo).
 	 * - arquivo novo no disco → insere
@@ -680,8 +661,6 @@ export class MemoryIndex {
 			throw err;
 		}
 	}
-
-	// ── Busca (Fase 3) ───────────────────────────────────────────────────────
 
 	/**
 	 * Busca FTS5/BM25 com filtros SQL. Ordenação por relevância LEXICAL:
@@ -765,8 +744,6 @@ export class MemoryIndex {
 			score: Number(r.score),
 		}));
 	}
-
-	// ── Internos ────────────────────────────────────────────────────────────
 
 	private requireDb(): DatabaseLike {
 		if (!this.db) throw new Error("MemoryIndex não está aberto — chame open() antes.");

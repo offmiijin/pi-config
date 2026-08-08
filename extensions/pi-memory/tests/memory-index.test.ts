@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: índice SQLite/FTS5 (Fase 1: infra + rebuild).
+ * pi-memory — Tests: índice SQLite/FTS5.
  *
  * Usa root de memórias e banco temporários (mkdtemp) — nunca toca no
  * MEMORIES_ROOT real nem no .index.sqlite de produção.
@@ -25,8 +25,6 @@ import {
 	readMemoryDocFromFile,
 } from "../memory-index.ts";
 import type { IndexDocument } from "../memory-index.ts";
-
-// ── Helpers ────────────────────────────────────────────────────────────────
 
 let tmpRoot: string;
 let tmpDbDir: string;
@@ -71,8 +69,6 @@ function docFromFixture(root: string, rel: string, fm: string, body: string): In
 	return readMemoryDocFromFile(join(root, rel), rel);
 }
 
-// ── inferFromRelPath ───────────────────────────────────────────────────────
-
 describe("inferFromRelPath", () => {
 	it("deriva global", () => {
 		expect(inferFromRelPath("_global/gotchas/cache.md")).toEqual({
@@ -97,8 +93,6 @@ describe("inferFromRelPath", () => {
 		expect(() => inferFromRelPath("projects/x/gotchas/y/z.md")).toThrow(/não reconhecido/);
 	});
 });
-
-// ── readMemoryDocFromFile / cleanBody ──────────────────────────────────────
 
 describe("readMemoryDocFromFile", () => {
 	let root: string;
@@ -159,8 +153,6 @@ describe("cleanBody", () => {
 	});
 });
 
-// ── listActiveMemoryFiles ──────────────────────────────────────────────────
-
 describe("listActiveMemoryFiles", () => {
 	let root: string;
 
@@ -202,8 +194,6 @@ describe("listActiveMemoryFiles", () => {
 		rmSync(empty, { recursive: true, force: true });
 	});
 });
-
-// ── MemoryIndex ────────────────────────────────────────────────────────────
 
 describe("MemoryIndex", () => {
 	let root: string;
@@ -385,8 +375,6 @@ describe("MemoryIndex", () => {
 	});
 });
 
-// ── buildFtsQuery ───────────────────────────────────────────────────────────
-
 describe("buildFtsQuery", () => {
 	it("envolve cada termo em frase com prefixo (OR entre termos)", () => {
 		expect(buildFtsQuery(["cache", "invalidação"])).toBe('"cache"* OR "invalidação"*');
@@ -405,9 +393,7 @@ describe("buildFtsQuery", () => {
 	});
 });
 
-// ── Sincronização de escrita (Fase 2) ───────────────────────────────────────
-
-describe("MemoryIndex write sync (Fase 2)", () => {
+describe("MemoryIndex write sync", () => {
 	let root: string;
 	let dbDir: string;
 	let dbPath: string;
@@ -577,8 +563,6 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 	});
 });
 
-// ── syncMutation: propagação de supersedes/consolidate (Fase 2.5) ──────────
-
 describe("MemoryIndex syncMutation (supersedes/consolidate)", () => {
 	let root: string;
 	let dbDir: string;
@@ -682,9 +666,7 @@ describe("MemoryIndex syncMutation (supersedes/consolidate)", () => {
 	});
 });
 
-// ── Busca (Fase 3) ──────────────────────────────────────────────────────────
-
-describe("MemoryIndex search (Fase 3)", () => {
+describe("MemoryIndex search", () => {
 	let root: string;
 	let dbDir: string;
 	let dbPath: string;
@@ -749,7 +731,7 @@ describe("MemoryIndex search (Fase 3)", () => {
 	it("identificador underscore: exato/prefixo no token original; componente via norm", () => {
 		expect(paths(search(["id_snake_case"]))).toContain("_global/gotchas/underscore.md");
 		expect(paths(search(["id_snake"]))).toContain("_global/gotchas/underscore.md");
-		// "snake" é componente interno — encontrado pela coluna norm (Fase 7)
+		// "snake" é componente interno — encontrado pela coluna norm
 		expect(paths(search(["snake"]))).toContain("_global/gotchas/underscore.md");
 	});
 
@@ -862,9 +844,7 @@ describe("MemoryIndex search (Fase 3)", () => {
 	});
 });
 
-// ── Ranking adversarial (#6) ───────────────────────────────────────────────
-
-describe("MemoryIndex ranking (Fase 6: lexical decide; metadado só desempata)", () => {
+describe("MemoryIndex ranking (lexical decide; metadado só desempata)", () => {
 	let root: string;
 	let dbDir: string;
 	let dbPath: string;
@@ -988,9 +968,7 @@ describe("MemoryIndex ranking (Fase 6: lexical decide; metadado só desempata)",
 	});
 });
 
-// ── Busca por componentes (#7) ─────────────────────────────────────────────
-
-describe("MemoryIndex busca por componentes (Fase 7: coluna norm)", () => {
+describe("MemoryIndex busca por componentes (coluna norm)", () => {
 	let root: string;
 	let dbDir: string;
 	let dbPath: string;
@@ -1090,8 +1068,6 @@ describe("normalizeForSearch", () => {
 		expect(normalizeForSearch("t", null, [], "corpo")).toBe("t corpo");
 	});
 });
-
-// ── Migração de schema (#7) ────────────────────────────────────────────────
 
 describe("MemoryIndex migração de schema v1 → v2", () => {
 	it("reindexa FTS com coluna norm a partir do markdown, preservando docs", () => {
@@ -1242,9 +1218,7 @@ describe("MemoryIndex migração de schema v1 → v2", () => {
 	});
 });
 
-// ── Sync incremental (Fase 4) ───────────────────────────────────────────────
-
-describe("MemoryIndex syncIncremental (Fase 4)", () => {
+describe("MemoryIndex syncIncremental", () => {
 	let root: string;
 	let dbDir: string;
 	let dbPath: string;
@@ -1339,9 +1313,7 @@ describe("MemoryIndex syncIncremental (Fase 4)", () => {
 	});
 });
 
-// ── syncMutationSafe: semântica tolerante a falha (#4) ─────────────────────
-
-describe("MemoryIndex syncMutationSafe (#4)", () => {
+describe("MemoryIndex syncMutationSafe", () => {
 	let root: string;
 	let dbDir: string;
 	let dbPath: string;

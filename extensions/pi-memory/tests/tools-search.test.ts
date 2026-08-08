@@ -1,7 +1,7 @@
 /**
  * pi-memory — Tests: formatação da tool memory_search (resultados do índice).
  *
- * F6 (regressão): garante o formato estável que o modelo consome quando a
+ * Garante o formato estável que o modelo consome quando a
  * busca vem do SQLite (engine primária). A tool em si exige a ExtensionAPI
  * do pi — aqui testa-se o formatador isolado.
  */
@@ -63,8 +63,6 @@ describe("formatIndexResults", () => {
 		expect(text).toContain("memories/projects/p1/lessons/x.md");
 	});
 });
-
-// ── Fallback completo de busca (#4) ────────────────────────────────────────
 
 import {
 	dispatchSearch,

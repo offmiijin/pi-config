@@ -21,8 +21,6 @@ import { MemoryIndex, relFromMemoriesRoot } from "../memory-index.ts";
 import { registerMemoryDecay } from "../tools/decay.ts";
 import type { ToolState } from "../tools/state.ts";
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
 interface ToolDef {
 	execute: (...args: unknown[]) => Promise<{ content: { type: string; text: string }[]; details?: Record<string, unknown> }>;
 }
@@ -54,9 +52,7 @@ function memoryRow(dbPath: string, relPath: string): { confidence: number; conte
 	}
 }
 
-// ── Testes ─────────────────────────────────────────────────────────────────
-
-describe("memory_decay — falha de índice não derruba operação (#4)", () => {
+describe("memory_decay — falha de índice não derruba operação", () => {
 	let proj: string;
 	let dbDir: string;
 	let dbPath: string;

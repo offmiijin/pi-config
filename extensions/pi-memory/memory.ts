@@ -11,8 +11,6 @@ import { join } from "node:path";
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
 import { ensureFileDir, formatDateTime } from "./session.ts";
 
-// ── Memory file helpers ────────────────────────────────────────────────────
-
 /**
  * Sanitizes a string to be safe for use as a filename.
  * Lowercases, replaces non-alphanumeric with hyphens, collapses multiple hyphens.
@@ -122,8 +120,6 @@ export function listMemoryContexts(projectId: string): {
 
 	return { global: globalKeys.sort(), project: projectKeys.sort() };
 }
-
-// ── Memory index & summaries (#3 session index, #4 extract dedup) ──────────
 
 /**
  * One memory entry in the session index / extract dedup context.
@@ -248,7 +244,7 @@ export function formatMemoryIndexText(entries: MemoryIndexEntry[]): string {
 }
 
 /**
- * Builds the 'Existing memories' block for the extraction prompt (#4).
+ * Builds the 'Existing memories' block for the extraction prompt.
  * Uses the persisted summary when available; falls back to title + excerpt.
  */
 export function summarizeExistingMemories(projectId: string): string {
@@ -406,8 +402,6 @@ export function recalcOverallConfidence(
 	return Math.round((sum / all.length) * 100) / 100;
 }
 
-// ── Memory save (shared) ──────────────────────────────────────────────────
-
 /**
  * Input parameters for saveMemory.
  */
@@ -474,7 +468,6 @@ export function saveMemory(
 		};
 	}
 
-	// Handle supersede: move old memory to .supersedes/
 	// Search ALL types/scopes (findMemoryFile) — the contradiction usually
 	// crosses type (e.g. lesson supersede pattern). Looking only at the
 	// new save's type+scope would result in a silent no-op.
@@ -508,7 +501,6 @@ export function saveMemory(
 	const entry = formatMemoryEntry(now, title, content, confidence);
 
 	if (!existsSync(filePath)) {
-		// Create new file
 		const meta: Record<string, unknown> = {
 			context,
 			type,
@@ -528,7 +520,6 @@ export function saveMemory(
 		};
 	}
 
-	// Append to existing file
 	const existing = readFileSync(filePath, "utf-8");
 	const { meta, body } = parseFrontmatter(existing);
 	// Real weighted average: currentConf is the mean of the current entries (and

@@ -69,8 +69,6 @@ describe("session hash functions", () => {
 	});
 });
 
-// ── Session file path ──────────────────────────────────────────────────────
-
 describe("getSessionFilePath", () => {
 	it("uses today's date by default", () => {
 		const today = new Date().toISOString().slice(0, 10);
@@ -101,8 +99,6 @@ describe("getSessionFilePath", () => {
 		expect(path.endsWith(".md")).toBeTrue();
 	});
 });
-
-// ── extractTextContent ─────────────────────────────────────────────────────
 
 describe("extractTextContent", () => {
 	it("returns empty string for null/undefined", () => {
@@ -146,8 +142,6 @@ describe("extractTextContent", () => {
 	});
 });
 
-// ── extractToolCallNames ───────────────────────────────────────────────────
-
 describe("extractToolCallNames", () => {
 	it("returns empty array for non-array input", () => {
 		expect(extractToolCallNames(null)).toEqual([]);
@@ -185,8 +179,6 @@ describe("extractToolCallNames", () => {
 	});
 });
 
-// ── formatTimestamp ────────────────────────────────────────────────────────
-
 describe("formatTimestamp", () => {
 	it("returns HH:MM:SS format", () => {
 		const result = formatTimestamp(new Date(2025, 0, 15, 9, 5, 3));
@@ -204,8 +196,6 @@ describe("formatTimestamp", () => {
 	});
 });
 
-// ── formatDateTime ────────────────────────────────────────────────────────
-
 describe("formatDateTime", () => {
 	it("returns YYYY-MM-DD HH:MM:SS format", () => {
 		const result = formatDateTime(new Date(2025, 0, 15, 9, 5, 3));
@@ -222,8 +212,6 @@ describe("formatDateTime", () => {
 		expect(result).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 	});
 });
-
-// ── formatObservation ──────────────────────────────────────────────────────
 
 describe("formatObservation", () => {
 	it("produces correct structure with tool results", () => {
@@ -404,8 +392,6 @@ describe("extractToolResultText", () => {
 	});
 });
 
-// ── formatSessionHeader ────────────────────────────────────────────────────
-
 describe("formatSessionHeader", () => {
 	it("includes session hash and date", () => {
 		const result = formatSessionHeader("abc123", "2025-01-15");
@@ -418,8 +404,6 @@ describe("formatSessionHeader", () => {
 		expect(result).toContain(today);
 	});
 });
-
-// ── countObservations ──────────────────────────────────────────────────────
 
 describe("countObservations", () => {
 	let tmpDir: string;
@@ -534,8 +518,6 @@ describe("countObservations", () => {
 	});
 });
 
-// ── ensureFileDir ──────────────────────────────────────────────────────────
-
 describe("ensureFileDir", () => {
 	let tmpDir: string;
 
@@ -560,8 +542,6 @@ describe("ensureFileDir", () => {
 		expect(existsSync(join(tmpDir, "exists"))).toBeTrue();
 	});
 });
-
-// ── Tool schemas (structural validation) ───────────────────────────────────
 
 describe("getObservationStatus", () => {
 	let tmpDir: string;
@@ -766,8 +746,6 @@ describe("shouldRemindSave", () => {
 		expect(shouldRemindSave(["read", "edit", "bash"], 5, 0)).toBeTrue();
 	});
 });
-
-// ── Memory decay ───────────────────────────────────────────────────────────
 
 describe("buildTurnFingerprint", () => {
 	it("includes sorted tool call ids and text", () => {

@@ -89,8 +89,6 @@ describe("identifyProject", () => {
 	});
 });
 
-// ── getMemoryDirectories ──────────────────────────────────────────────────
-
 describe("getMemoryDirectories", () => {
 	it("returns MEMORIES_ROOT as first entry", () => {
 		const dirs = getMemoryDirectories("test_project");
@@ -136,8 +134,6 @@ describe("getMemoryDirectories", () => {
 	});
 });
 
-// ── ensureDirectories ──────────────────────────────────────────────────────
-
 describe("ensureDirectories", () => {
 	const TEST_PROJECT = "ensure_test";
 
@@ -178,8 +174,6 @@ describe("ensureDirectories", () => {
 		expect(dirs.length).toBeGreaterThan(0);
 	});
 });
-
-// ── Session hashing ────────────────────────────────────────────────────────
 
 describe("sanitizeFilename", () => {
 	it("lowercases and replaces spaces with hyphens", () => {
@@ -381,8 +375,6 @@ describe("recalcOverallConfidence", () => {
 	});
 });
 
-// ── Integration: memory_save (via utils helpers) ───────────────────────────
-
 describe("memory_save integration", () => {
 	let tmpRoot: string;
 	let origMemoriesRoot: string;
@@ -476,8 +468,6 @@ describe("memory_save integration", () => {
 		expect(supContent).toContain("## [2025-01-01] Old info");
 	});
 });
-
-// ── Memory search ──────────────────────────────────────────────────────────
 
 describe("listMemoryContexts", () => {
 	let testProjectId: string;
@@ -641,8 +631,6 @@ describe("moveToSupersedes", () => {
 		expect(content).toContain("## [2025-01-01] Old rule");
 	});
 });
-
-// ── Memory extraction ──────────────────────────────────────────────────────
 
 describe("saveMemory (shared by memory_save/memory_extract)", () => {
 	let testProjectId: string;
@@ -1067,8 +1055,6 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 	});
 });
 
-// ── Incremental extraction (split / batch / remove) ─────────────────────────
-
 describe("saveMemory summary", () => {
 	let testProjectId: string;
 
@@ -1318,6 +1304,4 @@ describe("summarizeExistingMemories", () => {
 		expect(text).toContain("sem-summary (0.6, updated 2026-08-01)");
 	});
 });
-
-// ── Turn dedup (turn_end duplication bug) ──────────────────────────────
 

@@ -10,8 +10,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { EXTRACT_BATCH_TOKEN_BUDGET, MEMORY_LANGUAGE_RULE, MEMORY_TYPES } from "./constants.ts";
 import { estimateTokens } from "./session.ts";
 
-// ── Memory extraction (LLM-assisted) ───────────────────────────────────────
-
 /**
  * Reads the content of a session file, or empty string if missing.
  */

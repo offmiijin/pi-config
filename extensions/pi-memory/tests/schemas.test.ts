@@ -189,13 +189,9 @@ describe("ScopeEnum values", () => {
 	});
 });
 
-// ── Memory file helpers ────────────────────────────────────────────────────
-
 describe("memory_save schema summary", () => {
 	it("has optional summary field", () => {
 		expect(propIsOptional(SaveSchema, "summary")).toBeTrue();
 	});
 });
-
-// ── Memory index (#3) ───────────────────────────────────────────────────────
 
