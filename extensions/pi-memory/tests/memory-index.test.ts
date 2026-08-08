@@ -10,7 +10,8 @@ import { expect } from "./expect-shim.ts";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
+
+import { DatabaseCtor } from "../db.ts";
 
 import { ensureFileDir } from "../session.ts";
 import {
@@ -39,8 +40,8 @@ function writeFixture(root: string, relPath: string, fm: string, body: string): 
 	return relPath;
 }
 
-function openProbe(dbPath: string): DatabaseSync {
-	return new DatabaseSync(dbPath, { readOnly: true });
+function openProbe(dbPath: string): { prepare: (sql: string) => { get: (...p: unknown[]) => Record<string, unknown> | undefined; all: (...p: unknown[]) => Record<string, unknown>[]; run: (...p: unknown[]) => { changes: number | bigint } }; close: () => void } {
+	return new DatabaseCtor(dbPath);
 }
 
 function tableNames(dbPath: string): string[] {
@@ -355,7 +356,7 @@ describe("MemoryIndex", () => {
 		expect(idx.needsRebuild).toBeFalse();
 
 		// Simula banco v1: FTS sem coluna norm + versão antiga.
-		const raw = new DatabaseSync(dbPath);
+		const raw = new DatabaseCtor(dbPath);
 		raw.exec("DROP TABLE memory_fts");
 		raw.exec(
 			`CREATE VIRTUAL TABLE memory_fts USING fts5(title, summary, tags, body, ` +
@@ -1116,7 +1117,7 @@ describe("MemoryIndex migração de schema v1 → v2", () => {
 		);
 
 		// Banco v1 construído à mão (FTS de 4 colunas, sem norm)
-		const raw = new DatabaseSync(dbPath);
+		const raw = new DatabaseCtor(dbPath);
 		raw.exec(`CREATE TABLE memory_documents (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			path TEXT NOT NULL UNIQUE,

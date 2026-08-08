@@ -13,7 +13,8 @@ import { expect } from "./expect-shim.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
+
+import { DatabaseCtor } from "../db.ts";
 
 import { MEMORIES_ROOT } from "../constants.ts";
 import { ensureFileDir } from "../session.ts";
@@ -41,7 +42,7 @@ function captureTool(
 }
 
 function memoryRow(dbPath: string, relPath: string): { confidence: number; content_hash: string } | undefined {
-	const probe = new DatabaseSync(dbPath, { readOnly: true });
+	const probe = new DatabaseCtor(dbPath);
 	try {
 		const row = probe
 			.prepare("SELECT confidence, content_hash FROM memory_documents WHERE path = ?")

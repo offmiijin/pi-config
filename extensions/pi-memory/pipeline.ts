@@ -775,8 +775,7 @@ export class PipelineDB {
 	hasActiveJob(projectId: string): boolean {
 		const row = this.requireDb()
 			.prepare(
-				"SELECT 1 FROM jobs WHERE project_id = ? AND status IN " +
-					"('queued', 'processing', 'validating', 'committing', 'retry') LIMIT 1",
+				"SELECT 1 FROM jobs WHERE project_id = ? AND status NOT IN ('done','dead_letter') LIMIT 1",
 			)
 			.get(projectId) as { 1?: number } | undefined;
 		return row !== undefined;

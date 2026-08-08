@@ -9,8 +9,8 @@ import { expect } from "./expect-shim.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
 
+import { DatabaseCtor } from "../db.ts";
 import {
 	PipelineDB,
 	buildEpisodeFingerprint,
@@ -140,7 +140,7 @@ describe("PipelineDB", () => {
 		p.close();
 		expect(p.isOpen).toBeFalse();
 
-		const probe = new DatabaseSync(dbPath, { readOnly: true });
+		const probe = new DatabaseCtor(dbPath);
 		try {
 			const rows = probe
 				.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -216,7 +216,7 @@ describe("PipelineDB", () => {
 
 	it("migra banco v1 → v2 (colunas novas em jobs)", () => {
 		const v1Path = join(tmpDir, "v1.sqlite");
-		const raw = new DatabaseSync(v1Path);
+		const raw = new DatabaseCtor(v1Path);
 		raw.exec(`
 			CREATE TABLE jobs (
 			  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, reason TEXT NOT NULL,
@@ -233,7 +233,7 @@ describe("PipelineDB", () => {
 
 		const p = new PipelineDB(v1Path);
 		p.open();
-		const probe = new DatabaseSync(v1Path, { readOnly: true });
+		const probe = new DatabaseCtor(v1Path);
 		try {
 			const cols = probe.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
 			const names = cols.map((c) => c.name);

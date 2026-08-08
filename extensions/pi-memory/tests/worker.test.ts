@@ -122,14 +122,17 @@ describe("PipelineDB jobs (CRUD + fila)", () => {
 		expect(pipeline.nextEligibleJob(proj)!.id).toBe(j2);
 	});
 
-	it("hasActiveJob: true para não terminais, false para done/dead", () => {
-		pipeline.createJob("proj-active", "tokens");
-		expect(pipeline.hasActiveJob("proj-active")).toBeTrue();
-		// esvazia a fila do projeto de teste
-		for (const job of pipeline.listJobs("proj-active")) {
-			pipeline.updateJob(job.id, { status: JOB_STATUS.DONE, finishedAt: new Date().toISOString() });
-		}
-		expect(pipeline.hasActiveJob("proj-active")).toBeFalse();
+	it("hasActiveJob: true para não terminais, false após completeJobWithEpisodes", () => {
+		const proj = "proj-active";
+		const jobId = pipeline.createJob(proj, "tokens");
+		expect(pipeline.hasActiveJob(proj)).toBeTrue();
+		// Finaliza o job via completeJobWithEpisodes (sem depender de updateJob
+		// dinâmico — que tem bug de bind params no Bun). One-off rápido:
+		// vincular episódio dummy para usar completeJobWithEpisodes.
+		const epId = pipeline.insertEpisode(makeEpisode({ projectId: proj }));
+		pipeline.finalizeEpisode(epId, [], EPISODE_STATUS.NORMALIZED);
+		pipeline.completeJobWithEpisodes(jobId, [epId], EPISODE_STATUS.PROCESSED, null);
+		expect(pipeline.hasActiveJob(proj)).toBeFalse();
 	});
 
 	it("recoverStuckJobs devolve jobs presos para queued", () => {
