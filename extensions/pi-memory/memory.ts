@@ -453,10 +453,15 @@ export function saveMemory(
 	file: string;
 	entries?: number;
 	error?: string;
+	/** Paths absolutos arquivados em .supersedes/ por supersedes|consolidate. */
+	archived: string[];
 } {
 	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes, mode = "append", summary } = params;
 	const now = formatDateTime();
 	const today = now.slice(0, 10);
+	// Paths movidos para .supersedes/ nesta chamada — o índice SQLite precisa
+	// removê-los da FTS (memória antiga não pode continuar buscável).
+	const archived: string[] = [];
 
 	// Defensive guard: invalid type would create a directory in the wrong place
 	// (e.g. "gotcha" singular instead of "gotchas") and produce orphan memories.
@@ -465,6 +470,7 @@ export function saveMemory(
 			action: "error",
 			file: "",
 			error: `Invalid memory type "${type}" (expected one of: ${MEMORY_TYPES.join(", ")})`,
+			archived,
 		};
 	}
 
@@ -476,6 +482,7 @@ export function saveMemory(
 		const oldPath = findMemoryFile(projectId, supersedes);
 		if (oldPath) {
 			moveToSupersedes(oldPath, { superseded_by: context });
+			archived.push(oldPath);
 		}
 	}
 
@@ -490,6 +497,7 @@ export function saveMemory(
 				superseded_by: context,
 				superseded_reason: "consolidated",
 			});
+			archived.push(ownPath);
 			consolidated = true;
 		}
 	}
@@ -516,6 +524,7 @@ export function saveMemory(
 		return {
 			action: consolidated ? "consolidated" : "created",
 			file: filePath,
+			archived,
 		};
 	}
 
@@ -543,5 +552,5 @@ export function saveMemory(
 	if (summary) meta.summary = summary;
 
 	writeFileSync(filePath, formatFrontmatter(meta) + body + entry + "\n");
-	return { action: "appended", file: filePath, entries: meta.entries as number };
+	return { action: "appended", file: filePath, entries: meta.entries as number, archived };
 }

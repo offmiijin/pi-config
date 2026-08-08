@@ -449,6 +449,37 @@ export class MemoryIndex {
 		}
 	}
 
+	/**
+	 * Aplica uma mutação de escrita numa única transação (memory_save/memory_extract):
+	 * remove paths arquivados (.supersedes/) e faz upsert dos documentos ativos.
+	 * Path presente nos DOIS conjuntos (consolidate — arquivado e recriado no
+	 * mesmo caminho) NÃO é removido; o upsert substitui o doc inteiro.
+	 */
+	syncMutation(opts: { upsert: IndexDocument[]; remove: string[] }): void {
+		const { upsert, remove } = opts;
+		if (upsert.length === 0 && remove.length === 0) return;
+		const db = this.requireDb();
+		const now = new Date().toISOString();
+		const upsertPaths = new Set(upsert.map((d) => d.path));
+		db.exec("BEGIN");
+		try {
+			for (const path of remove) {
+				if (upsertPaths.has(path)) continue;
+				const row = db
+					.prepare("SELECT id FROM memory_documents WHERE path = ?")
+					.get(path) as { id: number | bigint } | undefined;
+				if (!row) continue;
+				db.prepare("DELETE FROM memory_fts WHERE rowid = ?").run(row.id);
+				db.prepare("DELETE FROM memory_documents WHERE id = ?").run(row.id);
+			}
+			for (const doc of upsert) this.upsertDocAndFts(db, doc, now);
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
 	/** Remove um documento (doc + FTS). Path inexistente é no-op. */
 	removeDocument(path: string): void {
 		const db = this.requireDb();

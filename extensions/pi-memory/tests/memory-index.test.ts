@@ -559,6 +559,111 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 	});
 });
 
+// ── syncMutation: propagação de supersedes/consolidate (Fase 2.5) ──────────
+
+describe("MemoryIndex syncMutation (supersedes/consolidate)", () => {
+	let root: string;
+	let dbDir: string;
+	let dbPath: string;
+	let proj: string;
+	let idx: MemoryIndex;
+	let relA: string;
+	let relB: string;
+	let relC: string;
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), "pi-memory-mut-root-"));
+		dbDir = mkdtempSync(join(tmpdir(), "pi-memory-mut-db-"));
+		dbPath = join(dbDir, "mut.sqlite");
+		proj = `__test_mut_${Date.now()}`;
+		relA = `projects/${proj}/gotchas/sup-a.md`;
+		relB = `projects/${proj}/lessons/sup-b.md`;
+		relC = `projects/${proj}/gotchas/cons-c.md`;
+
+		// A (será superseded por B), B, C (será consolidado no mesmo path)
+		writeFixture(root, relA, "type: gotchas\nupdated: 2026-08-01\n", "## [2026-08-01] A\n\ntoken-antigo-a\n");
+		writeFixture(root, relB, "type: lessons\nupdated: 2026-08-01\n", "## [2026-08-01] B\n\ntoken-b-original\n");
+		writeFixture(root, relC, "type: gotchas\nupdated: 2026-08-01\n", "## [2026-08-01] C\n\ntoken-c-v1\n");
+
+		idx = new MemoryIndex(dbPath, root);
+		idx.open();
+		idx.rebuild(proj);
+	});
+
+	afterAll(() => {
+		idx.close();
+		rmSync(root, { recursive: true, force: true });
+		rmSync(dbDir, { recursive: true, force: true });
+	});
+
+	function searchPaths(terms: string[]): string[] {
+		return idx.search({ terms, projectId: proj }).map((r) => r.path);
+	}
+
+	it("remove path arquivado e upsert do novo na mesma transação (supersedes)", () => {
+		const relB2 = `projects/${proj}/lessons/sup-b.md`;
+		writeFixture(
+			root,
+			relB2,
+			"type: lessons\nupdated: 2026-08-02\n",
+			"## [2026-08-02] B2\n\ntoken-novo-b\n",
+		);
+
+		idx.syncMutation({
+			upsert: [readMemoryDocFromFile(join(root, relB2), relB2)],
+			remove: [relA], // A foi para .supersedes/ no save
+		});
+
+		// Antiga A não é mais buscável
+		expect(searchPaths(["token-antigo-a"])).not.toContain(relA);
+		// B atualizado é buscável
+		expect(searchPaths(["token-novo-b"])).toContain(relB2);
+		// C intocada
+		expect(searchPaths(["token-c-v1"])).toContain(relC);
+
+		// Relacional e FTS consistentes
+		const probe = openProbe(dbPath);
+		try {
+			const d = probe.prepare("SELECT count(*) AS c FROM memory_documents").get() as { c: number };
+			const f = probe.prepare("SELECT count(*) AS c FROM memory_fts").get() as { c: number };
+			expect(Number(d.c)).toBe(Number(f.c));
+			const row = probe
+				.prepare("SELECT path FROM memory_documents WHERE path = ?")
+				.get(relA) as { path: string } | undefined;
+			expect(row).toBeUndefined();
+		} finally {
+			probe.close();
+		}
+	});
+
+	it("path em remove E upsert termina indexado (consolidate mesmo path)", () => {
+		writeFixture(
+			root,
+			relC,
+			"type: gotchas\nupdated: 2026-08-02\n",
+			"## [2026-08-02] C2\n\ntoken-c-v2\n",
+		);
+
+		idx.syncMutation({
+			upsert: [readMemoryDocFromFile(join(root, relC), relC)],
+			remove: [relC], // arquivado e recriado no mesmo path
+		});
+
+		expect(searchPaths(["token-c-v1"])).not.toContain(relC);
+		expect(searchPaths(["token-c-v2"])).toContain(relC);
+	});
+
+	it("lista vazia é no-op", () => {
+		expect(() => idx.syncMutation({ upsert: [], remove: [] })).not.toThrow();
+	});
+
+	it("remove de path inexistente é no-op", () => {
+		expect(() =>
+			idx.syncMutation({ upsert: [], remove: ["projects/x/gotchas/inexistente.md"] }),
+		).not.toThrow();
+	});
+});
+
 // ── Busca (Fase 3) ──────────────────────────────────────────────────────────
 
 describe("MemoryIndex search (Fase 3)", () => {

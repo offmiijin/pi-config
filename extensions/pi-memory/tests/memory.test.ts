@@ -961,6 +961,112 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 	});
 });
 
+describe("saveMemory archived (supersedes/consolidate)", () => {
+	let testProjectId: string;
+
+	beforeAll(async () => {
+		testProjectId = `__test_archived_${Date.now()}`;
+	});
+
+	afterAll(async () => {
+		const { MEMORIES_ROOT } = await import("../constants.ts");
+		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
+		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), {
+			recursive: true,
+			force: true,
+		});
+	});
+
+	it("supersedes entre contextos retorna o path ativo arquivado", () => {
+		const a = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-a",
+			title: "A",
+			content: "conteúdo A",
+			scope: "project",
+		});
+		saveMemory(testProjectId, {
+			type: "lessons",
+			context: "arch-b",
+			title: "B",
+			content: "conteúdo B",
+			scope: "project",
+		});
+
+		// B supersede A (cross-type dentro do mesmo projeto — findMemoryFile
+		// procura em todos os tipos/escopos).
+		const r = saveMemory(testProjectId, {
+			type: "lessons",
+			context: "arch-b",
+			title: "B2",
+			content: "conteúdo B novo",
+			scope: "project",
+			supersedes: "arch-a",
+		});
+
+		expect(r.action).toBe("appended");
+		expect(r.archived).toHaveLength(1);
+		expect(r.archived[0]).toBe(a.file);
+		expect(existsSync(a.file)).toBeFalse(); // movido para .supersedes/
+	});
+
+	it("consolidate arquiva o MESMO path e o recria", () => {
+		const c = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-c",
+			title: "C",
+			content: "versão 1",
+			scope: "project",
+		});
+
+		const r = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-c",
+			title: "C2",
+			content: "versão 2",
+			scope: "project",
+			mode: "consolidate",
+		});
+
+		expect(r.action).toBe("consolidated");
+		expect(r.archived).toHaveLength(1);
+		expect(r.archived[0]).toBe(c.file); // mesmo path arquivado e recriado
+		expect(existsSync(c.file)).toBeTrue(); // recriado ativo
+	});
+
+	it("create/append sem supersede retornam archived vazio", () => {
+		const created = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-plain",
+			title: "P",
+			content: "conteúdo",
+			scope: "project",
+		});
+		expect(created.archived).toEqual([]);
+
+		const appended = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-plain",
+			title: "P2",
+			content: "mais",
+			scope: "project",
+		});
+		expect(appended.archived).toEqual([]);
+	});
+
+	it("erro (tipo inválido) retorna archived vazio", () => {
+		const err = saveMemory(testProjectId, {
+			type: "gotcha",
+			context: "arch-bad",
+			title: "T",
+			content: "C",
+			scope: "project",
+		});
+		expect(err.action).toBe("error");
+		expect(err.archived).toEqual([]);
+	});
+});
+
 // ── Incremental extraction (split / batch / remove) ─────────────────────────
 
 describe("saveMemory summary", () => {

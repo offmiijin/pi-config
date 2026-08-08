@@ -174,8 +174,9 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 			// 3. Save each memory — collects failures, doesn't abort on the first error
 			const saved: { context: string; action: string; error?: string }[] = [];
 			const failures: string[] = [];
-			// Acumula docs salvos para sincronizar o índice SQLite em lote
+			// Acumula docs salvos + paths arquivados p/ sincronizar o índice em lote
 			const docsToIndex: IndexDocument[] = [];
+			const pathsToRemove: string[] = [];
 			for (const mem of memories) {
 				try {
 					const result = saveMemory(state.projectId, {
@@ -203,6 +204,7 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 							docsToIndex.push(
 								readMemoryDocFromFile(result.file, relFromMemoriesRoot(result.file)),
 							);
+							for (const p of result.archived ?? []) pathsToRemove.push(relFromMemoriesRoot(p));
 						} catch (err) {
 							console.warn(
 								`[pi-memory] extract: não leu ${result.file} p/ índice: ${(err as Error).message}`,
@@ -216,10 +218,11 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 				}
 			}
 
-			// Sincroniza o índice SQLite em lote (1 transação)
-			if (docsToIndex.length > 0 && state.index?.isOpen) {
+			// Sincroniza o índice SQLite em lote (1 transação) — remove paths
+			// arquivados (supersedes/consolidate) e upsert dos docs salvos.
+			if ((docsToIndex.length > 0 || pathsToRemove.length > 0) && state.index?.isOpen) {
 				try {
-					state.index.syncDocuments(docsToIndex);
+					state.index.syncMutation({ upsert: docsToIndex, remove: pathsToRemove });
 				} catch (err) {
 					console.warn(
 						`[pi-memory] extract: índice não sincronizado: ${(err as Error).message}`,
