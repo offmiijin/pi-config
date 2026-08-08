@@ -336,16 +336,23 @@ export class MemoryIndex {
 		if (this.isOpen) return;
 
 		const db = new DatabaseCtor(this.dbPath);
-		db.exec("PRAGMA journal_mode = WAL");
-		db.exec("PRAGMA busy_timeout = 5000");
-		db.exec("PRAGMA foreign_keys = ON");
-		this.db = db;
-
-		// Probe definitivo: se FTS5 não estiver compilado, a criação da tabela
-		// virtual lança "no such module: fts5".
 		try {
+			db.exec("PRAGMA journal_mode = WAL");
+			db.exec("PRAGMA busy_timeout = 5000");
+			db.exec("PRAGMA foreign_keys = ON");
+			this.db = db;
+
+			// Probe definitivo: se FTS5 não estiver compilado, a criação da tabela
+			// virtual lança "no such module: fts5".
 			this.ensureSchema();
 		} catch (err) {
+			// Handle aberto não pode vazar — fecha antes de descartar
+			// (libera lock/WAL; close best-effort).
+			try {
+				db.close();
+			} catch {
+				// close não é crítico — descartado a seguir
+			}
 			this.db = null;
 			const msg = (err as Error).message ?? String(err);
 			if (/no such module: fts5/i.test(msg)) {

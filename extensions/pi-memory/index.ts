@@ -109,6 +109,12 @@ export default function (pi: ExtensionAPI) {
 			state.index.open();
 			state.index.syncIncremental(state.projectId);
 		} catch (err) {
+			// Fecha o índice antes de descartar — handle SQLite não pode vazar.
+			try {
+				state.index?.close();
+			} catch {
+				// close best-effort — estado já degradado
+			}
 			state.index = null;
 			console.warn(`[pi-memory] índice indisponível: ${(err as Error).message} — busca via rg`);
 		}
