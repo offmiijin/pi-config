@@ -88,13 +88,18 @@ jobs:
         include:
           - name: Ubuntu 24.04
             image: ubuntu:24.04
-            update: apt-get update
+            update: apt-get update && apt-get install -y curl
+            node_setup: |
+              curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+              apt-get install -y nodejs
           - name: Fedora 41
             image: fedora:41
             update: dnf makecache
+            node_setup: 'true'
           - name: Arch Linux
             image: archlinux:latest
             update: pacman -Sy --noconfirm
+            node_setup: 'true'
     steps:
       - uses: actions/checkout@v4
       - name: install.sh --yes no container (${{ matrix.name }} — pm nativo)
@@ -102,7 +107,8 @@ jobs:
           set -e
           rm -rf /tmp/ci-copy && cp -r . /tmp/ci-copy
           docker run --rm -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
-            bash -c '${{ matrix.update }} && ./install.sh --yes && \
+            bash -c '${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
               test -d node_modules/@earendil-works/pi-coding-agent && \
               test -d node_modules/typebox && \
+              test -s extensions/dev-sandbox/seccomp.bpf && \
               echo "OK: ${{ matrix.name }} — deps instaladas via pm nativo"'
