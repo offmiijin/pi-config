@@ -517,6 +517,46 @@ describe("MemoryIndex write sync (Fase 2)", () => {
 			probe.close();
 		}
 	});
+
+	it("upsert de documento não-último não corrompe rowids FTS (regressão lastInsertRowid)", () => {
+		// Corrupção reproduzida: inserir A, B, C e depois atualizar A (primeiro
+		// inserido). O lastInsertRowid pós-UPSERT (ramo UPDATE) apontava para o
+		// rowid de OUTRO documento — o FTS de A ficava obsoleto e o conteúdo novo
+		// era gravado no FTS de B.
+		const relA = `projects/${proj}/gotchas/reg-a.md`;
+		const relB = `projects/${proj}/gotchas/reg-b.md`;
+		const relC = `projects/${proj}/gotchas/reg-c.md`;
+
+		idx.upsertDocument(
+			docFromFixture(root, relA, "type: gotchas\nconfidence: 0.6\n", "## [2026-08-08 10:00:00] Reg A\n\nalpha-antigo único\n"),
+		);
+		idx.upsertDocument(
+			docFromFixture(root, relB, "type: gotchas\nconfidence: 0.6\n", "## [2026-08-08 10:00:00] Reg B\n\nbravo único\n"),
+		);
+		idx.upsertDocument(
+			docFromFixture(root, relC, "type: gotchas\nconfidence: 0.6\n", "## [2026-08-08 10:00:00] Reg C\n\ncharlie único\n"),
+		);
+		let c = counts();
+		expect(c.docs).toBe(c.fts);
+
+		// Atualiza A — não é o último documento inserido
+		idx.upsertDocument(
+			docFromFixture(root, relA, "type: gotchas\nconfidence: 0.6\n", "## [2026-08-08 10:00:00] Reg A v2\n\nalpha-novo único\n"),
+		);
+		c = counts();
+		expect(c.docs).toBe(c.fts);
+
+		const search = (term: string) =>
+			idx.search({ terms: [term], projectId: proj }).map((r) => r.path);
+
+		// Texto antigo de A não existe mais
+		expect(search("alpha-antigo")).toEqual([]);
+		// Texto novo aparece SOMENTE em A
+		expect(search("alpha-novo")).toEqual([relA]);
+		// B e C intactos — no bug, B perdia o FTS e recebia conteúdo de A
+		expect(search("bravo")).toEqual([relB]);
+		expect(search("charlie")).toEqual([relC]);
+	});
 });
 
 // ── Busca (Fase 3) ──────────────────────────────────────────────────────────

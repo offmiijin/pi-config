@@ -639,9 +639,11 @@ export class MemoryIndex {
 	/**
 	 * Upsert do documento relacional + recriação da linha FTS (delete+insert).
 	 * ON CONFLICT(path) preserva o id — a linha FTS mantém rowid = id do doc.
+	 * O id é resolvido por path (nunca por lastInsertRowid — não confiável no
+	 * ramo UPDATE do UPSERT; já apontou para outro documento e corrompeu o FTS).
 	 */
 	private upsertDocAndFts(db: DatabaseLike, doc: IndexDocument, now: string): void {
-		const res = db
+		db
 			.prepare(
 				`INSERT INTO memory_documents
 				   (path, scope, project_id, type, context, title, summary, tags_json,
@@ -670,12 +672,14 @@ export class MemoryIndex {
 				now,
 			);
 
-		// Upsert faz UPDATE: lastInsertRowid devolve o rowid da linha afetada.
-		const id = Number(res.lastInsertRowid) || this.docIdByPath(db, doc.path);
-			db.prepare("DELETE FROM memory_fts WHERE rowid = ?").run(id);
-			db.prepare(
-				"INSERT INTO memory_fts (rowid, title, summary, tags, body) VALUES (?, ?, ?, ?, ?)",
-			).run(id, doc.title, doc.summary ?? "", doc.tags.join(" "), doc.body);
+		// lastInsertRowid NÃO é confiável após UPSERT no ramo UPDATE — já retornou
+		// o rowid de outro documento e corrompeu o FTS (conteúdo novo gravado no
+		// FTS alheio, FTS do alvo obsoleto). Resolve o id pelo path único.
+		const id = this.docIdByPath(db, doc.path);
+		db.prepare("DELETE FROM memory_fts WHERE rowid = ?").run(id);
+		db.prepare(
+			"INSERT INTO memory_fts (rowid, title, summary, tags, body) VALUES (?, ?, ?, ?, ?)",
+		).run(id, doc.title, doc.summary ?? "", doc.tags.join(" "), doc.body);
 	}
 
 	private docIdByPath(db: DatabaseLike, path: string): number {
