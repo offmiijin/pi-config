@@ -4,9 +4,13 @@
  * O markdown continua sendo a fonte da verdade; o SQLite é um índice derivado,
  * descartável e reconstruível. Nenhuma operação de memória escreve pelo banco.
  *
- * Runtime: a extensão roda in-process no pi. Com o pi sob Node, usa-se
- * `node:sqlite` (nativo, sem dependência npm) — o SQLite embutido do Node
- * vem com FTS5 habilitado. O acesso ao banco fica isolado nesta classe.
+ * Runtime: a extensão roda in-process no pi. O pi é distribuído como binário
+ * Bun (ELF compilado) e como pacote npm (Node). O driver SQLite é resolvido
+ * em runtime: `node:sqlite` (DatabaseSync) quando roda sob Node — nativo, sem
+ * dependência npm — e `bun:sqlite` (Database) quando roda sob Bun, pois o Bun
+ * não implementa `node:sqlite`. As APIs são equivalentes para a superfície
+ * usada aqui (prepare/run/get/all/exec/close). O acesso ao banco fica
+ * isolado nesta classe.
  *
  * Estrutura:
  *   memories/.index.sqlite            — banco único (global + todos os projetos)
@@ -25,10 +29,45 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
 import { extractLastEntryTitle, parseFrontmatter } from "./memory.ts";
+
+// ── Driver SQLite por runtime ─────────────────────────────────────────────
+
+/** Superfície mínima de statement usada pelo índice (comum aos dois drivers). */
+interface StatementLike {
+	get(...params: unknown[]): Record<string, unknown> | undefined;
+	all(...params: unknown[]): Record<string, unknown>[];
+	run(...params: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint };
+}
+
+/** Superfície mínima de conexão usada pelo índice (comum aos dois drivers). */
+export interface DatabaseLike {
+	exec(sql: string): unknown;
+	prepare(sql: string): StatementLike;
+	close(): void;
+}
+
+type DatabaseCtor = new (path: string) => DatabaseLike;
+
+/**
+ * Resolve o construtor de banco por runtime.
+ * - Node → `node:sqlite` (DatabaseSync) — suíte de testes roda aqui.
+ * - Bun → `bun:sqlite` (Database) — pi binário roda aqui; Bun não tem node:sqlite.
+ * Falha nos dois ⇒ erro claro em vez de módulo quebrado.
+ */
+async function resolveDatabaseCtor(): Promise<DatabaseCtor> {
+	try {
+		const mod = await import("node:sqlite");
+		return mod.DatabaseSync as unknown as DatabaseCtor;
+	} catch {
+		const mod = await import("bun:sqlite");
+		return mod.Database as unknown as DatabaseCtor;
+	}
+}
+
+const DatabaseCtor = await resolveDatabaseCtor();
 
 export const INDEX_DB_FILENAME = ".index.sqlite";
 export const INDEX_DB_PATH = join(MEMORIES_ROOT, INDEX_DB_FILENAME);
@@ -255,7 +294,7 @@ export function relFromMemoriesRoot(absPath: string): string {
 }
 
 export class MemoryIndex {
-	private db: DatabaseSync | null = null;
+	private db: DatabaseLike | null = null;
 	private opened = false;
 	/** Banco novo ou schema antigo — precisa de rebuild antes de servir buscas. */
 	needsRebuild = false;
@@ -279,7 +318,7 @@ export class MemoryIndex {
 	open(): void {
 		if (this.isOpen) return;
 
-		const db = new DatabaseSync(this.dbPath);
+		const db = new DatabaseCtor(this.dbPath);
 		db.exec("PRAGMA journal_mode = WAL");
 		db.exec("PRAGMA busy_timeout = 5000");
 		db.exec("PRAGMA foreign_keys = ON");
@@ -294,9 +333,9 @@ export class MemoryIndex {
 			const msg = (err as Error).message ?? String(err);
 			if (/no such module: fts5/i.test(msg)) {
 				throw new Error(
-					"SQLite deste runtime não tem FTS5 compilado. Node embute SQLite " +
-						"com FTS5 habilitado por padrão (node:sqlite); se o binário do Node " +
-						"for customizado, verifique o SQLite compilado.",
+					"SQLite deste runtime não tem FTS5 compilado. Node (node:sqlite) e Bun " +
+						"(bun:sqlite) embutem SQLite com FTS5 habilitado por padrão; se o " +
+						"binário for customizado, verifique o SQLite compilado.",
 				);
 			}
 			throw err;
@@ -592,7 +631,7 @@ export class MemoryIndex {
 
 	// ── Internos ────────────────────────────────────────────────────────────
 
-	private requireDb(): DatabaseSync {
+	private requireDb(): DatabaseLike {
 		if (!this.db) throw new Error("MemoryIndex não está aberto — chame open() antes.");
 		return this.db;
 	}
@@ -601,7 +640,7 @@ export class MemoryIndex {
 	 * Upsert do documento relacional + recriação da linha FTS (delete+insert).
 	 * ON CONFLICT(path) preserva o id — a linha FTS mantém rowid = id do doc.
 	 */
-	private upsertDocAndFts(db: DatabaseSync, doc: IndexDocument, now: string): void {
+	private upsertDocAndFts(db: DatabaseLike, doc: IndexDocument, now: string): void {
 		const res = db
 			.prepare(
 				`INSERT INTO memory_documents
@@ -639,7 +678,7 @@ export class MemoryIndex {
 			).run(id, doc.title, doc.summary ?? "", doc.tags.join(" "), doc.body);
 	}
 
-	private docIdByPath(db: DatabaseSync, path: string): number {
+	private docIdByPath(db: DatabaseLike, path: string): number {
 		const row = db
 			.prepare("SELECT id FROM memory_documents WHERE path = ?")
 			.get(path) as { id: number | bigint } | undefined;
