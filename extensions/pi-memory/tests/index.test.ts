@@ -159,11 +159,10 @@ const ctxB = { cwd: cwdB, sessionManager: { getSessionFile: () => null } };
 // Os testes abaixo são ORDENADOS (estado da extensão é compartilhado entre eles).
 
 describe("index.ts lifecycle", () => {
-	it("registra os 6 handlers e as 5 tools", () => {
+	it("registra os 5 handlers e as 5 tools", () => {
 		for (const ev of [
 			"session_start",
 			"session_tree",
-			"turn_end",
 			"before_agent_start",
 			"agent_settled",
 			"session_shutdown",

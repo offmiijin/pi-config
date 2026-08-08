@@ -917,6 +917,20 @@ export class PipelineDB {
 			.run(status, rejectionReason ?? null, id);
 	}
 
+	/** Conta candidatos por status dentro dos jobs de um projeto. */
+	countCandidatesByProject(projectId: string, status?: string): number {
+		const sql =
+			status !== undefined
+				? "SELECT COUNT(*) AS n FROM candidates c JOIN jobs j ON c.job_id = j.id " +
+					"WHERE j.project_id = ? AND c.status = ?"
+				: "SELECT COUNT(*) AS n FROM candidates c JOIN jobs j ON c.job_id = j.id " +
+					"WHERE j.project_id = ?";
+		const row = this.requireDb()
+			.prepare(sql)
+			.get(...(status !== undefined ? [projectId, status] : [projectId])) as { n: number };
+		return Number(row.n);
+	}
+
 	/** Conta jobs, opcionalmente filtrado por projeto e/ou status. */
 	countJobs(projectId?: string, status?: JobStatus): number {
 		const clauses: string[] = [];

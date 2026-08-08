@@ -1,326 +1,92 @@
 /**
- * pi-memory — memory_extract tool.
+ * pi-memory — memory_extract tool (Fase 6: enfileirador assíncrono).
+ *
+ * O pipeline legado (extração síncrona de observações markdown) foi
+ * substituído pelo worker em background: esta tool apenas
+ * 1. fecha episódios pendentes (normalização adiada — sessão não persistida
+ *    no settle),
+ * 2. cria um job forçado (reason "manual"),
+ * 3. acorda o worker e retorna imediatamente com o job id + status.
+ *
+ * A extração (prompt → modelo → validação → revisor → commit) roda no
+ * worker sem bloquear o agente.
  */
 
-import { join, resolve } from "node:path";
-import { uuidv7 } from "@earendil-works/pi-ai";
-import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { MEMORIES_ROOT } from "../constants.ts";
-import { archiveSessionFile, getSessionFilePath, resetSessionFile } from "../session.ts";
-import {
-	readMemoryDocFromFile,
-	relFromMemoriesRoot,
-	type IndexDocument,
-} from "../memory-index.ts";
-import { saveMemory, summarizeExistingMemories } from "../memory.ts";
-import {
-	buildExtractionPrompt,
-	parseExtractionResult,
-	readSessionContent,
-	removeProcessedObservations,
-	selectObservationsBatch,
-	splitObservations,
-} from "../memory-extract.ts";
+import { EPISODE_STATUS } from "../pipeline.ts";
+import { maybeCreateJob } from "../worker.ts";
+import { normalizeEpisode } from "../evidence.ts";
 import { ExtractSchema } from "../schemas.ts";
-import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
+import type { ToolState } from "./state.ts";
 
 export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
 		name: "memory_extract",
 		label: "Memory Extract",
 		description:
-			"Processes session observations into organized memories (incremental — one batch per call). " +
-			"Reads the session file, identifies contexts, and saves memories via memory_save. " +
-			"If observations remain after the call, call memory_extract again to drain the backlog. " +
-			"Memories are written in PT-BR. " +
+			"Queues a background extraction job: normalizes pending episodes, creates a job (force) and wakes the worker. " +
+			"Returns immediately with the job id — extraction, validation and commit run in background. " +
+			"Call when you want extraction now instead of waiting for automatic triggers. " +
 			"NATIVE pi tool — call memory_extract directly, NOT via mcp({ tool: 'memory_extract' }) or the mcp gateway.",
-		promptSnippet:
-			"memory_extract: Process session observations into memories",
+		promptSnippet: "memory_extract: Enqueue background extraction job",
+		promptGuidelines: [
+			"memory_extract enfileira um job de extração assíncrono e retorna imediatamente com o job id — a extração em background processa episódios automaticamente.",
+			"Use memory_extract quando quiser forçar a extração agora (em vez de esperar os gatilhos automáticos de tokens/episódios).",
+		],
 		parameters: ExtractSchema,
 
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			// Escrita muda o índice de memórias → invalida o cache do system prompt
-			state.cachedIndexText = null;
-			if (!state.projectId || !state.currentSessionHash) {
+		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+			if (!state.projectId) {
 				return {
-					content: [{ type: "text", text: "Error: no active session" }],
-					details: { error: "no_active_session" },
+					content: [{ type: "text", text: "Error: no active project" }],
+					details: { error: "no_active_project" },
+				};
+			}
+			if (!state.pipeline?.isOpen) {
+				return {
+					content: [{ type: "text", text: "Error: pipeline operacional indisponível" }],
+					details: { error: "pipeline_unavailable" },
 				};
 			}
 
-			// 1. Determina o arquivo de sessão e lê o conteúdo
-			// Sandbox: session_file é sempre resolvido dentro do diretório sessions
-			// do projeto atual. Caminhos absolutos ou traversal (../) são rejeitados
-			// — nunca operar em arquivos fora de sessions/.
-			let sessionFile: string;
-			if (params.session_file) {
-				const sessionsDir = join(MEMORIES_ROOT, "projects", state.projectId, "sessions");
-				const resolved = resolve(sessionsDir, params.session_file);
-				if (resolved !== sessionsDir && resolved.startsWith(sessionsDir + "/")) {
-					sessionFile = resolved;
-				} else {
-					return {
-						content: [
-							{
-								type: "text",
-								text:
-									`Error: session_file "${params.session_file}" escapes the sessions directory. ` +
-									"Use a relative path under sessions/ (e.g. '2026-08-05/abc123.md') or omit it to use the current session.",
-							},
-						],
-						details: { error: "path_traversal", session_file: params.session_file },
-					};
-				}
-			} else {
-				sessionFile = getSessionFilePath(state.projectId, state.currentSessionHash);
+			// 1. Fecha episódios pendentes (a sessão pode não ter sido
+			//    persistida quando agent_settled disparou).
+			let closed = 0;
+			for (const ep of state.pipeline.listEpisodesByStatus(
+				state.projectId,
+				EPISODE_STATUS.PENDING,
+			)) {
+				const full = state.pipeline.getEpisode(ep.id);
+				if (!full) continue;
+				const r = normalizeEpisode(state.pipeline, full);
+				if (r.status === "normalized" || r.status === "ignored") closed++;
 			}
 
-			const rawContent = readSessionContent(sessionFile);
-			if (!rawContent.trim()) {
-				return {
-					content: [{ type: "text", text: "Session file is empty or missing." }],
-					details: { error: "empty_session", session_file: sessionFile },
-				};
-			}
+			// 2. Job forçado + acorda o worker (assíncrono — não aguardado).
+			const trigger = maybeCreateJob(state.pipeline, state.projectId, { force: true });
+			if (trigger.jobId) state.worker?.wake();
 
-			// Extração incremental: processa só o maior lote de observações que cabe
-			// no orçamento de tokens. As não processadas ficam no arquivo — o LLM
-			// pode chamar memory_extract de novo até drenar.
-			const observations = splitObservations(rawContent);
-			if (observations.length === 0) {
-				return {
-					content: [
-						{ type: "text", text: "Session file has no observations to extract." },
-					],
-					details: { error: "no_observations", session_file: sessionFile },
-				};
-			}
-			const { batch, remaining } = selectObservationsBatch(observations);
-			const sessionContent = batch.join("\n");
+			// 3. Status para o LLM.
+			const pending = state.pipeline.countEpisodes(state.projectId, EPISODE_STATUS.PENDING);
+			const elig = state.pipeline.aggregatePendingEpisodes(state.projectId);
+			const workerRunning = state.worker?.isRunning ?? false;
 
-			// 2. Chama o LLM para analisar as observações
-			const model = ctx.model;
-			if (!model) {
-				return {
-					content: [{ type: "text", text: "Error: no active model for extraction" }],
-					details: { error: "no_model" },
-				};
-			}
-
-			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-			if (!auth?.ok || !auth.apiKey) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Error: no API key for ${model.provider}/${model.id}`,
-						},
-					],
-					details: { error: "no_api_key" },
-				};
-			}
-
-			const existingMemories = summarizeExistingMemories(state.projectId);
-			const prompt = buildExtractionPrompt(sessionContent, existingMemories);
-
-			let responseText: string;
-			try {
-				const response = await complete(
-					model,
-					{
-						messages: [
-							{
-								role: "user",
-								content: [{ type: "text", text: prompt }],
-								timestamp: Date.now(),
-							},
-						],
-					},
-					{
-						apiKey: auth.apiKey,
-						headers: auth.headers,
-						env: auth.env,
-						reasoningEffort: "high",
-						cacheRetention: "none",
-						sessionId: uuidv7(),
-					},
-				);
-				responseText = response.content
-					.filter((c): c is { type: "text"; text: string } => c.type === "text")
-					.map((c) => c.text)
-					.join("\n");
-			} catch (e: unknown) {
-				const msg = (e as Error).message ?? String(e);
-				return {
-					content: [{ type: "text", text: `Extraction LLM call failed: ${msg}` }],
-					details: { error: msg },
-				};
-			}
-
-			const memories = parseExtractionResult(responseText);
-			if (memories.length === 0) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: "Extraction produced no valid memories.",
-						},
-					],
-					details: { count: 0 },
-				};
-			}
-
-			// 3. Salva cada memória — coleta falhas, não aborta no primeiro erro
-			const saved: { context: string; action: string; error?: string }[] = [];
-			const failures: string[] = [];
-			// Acumula docs salvos + paths arquivados p/ sincronizar o índice em lote
-			const docsToIndex: IndexDocument[] = [];
-			const pathsToRemove: string[] = [];
-			for (const mem of memories) {
-				try {
-					const result = saveMemory(state.projectId, {
-						type: mem.type,
-						context: mem.context,
-						title: mem.title,
-						content: mem.content,
-						scope: mem.scope,
-						confidence: mem.confidence ?? 0.5,
-						tags: mem.tags ?? [],
-						supersedes: mem.supersedes,
-						mode: mem.mode,
-						summary: mem.summary,
-					});
-					saved.push({
-						context: mem.context,
-						action: result.action,
-						...(result.error ? { error: result.error } : {}),
-					});
-					if (result.action === "error") {
-						failures.push(`${mem.context}: ${result.error}`);
-					} else if (result.file) {
-						// Falha de indexação não reverte o save — segue e avisa
-						try {
-							docsToIndex.push(
-								readMemoryDocFromFile(result.file, relFromMemoriesRoot(result.file)),
-							);
-							for (const p of result.archived ?? []) pathsToRemove.push(relFromMemoriesRoot(p));
-						} catch (err) {
-							console.warn(
-								`[pi-memory] extract: não leu ${result.file} p/ índice: ${(err as Error).message}`,
-							);
-						}
-					}
-				} catch (e: unknown) {
-					const msg = (e as Error).message ?? String(e);
-					saved.push({ context: mem.context, action: "error", error: msg });
-					failures.push(`${mem.context}: ${msg}`);
-				}
-			}
-
-			// Sincroniza o índice SQLite em lote (1 transação) — remove paths
-			// arquivados (supersedes/consolidate) e upsert dos docs salvos.
-			// Falha de índice degrada e segue: markdowns já persistidos.
-			let index: IndexStatus = "off";
-			if ((docsToIndex.length > 0 || pathsToRemove.length > 0) && state.index?.isOpen) {
-				try {
-					index = syncIndex(state, { upsert: docsToIndex, remove: pathsToRemove });
-				} catch (err) {
-					index = "degraded";
-					console.warn(
-						`[pi-memory] extract: índice não sincronizado: ${(err as Error).message}`,
-					);
-				}
-			}
-
-			// Falha total — nenhuma memória salva: preserva TODAS as observações
-			// do lote para retry limpo (sem risco de duplicar nada).
-			if (saved.length > 0 && saved.every((s) => s.action === "error")) {
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								`Extraction failed for all ${saved.length} memory(ies):\n` +
-								`- ${failures.join("\n- ")}\n` +
-								"Session observations preserved — fix the parameters and call memory_extract again.",
-						},
-					],
-					details: {
-						count: 0,
-						saved,
-						failures,
-						reset: false,
-					},
-				};
-			}
-
-			// 4. Remove observações processadas do arquivo de sessão.
-			// Invariante: o arquivo só contém observações NÃO processadas —
-			// re-extrair nunca duplica. Falha parcial ainda remove o lote
-			// (memórias falhas podem ser re-salvas manualmente via memory_save).
-			removeProcessedObservations(sessionFile, batch.length);
-
-			const summary = saved
-				.filter((s) => s.action !== "error")
-				.map((s) => `- ${s.action}: ${s.context}`)
-				.join("\n");
-
-			const failureNote =
-				failures.length > 0
-					? `\n\n${failures.length} memory(ies) FAILED (not saved):\n` +
-						`- ${failures.join("\n- ")}\n` +
-						"Save them manually via memory_save with the corrected parameters."
-					: "";
-
-			// Backlog restante: não reseta — observações ficam no arquivo para a
-			// próxima chamada. O gatilho reinicia (próximo em 50).
-			if (remaining.length > 0) {
-				state.lastPromptedBucket = -1;
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								`Extracted ${saved.length - failures.length} memory(ies) from ${batch.length}/${observations.length} observations:\n${summary}${failureNote}\n` +
-								`${remaining.length} observation(s) remaining — call memory_extract again to process the rest.`,
-						},
-					],
-					details: {
-						count: saved.length - failures.length,
-						failures,
-						saved,
-						session_file: sessionFile,
-						processed: batch.length,
-						remaining: remaining.length,
-						reset: false,
-						index,
-					},
-				};
-			}
-
-			// Sessão drenada: o arquivo preserva o registro cru, reseta o arquivo
-			// (mesmo hash, zero observações).
-			const archivePath = archiveSessionFile(sessionFile);
-			resetSessionFile(sessionFile, state.currentSessionHash);
-			state.lastPromptedBucket = -1; // reinicia o ciclo do gatilho (próximo em 50)
+			const text = trigger.jobId
+				? `Extraction job queued (job: ${trigger.jobId}, reason: ${trigger.reason}).\n` +
+					`Episodes pending: ${pending} | eligible: ${elig.count} (${elig.tokens} tokens) | worker: ${workerRunning ? "running" : "off"}`
+				: `No job created (inconsistent state — active job exists and force failed).\n` +
+					`Episodes pending: ${pending} | eligible: ${elig.count} (${elig.tokens} tokens) | worker: ${workerRunning ? "running" : "off"}`;
 
 			return {
-				content: [
-					{
-						type: "text",
-						text:
-							`Extracted ${saved.length - failures.length} memory(ies) from ${sessionFile}:\n${summary}${failureNote}\nSession observations reset.`,
-					},
-				],
+				content: [{ type: "text", text }],
 				details: {
-					count: saved.length - failures.length,
-					failures,
-					saved,
-					session_file: sessionFile,
-					archive_file: archivePath,
-					reset: true,
-					index,
+					job_id: trigger.jobId,
+					reason: trigger.reason,
+					closed_pending: closed,
+					episodes_pending: pending,
+					eligible_episodes: elig.count,
+					eligible_tokens: elig.tokens,
+					worker_running: workerRunning,
 				},
 			};
 		},
