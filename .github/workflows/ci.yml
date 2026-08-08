@@ -29,6 +29,8 @@ jobs:
           cache: npm
       - name: Instala dependências (npm ci)
         run: npm ci --no-audit --no-fund
+      - name: Instala bubblewrap/ripgrep (p/ teste memory + doctor smoke)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
       - name: dev-sandbox (vitest)
         run: npm run test:sandbox
       - name: pi-github (vitest)
@@ -41,8 +43,6 @@ jobs:
         run: npm run test:doctor
       - name: Typecheck dev-sandbox
         run: npm run typecheck
-      - name: Instala bubblewrap/ripgrep (p/ doctor smoke real)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
       - name: Doctor smoke — ambiente completo sem pendências
         run: npm run doctor:check
 
