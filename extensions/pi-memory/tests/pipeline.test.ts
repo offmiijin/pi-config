@@ -213,4 +213,39 @@ describe("PipelineDB", () => {
 		const p = new PipelineDB(join(tmpDir, "closed.sqlite"));
 		expect(() => p.countEpisodes()).toThrow("PipelineDB não está aberto");
 	});
+
+	it("migra banco v1 → v2 (colunas novas em jobs)", () => {
+		const v1Path = join(tmpDir, "v1.sqlite");
+		const raw = new DatabaseSync(v1Path);
+		raw.exec(`
+			CREATE TABLE jobs (
+			  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, reason TEXT NOT NULL,
+			  status TEXT NOT NULL DEFAULT 'queued', attempts INTEGER NOT NULL DEFAULT 0,
+			  prompt_version INTEGER, model TEXT, reasoning_level TEXT,
+			  created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+			  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+			  error TEXT
+			);
+			CREATE TABLE pipeline_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+			INSERT INTO pipeline_meta (key, value) VALUES ('schema_version', '1');
+		`);
+		raw.close();
+
+		const p = new PipelineDB(v1Path);
+		p.open();
+		const probe = new DatabaseSync(v1Path, { readOnly: true });
+		try {
+			const cols = probe.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
+			const names = cols.map((c) => c.name);
+			expect(names).toContain("next_attempt_at");
+			expect(names).toContain("details");
+			const version = probe
+				.prepare("SELECT value FROM pipeline_meta WHERE key = 'schema_version'")
+				.get() as { value: string };
+			expect(version.value).toBe("2");
+		} finally {
+			probe.close();
+		}
+		p.close();
+	});
 });

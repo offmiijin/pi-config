@@ -59,6 +59,7 @@ import {
 	estimateEpisodeTokens,
 } from "./pipeline.ts";
 import { normalizeEpisode } from "./evidence.ts";
+import { PipelineWorker, maybeCreateJob } from "./worker.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -92,6 +93,9 @@ export default function (pi: ExtensionAPI) {
 	// Pipeline operacional (episódios → worker de extração futuro). Null se
 	// indisponível — captura de episódio vira no-op com log.
 	let pipeline: PipelineDB | null = null;
+	// Worker assíncrono (Fase 2): consome jobs do projeto atual. Null se o
+	// pipeline não abriu — a fila espera a próxima sessão.
+	let worker: PipelineWorker | null = null;
 
 	pi.on("tool_result", async (event) => {
 		const e = event as unknown as {
@@ -150,6 +154,20 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] pipeline indisponível: ${(err as Error).message}`);
 		}
 
+		// Fase 2: worker assíncrono. Recupera jobs presos (crash/reload) e
+		// inicia o consumer do projeto atual. Falha não derruba a sessão.
+		try {
+			if (pipeline) {
+				pipeline.recoverStuckJobs();
+				worker = new PipelineWorker(pipeline);
+				worker.setProject(state.projectId);
+				worker.start();
+			}
+		} catch (err) {
+			worker = null;
+			console.warn(`[pi-memory] worker indisponível: ${(err as Error).message}`);
+		}
+
 		state.lastPromptedBucket = -1;
 		extractionDueCount = 0;
 		state.consecutiveEmptySearches = 0;
@@ -170,6 +188,8 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		state.projectId = nextProjectId;
+		// Worker segue aberto entre projetos; passa a consumir o novo.
+		worker?.setProject(nextProjectId);
 
 		// Sincroniza o índice para o novo projeto (global + projeto novo).
 		// Falha no sync não derruba a sessão: fecha o índice (estado
@@ -444,6 +464,13 @@ export default function (pi: ExtensionAPI) {
 			if (captured) {
 				normalizeEpisode(pipeline, captured);
 			}
+
+			// Fase 2: gatilho de job (tokens/episódios/sinal forte) + acorda o
+			// worker. Assíncrono — o turno não espera o processamento.
+			const trigger = maybeCreateJob(pipeline, state.projectId, { signalEpisodeId: episodeId });
+			if (trigger.jobId) {
+				worker?.wake();
+			}
 		} catch (err) {
 			console.warn(`[pi-memory] captura de episódio falhou: ${(err as Error).message}`);
 		}
@@ -452,6 +479,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		state.index?.close();
 		state.index = null;
+		await worker?.stop();
+		worker = null;
 		pipeline?.close();
 		pipeline = null;
 	});

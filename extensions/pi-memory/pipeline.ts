@@ -25,12 +25,13 @@ import { estimateTokens } from "./session.ts";
 /** Nome do banco do pipeline dentro de MEMORIES_ROOT. */
 export const PIPELINE_DB_FILENAME = ".pipeline.sqlite";
 export const PIPELINE_DB_PATH = join(MEMORIES_ROOT, PIPELINE_DB_FILENAME);
-export const PIPELINE_SCHEMA_VERSION = 1;
+export const PIPELINE_SCHEMA_VERSION = 2;
 
-/** Status de episódio (ciclo: pending → normalized → processed | ignored | failed). */
+/** Status de episódio (ciclo: pending → normalized → selected → processed | ignored | failed). */
 export const EPISODE_STATUS = {
 	PENDING: "pending",
 	NORMALIZED: "normalized",
+	SELECTED: "selected",
 	IGNORED: "ignored",
 	PROCESSED: "processed",
 	FAILED: "failed",
@@ -105,9 +106,18 @@ CREATE TABLE IF NOT EXISTS jobs (
   finished_at TEXT,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
-  error TEXT
+  error TEXT,
+  next_attempt_at TEXT,
+  details TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, project_id);
+
+CREATE TABLE IF NOT EXISTS job_episodes (
+  job_id TEXT NOT NULL REFERENCES jobs(id),
+  episode_id TEXT NOT NULL REFERENCES episodes(id),
+  PRIMARY KEY (job_id, episode_id)
+);
+CREATE INDEX IF NOT EXISTS idx_job_episodes_episode ON job_episodes(episode_id);
 
 CREATE TABLE IF NOT EXISTS candidates (
   id TEXT PRIMARY KEY,
@@ -257,6 +267,42 @@ export interface EvidenceRecord {
 	priority: number;
 }
 
+/** Registro completo de um job de extração (linha da tabela jobs). */
+export interface JobRecord {
+	id: string;
+	projectId: string;
+	reason: string;
+	status: JobStatus;
+	attempts: number;
+	promptVersion: number | null;
+	model: string | null;
+	reasoningLevel: string | null;
+	createdAt: string;
+	startedAt: string | null;
+	finishedAt: string | null;
+	inputTokens: number;
+	outputTokens: number;
+	error: string | null;
+	nextAttemptAt: string | null;
+	details: string | null;
+}
+
+/** Campos atualizáveis de um job (whitelist — sem SQL dinâmico arbitrário). */
+export interface JobUpdatePatch {
+	status?: JobStatus;
+	error?: string | null;
+	startedAt?: string | null;
+	finishedAt?: string | null;
+	inputTokens?: number;
+	outputTokens?: number;
+	nextAttemptAt?: string | null;
+	attempts?: number;
+	details?: string | null;
+	model?: string | null;
+	reasoningLevel?: string | null;
+	promptVersion?: number | null;
+}
+
 function mapEpisodeRow(row: Record<string, unknown>): EpisodeRecord {
 	return {
 		id: String(row.id),
@@ -291,6 +337,27 @@ function mapEvidenceRow(row: Record<string, unknown>): EvidenceRecord {
 	};
 }
 
+function mapJobRow(row: Record<string, unknown>): JobRecord {
+	return {
+		id: String(row.id),
+		projectId: String(row.project_id),
+		reason: String(row.reason),
+		status: row.status as JobStatus,
+		attempts: Number(row.attempts),
+		promptVersion: row.prompt_version === null ? null : Number(row.prompt_version),
+		model: row.model === null ? null : String(row.model),
+		reasoningLevel: row.reasoning_level === null ? null : String(row.reasoning_level),
+		createdAt: String(row.created_at),
+		startedAt: row.started_at === null ? null : String(row.started_at),
+		finishedAt: row.finished_at === null ? null : String(row.finished_at),
+		inputTokens: Number(row.input_tokens),
+		outputTokens: Number(row.output_tokens),
+		error: row.error === null ? null : String(row.error),
+		nextAttemptAt: row.next_attempt_at === null ? null : String(row.next_attempt_at),
+		details: row.details === null ? null : String(row.details),
+	};
+}
+
 export class PipelineDB {
 	private db: DatabaseLike | null = null;
 	private opened = false;
@@ -313,6 +380,17 @@ export class PipelineDB {
 			db.exec("PRAGMA busy_timeout = 5000");
 			db.exec("PRAGMA foreign_keys = ON");
 			db.exec(SCHEMA_SQL);
+			// Migração v1 → v2: colunas novas em jobs (bancos criados na Fase 0).
+			// CREATE TABLE IF NOT EXISTS não altera tabela existente — colunas
+			// ausentes são adicionadas por ALTER (no-op se já presentes).
+			const jobCols = db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
+			const jobColNames = new Set(jobCols.map((c) => c.name));
+			if (!jobColNames.has("next_attempt_at")) {
+				db.exec("ALTER TABLE jobs ADD COLUMN next_attempt_at TEXT");
+			}
+			if (!jobColNames.has("details")) {
+				db.exec("ALTER TABLE jobs ADD COLUMN details TEXT");
+			}
 			this.db = db;
 			this.opened = true;
 			this.setMeta("schema_version", String(PIPELINE_SCHEMA_VERSION));
@@ -492,5 +570,235 @@ export class PipelineDB {
 			n: number;
 		};
 		return Number(row.n);
+	}
+
+	/* ------------------------------------------------------------ */
+	/* Jobs (Fase 2)                                                 */
+	/* ------------------------------------------------------------ */
+
+	/** Cria um job de extração com status 'queued'. Retorna o id gerado. */
+	createJob(projectId: string, reason: string): string {
+		const id = newPipelineId("job_");
+		this.requireDb()
+			.prepare(
+				"INSERT INTO jobs (id, project_id, reason, status, attempts, created_at) " +
+					"VALUES (?, ?, ?, ?, 0, ?)",
+			)
+			.run(id, projectId, reason, JOB_STATUS.QUEUED, new Date().toISOString());
+		return id;
+	}
+
+	/** Busca job por id. */
+	getJob(id: string): JobRecord | undefined {
+		const row = this.requireDb()
+			.prepare("SELECT * FROM jobs WHERE id = ?")
+			.get(id) as Record<string, unknown> | undefined;
+		return row ? mapJobRow(row) : undefined;
+	}
+
+	/**
+	 * Próximo job elegível do projeto: queued (mais antigo) primeiro, depois
+	 * retries cujo next_attempt_at já venceu (ou é NULL = retry imediato).
+	 */
+	nextEligibleJob(projectId: string): JobRecord | undefined {
+		const now = new Date().toISOString();
+		const row = this.requireDb()
+			.prepare(
+				`SELECT * FROM jobs
+				 WHERE project_id = ?
+				   AND status IN ('queued', 'retry')
+				   AND (status <> 'retry' OR next_attempt_at IS NULL OR next_attempt_at <= ?)
+				 ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END, created_at ASC
+				 LIMIT 1`,
+			)
+			.get(projectId, now) as Record<string, unknown> | undefined;
+		return row ? mapJobRow(row) : undefined;
+	}
+
+	/** Atualiza campos de um job (whitelist — patch parcial). */
+	updateJob(id: string, patch: JobUpdatePatch): void {
+		const sets: string[] = [];
+		const params: unknown[] = [];
+		const cols: Record<keyof JobUpdatePatch, string> = {
+			status: "status",
+			error: "error",
+			startedAt: "started_at",
+			finishedAt: "finished_at",
+			inputTokens: "input_tokens",
+			outputTokens: "output_tokens",
+			nextAttemptAt: "next_attempt_at",
+			attempts: "attempts",
+			details: "details",
+			model: "model",
+			reasoningLevel: "reasoning_level",
+			promptVersion: "prompt_version",
+		};
+		for (const [key, col] of Object.entries(cols) as [keyof JobUpdatePatch, string][]) {
+			if (patch[key] !== undefined) {
+				sets.push(`${col} = ?`);
+				params.push(patch[key]);
+			}
+		}
+		if (sets.length === 0) return;
+		params.push(id);
+		this.requireDb().prepare(`UPDATE jobs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+	}
+
+	/**
+	 * Agenda retry de um job: incrementa attempts, marca 'retry' e define o
+	 * próximo horário permitido (now + delayMs). started/finished limpos.
+	 */
+	scheduleRetry(jobId: string, opts: { attempts: number; error?: string; delayMs: number }): void {
+		const next = new Date(Date.now() + opts.delayMs).toISOString();
+		this.requireDb()
+			.prepare(
+				"UPDATE jobs SET attempts = ?, status = ?, next_attempt_at = ?, error = ?, " +
+					"started_at = NULL, finished_at = NULL WHERE id = ?",
+			)
+			.run(opts.attempts, JOB_STATUS.RETRY, next, opts.error ?? null, jobId);
+	}
+
+	/** Marca o job como dead_letter (falha permanente). */
+	markDeadLetter(jobId: string, error?: string): void {
+		this.requireDb()
+			.prepare("UPDATE jobs SET status = ?, finished_at = ?, error = ? WHERE id = ?")
+			.run(JOB_STATUS.DEAD_LETTER, new Date().toISOString(), error ?? null, jobId);
+	}
+
+	/**
+	 * Completa um job de seleção em transação única: vincula os episódios ao
+	 * job (job_episodes), marca-os como selected e finaliza o job em 'done'
+	 * com o details de auditoria.
+	 */
+	completeJobWithSelection(
+		jobId: string,
+		episodeIds: string[],
+		details: Record<string, unknown> | null,
+	): void {
+		const db = this.requireDb();
+		db.exec("BEGIN");
+		try {
+			const link = db.prepare(
+				"INSERT OR IGNORE INTO job_episodes (job_id, episode_id) VALUES (?, ?)",
+			);
+			const claim = db.prepare("UPDATE episodes SET status = ? WHERE id = ?");
+			for (const epId of episodeIds) {
+				link.run(jobId, epId);
+				claim.run(EPISODE_STATUS.SELECTED, epId);
+			}
+			db.prepare(
+				"UPDATE jobs SET status = ?, finished_at = ?, details = ?, error = NULL WHERE id = ?",
+			).run(JOB_STATUS.DONE, new Date().toISOString(), details ? JSON.stringify(details) : null, jobId);
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Menor next_attempt_at entre retries pendentes do projeto (ms) ou null. */
+	nextRetryDelayMs(projectId: string): number | null {
+		const row = this.requireDb()
+			.prepare(
+				"SELECT MIN(next_attempt_at) AS m FROM jobs WHERE project_id = ? " +
+					"AND status = ? AND next_attempt_at IS NOT NULL",
+			)
+			.get(projectId, JOB_STATUS.RETRY) as { m: string | null };
+		if (row.m === null) return null;
+		return Math.max(0, new Date(row.m).getTime() - Date.now());
+	}
+
+	/** Há job não terminal para o projeto? (evita empilhar jobs). */
+	hasActiveJob(projectId: string): boolean {
+		const row = this.requireDb()
+			.prepare(
+				"SELECT 1 FROM jobs WHERE project_id = ? AND status IN " +
+					"('queued', 'processing', 'validating', 'committing', 'retry') LIMIT 1",
+			)
+			.get(projectId) as { 1?: number } | undefined;
+		return row !== undefined;
+	}
+
+	/** Agregação de episódios elegíveis (normalized) do projeto. */
+	aggregateNormalizedEpisodes(projectId: string): { tokens: number; count: number } {
+		const row = this.requireDb()
+			.prepare(
+				"SELECT COALESCE(SUM(token_estimate), 0) AS tokens, COUNT(*) AS n " +
+					"FROM episodes WHERE project_id = ? AND status = ?",
+			)
+			.get(projectId, EPISODE_STATUS.NORMALIZED) as { tokens: number; n: number };
+		return { tokens: Number(row.tokens), count: Number(row.n) };
+	}
+
+	/** Lista episódios por status do projeto (mais antigos primeiro). */
+	listEpisodesByStatus(projectId: string, status: EpisodeStatus, limit = 200): EpisodeRecord[] {
+		const rows = this.requireDb()
+			.prepare(
+				"SELECT * FROM episodes WHERE project_id = ? AND status = ? " +
+					"ORDER BY settled_at ASC LIMIT ?",
+			)
+			.all(projectId, status, limit) as Record<string, unknown>[];
+		return rows.map(mapEpisodeRow);
+	}
+
+	/** Episódio com sinal forte (correção do usuário ou comando com erro)? */
+	hasStrongSignal(episodeId: string): boolean {
+		const row = this.requireDb()
+			.prepare(
+				"SELECT 1 FROM evidence WHERE episode_id = ? AND " +
+					"(kind = ? OR (kind = ? AND is_error = 1)) LIMIT 1",
+			)
+			.get(episodeId, "correction", "command") as { 1?: number } | undefined;
+		return row !== undefined;
+	}
+
+	/** Jobs presos em status não terminais (crash/reload) voltam para queued. */
+	recoverStuckJobs(): number {
+		const result = this.requireDb()
+			.prepare(
+				"UPDATE jobs SET status = ?, started_at = NULL, finished_at = NULL, " +
+					"error = 'recovered from interrupted session' " +
+					"WHERE status IN ('processing', 'validating', 'committing')",
+			)
+			.run(JOB_STATUS.QUEUED);
+		return Number(result.changes);
+	}
+
+	/** Conta jobs, opcionalmente filtrado por projeto e/ou status. */
+	countJobs(projectId?: string, status?: JobStatus): number {
+		const clauses: string[] = [];
+		const params: string[] = [];
+		if (projectId) {
+			clauses.push("project_id = ?");
+			params.push(projectId);
+		}
+		if (status) {
+			clauses.push("status = ?");
+			params.push(status);
+		}
+		const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+		const row = this.requireDb()
+			.prepare(`SELECT COUNT(*) AS n FROM jobs${where}`)
+			.get(...params) as { n: number };
+		return Number(row.n);
+	}
+
+	/** Lista jobs de um projeto (opcional por status, limitados). */
+	listJobs(projectId?: string, status?: JobStatus, limit = 50): JobRecord[] {
+		const clauses: string[] = [];
+		const params: string[] = [];
+		if (projectId) {
+			clauses.push("project_id = ?");
+			params.push(projectId);
+		}
+		if (status) {
+			clauses.push("status = ?");
+			params.push(status);
+		}
+		const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+		const rows = this.requireDb()
+			.prepare(`SELECT * FROM jobs${where} ORDER BY created_at DESC LIMIT ?`)
+			.all(...params, limit) as Record<string, unknown>[];
+		return rows.map(mapJobRow);
 	}
 }
