@@ -1,8 +1,8 @@
 /**
- * pi-memory — LLM-assisted extraction helpers (no PI dependency).
+ * pi-memory — Helpers de extração assistida por LLM (sem dependência do PI).
  *
- * Session content reading, incremental batching, extraction prompt and result
- * parsing. The memory_extract tool itself lives in index.ts / tools/.
+ * Leitura do conteúdo de sessão, batching incremental, prompt de extração e
+ * parsing do resultado. A tool memory_extract vive em index.ts / tools/.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -10,10 +10,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { EXTRACT_BATCH_TOKEN_BUDGET, MEMORY_LANGUAGE_RULE, MEMORY_TYPES } from "./constants.ts";
 import { estimateTokens } from "./session.ts";
 
-// ── Memory extraction (LLM-assisted) ───────────────────────────────────────
-
 /**
- * Reads the content of a session file, or empty string if missing.
+ * Lê o conteúdo de um arquivo de sessão, ou string vazia se ausente.
  */
 export function readSessionContent(filePath: string): string {
 	if (!existsSync(filePath)) return "";
@@ -21,8 +19,8 @@ export function readSessionContent(filePath: string): string {
 }
 
 /**
- * Splits a session file content into individual observations.
- * The header (everything before the first "## Obs #") is dropped.
+ * Divide o conteúdo de um arquivo de sessão em observações individuais.
+ * O cabeçalho (tudo antes do primeiro "## Obs #") é descartado.
  */
 export function splitObservations(content: string): string[] {
 	return content
@@ -32,8 +30,8 @@ export function splitObservations(content: string): string[] {
 }
 
 /**
- * Selects the largest prefix of observations that fits the token budget,
- * guaranteeing at least one observation. Used for incremental extraction.
+ * Seleciona o maior prefixo de observações que cabe no orçamento de tokens,
+ * garantindo ao menos uma observação. Usado na extração incremental.
  */
 export function selectObservationsBatch(
 	observations: string[],
@@ -47,16 +45,16 @@ export function selectObservationsBatch(
 		total += t;
 		idx++;
 	}
-	// Never returns an empty batch when observations exist (a giant obs cannot
-	// be broken into smaller pieces without losing the file structure).
+	// Nunca retorna batch vazio quando há observações (uma observação gigante
+	// não pode ser quebrada sem perder a estrutura do arquivo).
 	if (idx === 0 && observations.length > 0) idx = 1;
 	return { batch: observations.slice(0, idx), remaining: observations.slice(idx) };
 }
 
 /**
- * Rewrites a session file without the first `processed` observations,
- * keeping the header and the remaining (unprocessed) ones.
- * No-op when the file has no observations.
+ * Reescreve um arquivo de sessão sem as primeiras `processed` observações,
+ * mantendo o cabeçalho e as restantes (não processadas).
+ * No-op quando o arquivo não tem observações.
  */
 export function removeProcessedObservations(filePath: string, processed: number): void {
 	const content = readFileSync(filePath, "utf-8");
@@ -69,7 +67,7 @@ export function removeProcessedObservations(filePath: string, processed: number)
 }
 
 /**
- * Builds the LLM prompt that turns session observations into memories.
+ * Monta o prompt do LLM que transforma observações de sessão em memórias.
  */
 export function buildExtractionPrompt(
 	sessionContent: string,
@@ -113,7 +111,7 @@ export function buildExtractionPrompt(
 }
 
 /**
- * One extracted memory proposed by the LLM.
+ * Uma memória extraída proposta pelo LLM.
  */
 export interface ExtractedMemory {
 	type: string;
@@ -130,8 +128,8 @@ export interface ExtractedMemory {
 }
 
 /**
- * Parses the LLM extraction response into memories.
- * Handles markdown code fences and filters incomplete entries.
+ * Interpreta a resposta do LLM da extração em memórias.
+ * Lida com code fences de markdown e filtra entradas incompletas.
  */
 export function parseExtractionResult(jsonText: string): ExtractedMemory[] {
 	try {

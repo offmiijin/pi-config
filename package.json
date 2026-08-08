@@ -12,7 +12,7 @@
     "test:sandbox": "cd extensions/dev-sandbox && vitest run",
     "test:github": "cd extensions/pi-github && vitest run",
     "test:websearch": "cd extensions/pi-web-search && vitest run",
-    "test:memory": "cd extensions/pi-memory && bun test",
+    "test:memory": "cd extensions/pi-memory && node --test",
     "test:doctor": "cd extensions && vitest run tests/doctor.test.ts",
     "typecheck": "cd extensions/dev-sandbox && tsc --noEmit",
     "doctor:check": "cd extensions && vitest run tests/doctor.smoke.test.ts"

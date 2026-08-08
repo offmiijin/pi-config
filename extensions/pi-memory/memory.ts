@@ -1,8 +1,8 @@
 /**
- * pi-memory — Memory file CRUD + index + save (no PI dependency).
+ * pi-memory — CRUD de arquivos de memória + índice + save (sem dependência do PI).
  *
- * File paths, frontmatter, entries, supersede, memory index/summaries and the
- * shared saveMemory used by memory_save and memory_extract.
+ * Caminhos de arquivo, frontmatter, entradas, supersede, índice/resumos e o
+ * saveMemory compartilhado por memory_save e memory_extract.
  */
 
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -11,11 +11,9 @@ import { join } from "node:path";
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
 import { ensureFileDir, formatDateTime } from "./session.ts";
 
-// ── Memory file helpers ────────────────────────────────────────────────────
-
 /**
- * Sanitizes a string to be safe for use as a filename.
- * Lowercases, replaces non-alphanumeric with hyphens, collapses multiple hyphens.
+ * Sanitiza uma string para ser segura como nome de arquivo.
+ * Minúsculas, não alfanuméricos viram hífens, hífens repetidos colapsam.
  */
 export function sanitizeFilename(name: string): string {
 	return name
@@ -26,7 +24,7 @@ export function sanitizeFilename(name: string): string {
 }
 
 /**
- * Returns the file path for a memory given scope, type and context.
+ * Retorna o caminho do arquivo de uma memória dado escopo, tipo e contexto.
  */
 export function getMemoryFilePath(
 	projectId: string,
@@ -42,7 +40,7 @@ export function getMemoryFilePath(
 }
 
 /**
- * Returns the .supersedes/ path for a given memory file path.
+ * Retorna o caminho em .supersedes/ para um caminho de arquivo de memória.
  */
 export function getSupersedesPath(originalPath: string): string {
 	const relative = originalPath.startsWith(MEMORIES_ROOT + "/")
@@ -52,9 +50,9 @@ export function getSupersedesPath(originalPath: string): string {
 }
 
 /**
- * Moves a memory file to .supersedes/, preserving structure and adding
- * superseded metadata. The original file is removed.
- * Returns the new path.
+ * Move um arquivo de memória para .supersedes/, preservando a estrutura e
+ * adicionando metadados de superseded. O arquivo original é removido.
+ * Retorna o novo caminho.
  */
 export function moveToSupersedes(
 	filePath: string,
@@ -77,8 +75,8 @@ export function moveToSupersedes(
 }
 
 /**
- * Finds the memory file for a context across all types and scopes.
- * Returns undefined if not found.
+ * Encontra o arquivo de memória de um contexto em todos os tipos e escopos.
+ * Retorna undefined se não encontrar.
  */
 export function findMemoryFile(
 	projectId: string,
@@ -94,8 +92,8 @@ export function findMemoryFile(
 }
 
 /**
- * Lists existing memory context keys for a project (global + project scopes).
- * Used by memory_extract so the LLM can reuse existing keys and supersede.
+ * Lista as chaves de contexto existentes para um projeto (escopos global +
+ * projeto). Usado pelo memory_extract para o LLM reutilizar chaves e superseder.
  */
 export function listMemoryContexts(projectId: string): {
 	global: string[];
@@ -123,33 +121,31 @@ export function listMemoryContexts(projectId: string): {
 	return { global: globalKeys.sort(), project: projectKeys.sort() };
 }
 
-// ── Memory index & summaries (#3 session index, #4 extract dedup) ──────────
-
 /**
- * One memory entry in the session index / extract dedup context.
+ * Uma entrada de memória no índice de sessão / contexto de dedup da extração.
  */
 export interface MemoryIndexEntry {
 	scope: "global" | "project";
 	type: MemoryType;
 	context: string;
-	/** Title of the most recent entry in the body. */
+	/** Título da entrada mais recente do corpo. */
 	title: string;
 	confidence: number;
 	updated: string;
-	/** Persisted summary (frontmatter), if any. */
+	/** Summary persistido (frontmatter), se houver. */
 	summary?: string;
-	/** Raw excerpt from the end of the body (fallback when no summary). */
+	/** Trecho cru do fim do corpo (fallback quando não há summary). */
 	excerpt: string;
 }
 
-/** Extracts the title of the LAST entry from a memory body. */
-function extractLastEntryTitle(body: string): string | undefined {
+/** Extrai o título da ÚLTIMA entrada do corpo de uma memória. */
+export function extractLastEntryTitle(body: string): string | undefined {
 	const matches = [...body.matchAll(/^## \[[^\]]+\]\s+(.+)$/gm)];
 	if (matches.length === 0) return undefined;
 	return matches[matches.length - 1][1].trim();
 }
 
-/** Raw excerpt from the end of the body (append adds newest entries last). */
+/** Trecho cru do fim do corpo (append adiciona entradas novas por último). */
 function extractExcerpt(body: string, maxChars = 150): string {
 	const clean = body
 		.replace(/^## \[[^\]]+\][^\n]*\n/g, "")
@@ -161,8 +157,9 @@ function extractExcerpt(body: string, maxChars = 150): string {
 }
 
 /**
- * Lists all memories (global + project) with metadata, sorted by updated desc.
- * Reads frontmatter (confidence, updated, summary) + last entry title.
+ * Lista todas as memórias (global + projeto) com metadados, ordenadas por
+ * updated desc. Lê frontmatter (confidence, updated, summary) + título da
+ * última entrada.
  */
 export function listMemoryIndex(projectId: string): MemoryIndexEntry[] {
 	const entries: MemoryIndexEntry[] = [];
@@ -191,7 +188,7 @@ export function listMemoryIndex(projectId: string): MemoryIndexEntry[] {
 						excerpt: extractExcerpt(body),
 					});
 				} catch {
-					// Corrupted file — ignore, don't break the index.
+					// Arquivo corrompido — ignora, não quebra o índice.
 				}
 			}
 		}
@@ -199,7 +196,7 @@ export function listMemoryIndex(projectId: string): MemoryIndexEntry[] {
 	return entries.sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
 }
 
-/** Formats per-scope counts by type in fixed MEMORY_TYPES order, never omitting 0. */
+/** Formata contagens por escopo na ordem fixa de MEMORY_TYPES, sem omitir 0. */
 function formatCountsByScope(entries: MemoryIndexEntry[]): string[] {
 	const lines: string[] = [];
 	for (const scope of ["global", "project"] as const) {
@@ -213,8 +210,9 @@ function formatCountsByScope(entries: MemoryIndexEntry[]): string[] {
 }
 
 /**
- * Formats the memory index injected once per session (before_agent_start).
- * Total always; 15 most recent; rest summarized by scope+type; full counts.
+ * Formata o índice de memórias injetado uma vez por sessão
+ * (before_agent_start). Total sempre; 15 mais recentes; resto resumido por
+ * escopo+tipo; contagens completas.
  */
 export function formatMemoryIndexText(entries: MemoryIndexEntry[]): string {
 	const total = entries.length;
@@ -248,8 +246,8 @@ export function formatMemoryIndexText(entries: MemoryIndexEntry[]): string {
 }
 
 /**
- * Builds the 'Existing memories' block for the extraction prompt (#4).
- * Uses the persisted summary when available; falls back to title + excerpt.
+ * Monta o bloco 'Existing memories' do prompt de extração.
+ * Usa o summary persistido quando disponível; senão cai para título + trecho.
  */
 export function summarizeExistingMemories(projectId: string): string {
 	const entries = listMemoryIndex(projectId);
@@ -271,16 +269,16 @@ export function summarizeExistingMemories(projectId: string): string {
 }
 
 /**
- * Applies a decay delta to a confidence value, clamped at 0.
- * Delta is treated as a reduction regardless of sign.
+ * Aplica um delta de decay a um valor de confiança, limitado a 0.
+ * O delta é tratado como redução independentemente do sinal.
  */
 export function applyDecay(currentConfidence: number, delta: number): number {
 	return Math.max(0, Math.round((currentConfidence - Math.abs(delta)) * 100) / 100);
 }
 
 /**
- * Parses YAML frontmatter from a markdown file.
- * Returns metadata and body content separately.
+ * Interpreta YAML frontmatter de um arquivo markdown.
+ * Retorna metadados e corpo separadamente.
  */
 export function parseFrontmatter(content: string): {
 	meta: Record<string, unknown>;
@@ -314,7 +312,7 @@ export function parseFrontmatter(content: string): {
 			value.startsWith('"') &&
 			value.endsWith('"')
 		) {
-			// Quoted string — unescape (\n, \", \\)
+			// String entre aspas — unescape (\n, \", \\)
 			value = value
 				.slice(1, -1)
 				.replace(/\\n/g, "\n")
@@ -330,13 +328,13 @@ export function parseFrontmatter(content: string): {
 	return { meta, body };
 }
 
-/** Escapes a string as a YAML double-quoted scalar. */
+/** Escapa uma string como scalar YAML entre aspas duplas. */
 function yamlQuoteString(value: string): string {
 	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
 /**
- * Formats metadata as YAML frontmatter string.
+ * Formata metadados como string de frontmatter YAML.
  */
 export function formatFrontmatter(meta: Record<string, unknown>): string {
 	const lines = ["---"];
@@ -348,7 +346,7 @@ export function formatFrontmatter(meta: Record<string, unknown>): string {
 		} else if (typeof value === "boolean") {
 			lines.push(`${key}: ${value}`);
 		} else {
-			// Strings always quoted — values with ":" or "\n" don't break YAML
+			// Strings sempre entre aspas — valores com ":" ou "\n" não quebram o YAML
 			lines.push(`${key}: ${yamlQuoteString(String(value))}`);
 		}
 	}
@@ -357,7 +355,7 @@ export function formatFrontmatter(meta: Record<string, unknown>): string {
 }
 
 /**
- * Formats a memory entry as markdown.
+ * Formata uma entrada de memória como markdown.
  */
 export function formatMemoryEntry(
 	date: string,
@@ -379,7 +377,7 @@ export function formatMemoryEntry(
 }
 
 /**
- * Extracts confidence values from all entries in a memory file body.
+ * Extrai valores de confiança de todas as entradas do corpo do arquivo.
  */
 export function extractEntryConfidences(body: string): number[] {
 	const confidences: number[] = [];
@@ -393,8 +391,8 @@ export function extractEntryConfidences(body: string): number[] {
 }
 
 /**
- * Recalculates the overall confidence as average of all entry confidences,
- * falling back to the provided default if no entries have explicit confidence.
+ * Recalcula a confiança geral como média das confianças das entradas,
+ * caindo para o default se nenhuma tiver confiança explícita.
  */
 export function recalcOverallConfidence(
 	existingConfidences: number[],
@@ -406,10 +404,8 @@ export function recalcOverallConfidence(
 	return Math.round((sum / all.length) * 100) / 100;
 }
 
-// ── Memory save (shared) ──────────────────────────────────────────────────
-
 /**
- * Input parameters for saveMemory.
+ * Parâmetros de entrada do saveMemory.
  */
 export interface SaveMemoryParams {
 	type: string;
@@ -421,29 +417,30 @@ export interface SaveMemoryParams {
 	confidence?: number;
 	supersedes?: string;
 	/**
-	 * Concise summary (1-2 sentences, PT-BR) of the CURRENT state of the
-	 * memory. Persisted in the frontmatter and overwritten on every
-	 * append/consolidate when provided. Used by memory_extract for dedup.
+	 * Resumo conciso (1-2 frases, PT-BR) do estado ATUAL da memória.
+	 * Persistido no frontmatter e sobrescrito em todo append/consolidate
+	 * quando fornecido. Usado pelo memory_extract para dedup.
 	 */
 	summary?: string;
 	/**
-	 * append (default): adds a dated entry to the file (backward compatible).
-	 * consolidate: rewrites the memory — archives the current version to
-	 * .supersedes/ and creates a fresh file (use when the new content updates
-	 * or contradicts the existing memory with the SAME context key; to replace
-	 * a memory under a DIFFERENT context key, use supersedes).
+	 * append (padrão): adiciona entrada datada ao arquivo (retrocompatível).
+	 * consolidate: reescreve a memória — arquiva a versão atual em .supersedes/
+	 * e cria arquivo novo (use quando o conteúdo novo atualiza ou contradiz a
+	 * memória existente com a MESMA chave de contexto; para substituir memória
+	 * de OUTRA chave, use supersedes).
 	 */
 	mode?: "append" | "consolidate";
 }
 
 /**
- * Saves or updates a memory file. Shared by memory_save and memory_extract.
+ * Salva ou atualiza um arquivo de memória. Compartilhado por memory_save e
+ * memory_extract.
  *
- * - New context → creates file with frontmatter + first entry
- * - Existing context → appends entry, updates frontmatter (entries, confidence, tags)
- * - supersedes → moves old memory to .supersedes/ first
- * - mode "consolidate" → archives the current version of the SAME context to
- *   .supersedes/ and creates a fresh file (merge-in-place, no append growth)
+ * - Contexto novo → cria arquivo com frontmatter + primeira entrada
+ * - Contexto existente → anexa entrada e atualiza frontmatter (entries, confidence, tags)
+ * - supersedes → move a memória antiga para .supersedes/ primeiro
+ * - mode "consolidate" → arquiva a versão atual do MESMO contexto em
+ *   .supersedes/ e cria arquivo novo (merge-in-place, sem crescimento por append)
  */
 export function saveMemory(
 	projectId: string,
@@ -453,35 +450,41 @@ export function saveMemory(
 	file: string;
 	entries?: number;
 	error?: string;
+	/** Paths absolutos arquivados em .supersedes/ por supersedes|consolidate. */
+	archived: string[];
 } {
 	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes, mode = "append", summary } = params;
 	const now = formatDateTime();
 	const today = now.slice(0, 10);
+	// Paths movidos para .supersedes/ nesta chamada — o índice SQLite precisa
+	// removê-los da FTS (memória antiga não pode continuar buscável).
+	const archived: string[] = [];
 
-	// Defensive guard: invalid type would create a directory in the wrong place
-	// (e.g. "gotcha" singular instead of "gotchas") and produce orphan memories.
+	// Guarda defensiva: tipo inválido criaria diretório no lugar errado
+	// (ex.: "gotcha" no singular em vez de "gotchas") e geraria memórias órfãs.
 	if (!(MEMORY_TYPES as readonly string[]).includes(type)) {
 		return {
 			action: "error",
 			file: "",
 			error: `Invalid memory type "${type}" (expected one of: ${MEMORY_TYPES.join(", ")})`,
+			archived,
 		};
 	}
 
-	// Handle supersede: move old memory to .supersedes/
-	// Search ALL types/scopes (findMemoryFile) — the contradiction usually
-	// crosses type (e.g. lesson supersede pattern). Looking only at the
-	// new save's type+scope would result in a silent no-op.
+	// Busca em TODOS os tipos/escopos (findMemoryFile) — a contradição costuma
+	// cruzar tipo (ex.: lesson supersede pattern). Olhar só o tipo+escopo do
+	// novo save resultaria em no-op silencioso.
 	if (supersedes) {
 		const oldPath = findMemoryFile(projectId, supersedes);
 		if (oldPath) {
 			moveToSupersedes(oldPath, { superseded_by: context });
+			archived.push(oldPath);
 		}
 	}
 
-	// Consolidate: archive the current version of the SAME context before creating
-	// the new one — merge-in-place via .supersedes (history preserved, file
-	// always clean, confidence without accumulated-mean distortion).
+	// Consolidate: arquiva a versão atual do MESMO contexto antes de criar a
+	// nova — merge-in-place via .supersedes (histórico preservado, arquivo
+	// sempre limpo, confiança sem distorção de média acumulada).
 	let consolidated = false;
 	if (mode === "consolidate") {
 		const ownPath = getMemoryFilePath(projectId, type, context, scope);
@@ -490,6 +493,7 @@ export function saveMemory(
 				superseded_by: context,
 				superseded_reason: "consolidated",
 			});
+			archived.push(ownPath);
 			consolidated = true;
 		}
 	}
@@ -500,7 +504,6 @@ export function saveMemory(
 	const entry = formatMemoryEntry(now, title, content, confidence);
 
 	if (!existsSync(filePath)) {
-		// Create new file
 		const meta: Record<string, unknown> = {
 			context,
 			type,
@@ -516,16 +519,16 @@ export function saveMemory(
 		return {
 			action: consolidated ? "consolidated" : "created",
 			file: filePath,
+			archived,
 		};
 	}
 
-	// Append to existing file
 	const existing = readFileSync(filePath, "utf-8");
 	const { meta, body } = parseFrontmatter(existing);
-	// Real weighted average: currentConf is the mean of the current entries (and
-	// already reflects decays). (currentConf * N + new) / (N+1) converges to the
-	// exact mean — successive averaging (a+b)/2 would skew toward the most
-	// recent entry. Recomputing from the body would make decay vanish on append.
+	// Média ponderada real: currentConf é a média das entradas atuais (e já
+	// reflete decays). (currentConf * N + new) / (N+1) converge para a média
+	// exata — média sucessiva (a+b)/2 penderia para a entrada mais recente.
+	// Recalcular do corpo faria o decay sumir no append.
 	const currentConf = typeof meta.confidence === "number" ? meta.confidence : 0.5;
 	const currentEntries = (meta.entries as number) || extractEntryConfidences(body).length || 1;
 	const newOverall = Math.round(((currentConf * currentEntries + confidence) / (currentEntries + 1)) * 100) / 100;
@@ -539,9 +542,9 @@ export function saveMemory(
 		meta.tags = [...new Set([...existingTags, ...tags])];
 	}
 
-	// Summary always reflects the CURRENT state — overwrites the previous one.
+	// Summary sempre reflete o estado ATUAL — sobrescreve o anterior.
 	if (summary) meta.summary = summary;
 
 	writeFileSync(filePath, formatFrontmatter(meta) + body + entry + "\n");
-	return { action: "appended", file: filePath, entries: meta.entries as number };
+	return { action: "appended", file: filePath, entries: meta.entries as number, archived };
 }

@@ -2,7 +2,8 @@
  * pi-memory — Tests: memory-extract.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { expect } from "./expect-shim.ts";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -196,7 +197,7 @@ describe("parseExtractionResult", () => {
 					content: "c",
 					scope: "project",
 				},
-				// singular — would create a "gotcha/" dir instead of "gotchas/"
+				// singular — criaria um diretório "gotcha/" em vez de "gotchas/"
 				{
 					type: "gotcha",
 					context: "bad-singular",
@@ -204,7 +205,7 @@ describe("parseExtractionResult", () => {
 					content: "c",
 					scope: "project",
 				},
-				// without underscore
+				// sem underscore
 				{
 					type: "rules",
 					context: "bad-rules",
@@ -350,8 +351,6 @@ describe("removeProcessedObservations", () => {
 		expect(readFileSync(fp, "utf-8")).toBe("# Session abc — 2025-01-15\n");
 	});
 });
-
-// ── Persisted summary (#4) ─────────────────────────────────────────────────
 
 describe("parseExtractionResult summary", () => {
 	it("accepts summary string", () => {

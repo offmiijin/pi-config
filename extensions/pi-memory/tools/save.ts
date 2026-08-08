@@ -4,9 +4,10 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MEMORY_LANGUAGE_RULE } from "../constants.ts";
+import { readMemoryDocFromFile, relFromMemoriesRoot, type IndexDocument } from "../memory-index.ts";
 import { saveMemory } from "../memory.ts";
 import { SaveSchema } from "../schemas.ts";
-import type { ToolState } from "./state.ts";
+import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 
 export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -32,7 +33,7 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 		parameters: SaveSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			// Write changes the memory index → invalidate system prompt cache
+			// Escrita muda o índice de memórias → invalida o cache do system prompt
 			state.cachedIndexText = null;
 			if (!state.projectId) {
 				return {
@@ -50,6 +51,30 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 				};
 			}
 
+			// Sincroniza o índice SQLite — falha de indexação NÃO reverte a escrita
+			// markdown (canônico); avisa e segue. Paths arquivados por
+			// supersedes/consolidate saem da FTS na MESMA transação: a memória
+			// antiga não continua buscável até o próximo sync incremental.
+			let index: IndexStatus = "off";
+			if (state.index?.isOpen) {
+				try {
+					const upsert: IndexDocument[] = [];
+					const remove: string[] = [];
+					if (result.file) {
+						upsert.push(
+							readMemoryDocFromFile(result.file, relFromMemoriesRoot(result.file)),
+						);
+					}
+					for (const p of result.archived ?? []) remove.push(relFromMemoriesRoot(p));
+					index = syncIndex(state, { upsert, remove });
+				} catch (err) {
+					index = "degraded";
+					console.warn(
+						`[pi-memory] save: índice não sincronizado (${result.file}): ${(err as Error).message}`,
+					);
+				}
+			}
+
 			const text =
 				result.action === "created"
 					? `Created memory: ${params.scope}/${params.type}/${params.context}`
@@ -59,7 +84,7 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 
 			return {
 				content: [{ type: "text", text }],
-				details: result,
+				details: { ...result, index },
 			};
 		},
 	});
