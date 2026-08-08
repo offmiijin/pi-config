@@ -17,6 +17,15 @@ export const MEMORIES_ROOT = join(getAgentDir(), "memories");
 export const OBSERVATION_THRESHOLD = 50;
 
 /**
+ * Fase 0: a captura de sessão migra de observações markdown (turn_end) para
+ * episódios no pipeline operacional (agent_settled → pipeline.sqlite). Flag
+ * temporária de transição — com `false`, o pipeline legado de observações
+ * (escrita de markdown, gatilho de extração, lembrete de save) fica inativo
+ * mas o código permanece; removida na Fase 6.
+ */
+export const ENABLE_LEGACY_OBSERVATIONS = false;
+
+/**
  * Orçamentos de tokens para campos de observação (aprox., ~4 chars/token).
  * Equivalente a ~4000 chars de prompt, ~8000 de resposta, ~2000 por tool result.
  */

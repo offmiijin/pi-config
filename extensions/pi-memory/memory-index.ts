@@ -25,40 +25,7 @@ import { join } from "node:path";
 
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
 import { extractLastEntryTitle, parseFrontmatter } from "./memory.ts";
-
-/** Superfície mínima de statement usada pelo índice (comum aos dois drivers). */
-interface StatementLike {
-	get(...params: unknown[]): Record<string, unknown> | undefined;
-	all(...params: unknown[]): Record<string, unknown>[];
-	run(...params: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint };
-}
-
-/** Superfície mínima de conexão usada pelo índice (comum aos dois drivers). */
-export interface DatabaseLike {
-	exec(sql: string): unknown;
-	prepare(sql: string): StatementLike;
-	close(): void;
-}
-
-type DatabaseCtor = new (path: string) => DatabaseLike;
-
-/**
- * Resolve o construtor de banco por runtime.
- * - Node → `node:sqlite` (DatabaseSync) — suíte de testes roda aqui.
- * - Bun → `bun:sqlite` (Database) — pi binário roda aqui; Bun não tem node:sqlite.
- * Falha nos dois ⇒ erro claro em vez de módulo quebrado.
- */
-async function resolveDatabaseCtor(): Promise<DatabaseCtor> {
-	try {
-		const mod = await import("node:sqlite");
-		return mod.DatabaseSync as unknown as DatabaseCtor;
-	} catch {
-		const mod = await import("bun:sqlite");
-		return mod.Database as unknown as DatabaseCtor;
-	}
-}
-
-const DatabaseCtor = await resolveDatabaseCtor();
+import { DatabaseCtor, type DatabaseLike, type StatementLike } from "./db.ts";
 
 export const INDEX_DB_FILENAME = ".index.sqlite";
 export const INDEX_DB_PATH = join(MEMORIES_ROOT, INDEX_DB_FILENAME);

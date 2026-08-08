@@ -6,16 +6,19 @@
  * ricos agrupados por contexto, buscáveis via índice SQLite FTS5/BM25
  * (fallback ripgrep).
  *
- * O LLM conduz todas as operações de memória via tools. A extensão só anexa
- * observações cruas ao arquivo de sessão automaticamente no turn_end.
+ * O LLM conduz todas as operações de memória via tools. A extensão captura
+ * episódios (agent_settled → pipeline.sqlite) para extração em background;
+ * observações markdown legadas ficam atrás de ENABLE_LEGACY_OBSERVATIONS.
  *
  * Layout:
  *   index.ts            — estado da extensão + event handlers (wiring)
  *   constants.ts        — constantes compartilhadas + setup de projeto
- *   session.ts          — ciclo de vida das observações de sessão
+ *   db.ts               — driver SQLite compartilhado (node/bun)
+ *   pipeline.ts         — pipeline operacional (episódios, evidências, jobs)
+ *   session.ts          — ciclo de vida das observações de sessão (legado)
  *   memory.ts           — CRUD de arquivos de memória + índice + save
  *   memory-search.ts    — fallback de busca via ripgrep (índice indisponível)
- *   memory-extract.ts   — helpers de extração assistida por LLM
+ *   memory-extract.ts   — helpers de extração assistida por LLM (legado)
  *   schemas.ts          — schemas de parâmetros das tools
  *   tools/*.ts          — um arquivo por tool (status, save, search, decay, extract)
  */
@@ -23,6 +26,7 @@
 import { appendFileSync, existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+	ENABLE_LEGACY_OBSERVATIONS,
 	OBSERVATION_THRESHOLD,
 	ensureDirectories,
 	identifyProject,
@@ -48,6 +52,12 @@ import {
 } from "./session.ts";
 import { formatMemoryIndexText, listMemoryIndex } from "./memory.ts";
 import { INDEX_DB_PATH, MemoryIndex } from "./memory-index.ts";
+import {
+	PIPELINE_DB_PATH,
+	PipelineDB,
+	buildEpisodeFingerprint,
+	estimateEpisodeTokens,
+} from "./pipeline.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -78,6 +88,9 @@ export default function (pi: ExtensionAPI) {
 	let turnDedupState = createTurnDedupState();
 	// Buffer de resultados de tools do turn atual (toolCallId → observation)
 	const toolResultsBuffer = new Map<string, ToolObservation>();
+	// Pipeline operacional (episódios → worker de extração futuro). Null se
+	// indisponível — captura de episódio vira no-op com log.
+	let pipeline: PipelineDB | null = null;
 
 	pi.on("tool_result", async (event) => {
 		const e = event as unknown as {
@@ -87,6 +100,8 @@ export default function (pi: ExtensionAPI) {
 			isError?: boolean;
 		};
 		if (!e.toolCallId) return;
+		// O buffer só alimenta o pipeline legado de observações (turn_end).
+		if (!ENABLE_LEGACY_OBSERVATIONS) return;
 		toolResultsBuffer.set(e.toolCallId, {
 			name: e.toolName ?? "unknown",
 			result: extractTextContent(e.content),
@@ -117,6 +132,21 @@ export default function (pi: ExtensionAPI) {
 			}
 			state.index = null;
 			console.warn(`[pi-memory] índice indisponível: ${(err as Error).message} — busca via rg`);
+		}
+
+		// Pipeline operacional (episódios/evidências/jobs). Falha não derruba a
+		// sessão — a captura de episódio vira no-op com log.
+		try {
+			pipeline = new PipelineDB(PIPELINE_DB_PATH);
+			pipeline.open();
+		} catch (err) {
+			try {
+				pipeline?.close();
+			} catch {
+				// close best-effort — estado já degradado
+			}
+			pipeline = null;
+			console.warn(`[pi-memory] pipeline indisponível: ${(err as Error).message}`);
 		}
 
 		state.lastPromptedBucket = -1;
@@ -189,6 +219,11 @@ export default function (pi: ExtensionAPI) {
 		const { skip, state: nextState } = nextTurnDedup(turnIndex, fingerprint, turnDedupState);
 		turnDedupState = nextState;
 		if (skip) return;
+
+		// Fase 0: observações markdown legadas desativadas — a captura migrou
+		// para episódios no pipeline operacional (agent_settled). O código
+		// permanece atrás da flag durante a transição (removido na Fase 6).
+		if (!ENABLE_LEGACY_OBSERVATIONS) return;
 
 		const branch = ctx.sessionManager.getBranch();
 
@@ -353,16 +388,62 @@ export default function (pi: ExtensionAPI) {
 		return { systemPrompt: withIndex(event.systemPrompt) };
 	});
 
-	pi.on("agent_settled", async (_event, _ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		// agent_settled = fim real do prompt (após retries/compaction/followUps).
 		// Resetar a guarda aqui (não em before_agent_start) garante no máximo 1
 		// lembrete por USER turn, mesmo com turns longos de tools.
 		saveReminderSent = false;
+
+		// Fase 0: captura do episódio no pipeline operacional. agent_settled é o
+		// fechamento real do prompt — unidade semântica de extração (o antigo
+		// turn_end fragmentava por turn). Metadados apenas; nenhuma leitura de
+		// conteúdo aqui. Falha nunca derruba o turno (best-effort).
+		if (!state.projectId || !state.currentSessionHash) return;
+		if (!pipeline?.isOpen) return;
+		try {
+			const sm = ctx.sessionManager;
+			const branch = sm.getBranch();
+
+			// Range do episódio: do último user prompt até a folha atual
+			// (followUps e retries do mesmo prompt ficam dentro do episódio).
+			let lastUserIdx = -1;
+			for (let i = branch.length - 1; i >= 0; i--) {
+				const entry = branch[i];
+				if (entry.type === "message" && entry.message?.role === "user") {
+					lastUserIdx = i;
+					break;
+				}
+			}
+			if (lastUserIdx < 0) return; // sem prompt de usuário — nada a capturar
+
+			const range = branch.slice(lastUserIdx);
+			const leaf = branch[branch.length - 1];
+			const fingerprint = buildEpisodeFingerprint(range.map((e) => e.id));
+
+			// Dedup: agent_settled pode disparar mais de uma vez para o mesmo
+			// episódio (harness) — a impressão digital cobre o range inteiro.
+			if (pipeline.findEpisodeByFingerprint(state.currentSessionHash, fingerprint)) return;
+
+			pipeline.insertEpisode({
+				projectId: state.projectId,
+				sessionId: state.currentSessionHash,
+				sessionFile: sm.getSessionFile() ?? "",
+				startEntryId: branch[lastUserIdx].id,
+				endEntryId: leaf.id,
+				leafId: sm.getLeafId() ?? leaf.id,
+				fingerprint,
+				tokenEstimate: estimateEpisodeTokens(range),
+			});
+		} catch (err) {
+			console.warn(`[pi-memory] captura de episódio falhou: ${(err as Error).message}`);
+		}
 	});
 
 	pi.on("session_shutdown", async () => {
 		state.index?.close();
 		state.index = null;
+		pipeline?.close();
+		pipeline = null;
 	});
 
 	registerMemoryStatus(pi, state);
