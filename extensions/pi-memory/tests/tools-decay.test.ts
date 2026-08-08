@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: tool memory_decay (semântica de falha de índice, #4).
+ * pi-memory — Tests: tool memory_decay (semântica de falha de índice).
  *
  * Exercita o execute() real da tool com um mock mínimo de ExtensionAPI
  * (registerTool captura a definição) e um MemoryIndex real sobre diretório

@@ -88,7 +88,7 @@ describe("searchMemories", () => {
 		testProjectId = `__test_search_${Date.now()}`;
 		const { MEMORIES_ROOT } = await import("../constants.ts");
 
-		// Write a test file to the real MEMORIES_ROOT under a temp project
+		// Escreve um arquivo de teste no MEMORIES_ROOT real sob projeto temporário
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "test-memory.md");
 		ensureFileDir(fp);
 		writeFileSync(
@@ -107,7 +107,7 @@ describe("searchMemories", () => {
 			].join("\n"),
 		);
 
-		// Also a global file
+		// Também um arquivo global
 		const globalFp = join(MEMORIES_ROOT, "_global", "_rules", "test-global.md");
 		ensureFileDir(globalFp);
 		writeFileSync(
@@ -125,7 +125,7 @@ describe("searchMemories", () => {
 			].join("\n"),
 		);
 
-		// Session file with unique keyword (must not appear in results)
+		// Arquivo de sessão com palavra-chave única (não deve aparecer nos resultados)
 		const sessionFp = join(
 			MEMORIES_ROOT,
 			"projects",
@@ -202,7 +202,7 @@ describe("searchMemories", () => {
 			projectId: testProjectId,
 			limit: 10,
 		});
-		// test memory has confidence 0.7, so should be filtered out
+		// a memória de teste tem confiança 0.7, então deve ser filtrada
 		const match = results.find((r) => r.file.includes("test-memory.md"));
 		expect(match).toBeUndefined();
 	});
@@ -285,9 +285,9 @@ describe("searchMemories", () => {
 				projectId: testProjectId,
 				limit: 10,
 			});
-			// Finds the current project's memory
+			// Encontra a memória do projeto atual
 			expect(results.some((r) => r.file.includes("test-memory.md"))).toBeTrue();
-			// Doesn't leak another project's memory
+			// Não vaza a memória de outro projeto
 			expect(results.some((r) => r.file.includes("leak-all.md"))).toBeFalse();
 		} finally {
 			rmSync(join(MEMORIES_ROOT, "projects", otherProject), {

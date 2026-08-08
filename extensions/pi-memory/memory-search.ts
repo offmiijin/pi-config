@@ -1,5 +1,6 @@
 /**
- * pi-memory — Memory search via ripgrep, fallback do índice SQLite (no PI dependency).
+ * pi-memory — Busca de memórias via ripgrep, fallback do índice SQLite
+ * (sem dependência do PI).
  */
 
 import { spawnSync } from "node:child_process";
@@ -10,8 +11,8 @@ import { MEMORIES_ROOT } from "./constants.ts";
 import { parseFrontmatter } from "./memory.ts";
 
 /**
- * Reads the frontmatter confidence from a memory file.
- * Returns undefined if file can't be read or has no confidence.
+ * Lê a confiança do frontmatter de um arquivo de memória.
+ * Retorna undefined se o arquivo não puder ser lido ou não tiver confiança.
  */
 export function readFileConfidence(filePath: string): number | undefined {
 	try {
@@ -26,17 +27,17 @@ export function readFileConfidence(filePath: string): number | undefined {
 }
 
 /**
- * Results from a memory search.
+ * Resultados de uma busca de memórias.
  */
 export interface SearchResult {
-	/** Absolute path to the memory file */
+	/** Caminho absoluto do arquivo de memória */
 	file: string;
-	/** Matched line(s) with line numbers */
+	/** Linha(s) encontrada(s) com números de linha */
 	lines: string[];
 }
 
 /**
- * Parameters for searchMemories.
+ * Parâmetros do searchMemories.
  */
 export interface SearchOptions {
 	query: string;
@@ -44,15 +45,14 @@ export interface SearchOptions {
 	type?: string;
 	minConfidence?: number;
 	limit?: number;
-	/** Project id — required when scope === "project". */
+	/** Project id — obrigatório quando scope === "project". */
 	projectId?: string;
 }
 
 /**
- * Builds a ripgrep pattern from a list of terms (OR semantics).
- * Each term is regex-escaped so plain keywords match literally
- * (e.g. "C++" matches "C++", not the regex quantifier).
- * Returns "" for empty input.
+ * Monta um padrão ripgrep a partir de uma lista de termos (semântica OR).
+ * Cada termo é regex-escapado para casar literalmente (ex.: "C++" casa
+ * "C++", não o quantificador). Retorna "" para entrada vazia.
  */
 export function buildSearchPattern(terms: string[]): string {
 	const escaped = terms
@@ -62,17 +62,17 @@ export function buildSearchPattern(terms: string[]): string {
 }
 
 /**
- * Searches memories via ripgrep (fallback quando o índice SQLite/FTS5
- * não está disponível — falha de abertura/sync no startup).
- * Returns matching file paths with context lines.
+ * Busca memórias via ripgrep (fallback quando o índice SQLite/FTS5 não está
+ * disponível — falha de abertura/sync no startup).
+ * Retorna caminhos de arquivo com linhas de contexto.
  */
 export function searchMemories(options: SearchOptions): SearchResult[] {
 	const { query, scope = "all", type, minConfidence, limit = 10 } = options;
 
-	// Root paths per scope — .supersedes/ is naturally excluded (it is not
-	// a subpath of _global or projects), no fragile exclusion glob.
-	// scope=all = global + CURRENT project: memories from other projects are
-	// project-specific and must not leak into the current session.
+	// Caminhos raiz por escopo — .supersedes/ é excluído naturalmente (não é
+	// subcaminho de _global ou projects), sem glob de exclusão frágil.
+	// scope=all = global + projeto ATUAL: memórias de outros projetos são
+	// específicas e não podem vazar para a sessão atual.
 	let searchPaths: string[];
 	if (scope === "global") {
 		searchPaths = [join(MEMORIES_ROOT, "_global")];
@@ -87,13 +87,13 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 				: [projectPath];
 	}
 
-	// Missing paths (new project with no memories) would make rg complain on
-	// stderr and exit with status 2 — discarding valid results from the rest.
+	// Caminhos ausentes (projeto novo sem memórias) fariam o rg reclamar no
+	// stderr e sair com status 2 — descartando resultados válidos do resto.
 	searchPaths = searchPaths.filter((p) => existsSync(p));
 	if (searchPaths.length === 0) return [];
 
-	// --iglob: case-insensitive also in path globs (hand-created files may
-	// have uppercase). Sessions is the only exclusion (lives under projects/).
+	// --iglob: case-insensitive também nos globs de caminho (arquivos criados
+	// à mão podem ter maiúsculas). Sessions é a única exclusão (fica em projects/).
 	const rgArgs: string[] = ["--no-heading", "--line-number", "-i"];
 	rgArgs.push("--iglob", type ? `**/${type}/*.md` : "**/*.md");
 	rgArgs.push("--glob", "!**/sessions/**");
@@ -109,13 +109,13 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 		});
 		if (result.error) throw result.error;
 		if (result.status === null) throw new Error("rg process failed to spawn");
-		if (result.status === 1) return []; // no matches (rg exit code 1)
+		if (result.status === 1) return []; // sem matches (rg exit code 1)
 		if (result.status !== 0) {
 			throw new Error(`rg exited ${result.status}: ${result.stderr}`);
 		}
 		stdout = result.stdout ?? "";
 	} catch (e: unknown) {
-		// rg not installed?
+		// rg não instalado?
 		const msg = (e as Error).message ?? String(e);
 		if (msg.includes("ENOENT")) throw new Error("rg (ripgrep) not found — install with: apt install ripgrep");
 		if (msg.includes("rg exited")) throw e;
@@ -132,7 +132,7 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 		const filePath = line.slice(0, idx);
 		const rest = line.slice(idx + 1);
 
-		// The rest may have multiple colons (line:content)
+		// O resto pode ter vários dois-pontos (linha:conteúdo)
 		const lineEnd = rest.indexOf(":");
 		if (lineEnd === -1) continue;
 		const fileLine = rest.slice(0, lineEnd);

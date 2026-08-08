@@ -197,7 +197,7 @@ describe("parseExtractionResult", () => {
 					content: "c",
 					scope: "project",
 				},
-				// singular — would create a "gotcha/" dir instead of "gotchas/"
+				// singular — criaria um diretório "gotcha/" em vez de "gotchas/"
 				{
 					type: "gotcha",
 					context: "bad-singular",
@@ -205,7 +205,7 @@ describe("parseExtractionResult", () => {
 					content: "c",
 					scope: "project",
 				},
-				// without underscore
+				// sem underscore
 				{
 					type: "rules",
 					context: "bad-rules",

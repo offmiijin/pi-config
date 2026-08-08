@@ -633,7 +633,7 @@ describe("resetSessionFile", () => {
 		const fp = getSessionFilePath("__reset_test", "resethash", date);
 		ensureFileDir(fp);
 
-		// Create file with observations
+		// Cria arquivo com observações
 		writeFileSync(
 			fp,
 			[
@@ -655,7 +655,7 @@ describe("resetSessionFile", () => {
 		resetSessionFile(fp, "resethash");
 
 		const content = readFileSync(fp, "utf-8");
-		// resetSessionFile writes the header with today's date
+		// resetSessionFile escreve o cabeçalho com a data de hoje
 		const today = new Date().toISOString().slice(0, 10);
 		expect(content).toBe(`# Session resethash — ${today}\n`);
 		expect(countObservations(fp)).toBe(0);
@@ -697,7 +697,7 @@ describe("shouldPromptExtraction", () => {
 	});
 
 	it("does not prompt again within same bucket", () => {
-		// already flagged in bucket 1 (50-99)
+		// já sinalizado no bucket 1 (50-99)
 		const r = shouldPromptExtraction(80, 1);
 		expect(r.prompt).toBeFalse();
 	});
@@ -794,7 +794,7 @@ describe("nextTurnDedup", () => {
 	it("allows identical content across different turnIndexes (legit turns)", () => {
 		let state = createTurnDedupState();
 		state = nextTurnDedup(3, "same", state).state;
-		// turnIndex available → trust the index, not the fingerprint
+		// turnIndex disponível → confia no índice, não na impressão digital
 		const next = nextTurnDedup(4, "same", state);
 		expect(next.skip).toBeFalse();
 	});

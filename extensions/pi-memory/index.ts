@@ -1,22 +1,23 @@
 /**
- * pi-memory — Memory extension for PI coding agent.
+ * pi-memory — Extensão de memória para o agente PI.
  *
- * Manages persistent memories (rules, decisions, gotchas, lessons, patterns)
- * across global and project scopes. Memories are rich markdown files grouped
- * by context, searchable via SQLite FTS5/BM25 index (ripgrep fallback).
+ * Gerencia memórias persistentes (rules, decisions, gotchas, lessons,
+ * patterns) nos escopos global e por projeto. Memórias são arquivos markdown
+ * ricos agrupados por contexto, buscáveis via índice SQLite FTS5/BM25
+ * (fallback ripgrep).
  *
- * The LLM drives all memory operations via tools. The extension only appends
- * raw observations to the session file automatically at turn_end.
+ * O LLM conduz todas as operações de memória via tools. A extensão só anexa
+ * observações cruas ao arquivo de sessão automaticamente no turn_end.
  *
  * Layout:
- *   index.ts            — extension state + event handlers (wiring)
- *   constants.ts        — shared constants + project setup
- *   session.ts          — session observation lifecycle
- *   memory.ts           — memory file CRUD + index + save
- *   memory-search.ts    — ripgrep search fallback (índice indisponível)
- *   memory-extract.ts   — LLM-assisted extraction helpers
- *   schemas.ts          — tool parameter schemas
- *   tools/*.ts          — one file per tool (status, save, search, decay, extract)
+ *   index.ts            — estado da extensão + event handlers (wiring)
+ *   constants.ts        — constantes compartilhadas + setup de projeto
+ *   session.ts          — ciclo de vida das observações de sessão
+ *   memory.ts           — CRUD de arquivos de memória + índice + save
+ *   memory-search.ts    — fallback de busca via ripgrep (índice indisponível)
+ *   memory-extract.ts   — helpers de extração assistida por LLM
+ *   schemas.ts          — schemas de parâmetros das tools
+ *   tools/*.ts          — um arquivo por tool (status, save, search, decay, extract)
  */
 
 import { appendFileSync, existsSync } from "node:fs";
@@ -55,7 +56,7 @@ import { registerMemoryStatus } from "./tools/status.ts";
 import type { ToolState } from "./tools/state.ts";
 
 export default function (pi: ExtensionAPI) {
-	// Shared state between event handlers and tools (tools mutate via reference)
+	// Estado compartilhado entre event handlers e tools (tools mutam via referência)
 	const state: ToolState = {
 		projectId: "",
 		currentSessionHash: "",
@@ -65,17 +66,17 @@ export default function (pi: ExtensionAPI) {
 		index: null,
 	};
 
-	// Auto-extraction trigger state (used only by event handlers)
+	// Estado do gatilho de extração automática (usado só pelos event handlers)
 	let extractionDueCount = 0;
-	// Save reminder state (code-changing turns)
+	// Estado do lembrete de save (turns que mudam código)
 	let saveReminderDue = false;
 	let lastSaveReminderObs = 0;
-	// Flag: reminder sent this user turn (max 1x per turn —
-	// turn_end can fire multiple times within the same turn with edits)
+	// Flag: lembrete enviado neste user turn (máx 1x por turn —
+	// turn_end pode disparar várias vezes no mesmo turn com edits)
 	let saveReminderSent = false;
-	// Turn dedup (harness can fire turn_end twice for the same turn)
+	// Dedup de turn (o harness pode disparar turn_end duas vezes para o mesmo turn)
 	let turnDedupState = createTurnDedupState();
-	// Tool results buffer for the current turn (toolCallId → observation)
+	// Buffer de resultados de tools do turn atual (toolCallId → observation)
 	const toolResultsBuffer = new Map<string, ToolObservation>();
 
 	pi.on("tool_result", async (event) => {
@@ -118,7 +119,7 @@ export default function (pi: ExtensionAPI) {
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
 		saveReminderSent = false;
-		// Reset session memory index cache
+		// Reseta o cache do índice de memória da sessão
 		state.cachedIndexText = null;
 		turnDedupState = createTurnDedupState();
 	});
@@ -126,10 +127,9 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_tree", async (_event, ctx) => {
 		const nextProjectId = identifyProject(ctx.cwd);
 		if (nextProjectId === state.projectId) {
-			// Same project: do NOT reset trigger state. Resetting lastPromptedBucket
-			// here, with an extraction followUp still pending (nextTurn), would
-			// make the trigger re-fire the same bucket → duplicated message in the
-			// next user prompt.
+			// Mesmo projeto: NÃO reseta o estado do gatilho. Resetar lastPromptedBucket
+			// aqui, com um followUp de extração pendente (nextTurn), faria o gatilho
+			// re-disparar o mesmo bucket → mensagem duplicada no próximo user prompt.
 			return;
 		}
 		state.projectId = nextProjectId;
@@ -148,7 +148,7 @@ export default function (pi: ExtensionAPI) {
 				try {
 					state.index.close();
 				} catch {
-					// close best-effort — estado já degradado
+					// close em best-effort — estado já degradado
 				}
 				state.index = null;
 			}
@@ -160,7 +160,7 @@ export default function (pi: ExtensionAPI) {
 		saveReminderDue = false;
 		lastSaveReminderObs = 0;
 		saveReminderSent = false;
-		// Reset session memory index cache
+		// Reseta o cache do índice de memória da sessão
 		state.cachedIndexText = null;
 		turnDedupState = createTurnDedupState();
 	});
@@ -173,11 +173,11 @@ export default function (pi: ExtensionAPI) {
 
 		const agentResponse = extractTextContent(assistantMsg.content);
 
-		// The harness can fire turn_end more than once for the SAME turn
-		// (observed in sessions with followUps: duplicated obs, inflated count,
-		// re-fired reminders/triggers). Dedup by event.turnIndex (unique index
-		// per turn); fallback to content fingerprint when
-		// turnIndex is unavailable.
+		// O harness pode disparar turn_end mais de uma vez para o MESMO turn
+		// (observado em sessões com followUps: obs duplicadas, contagem inflada,
+		// lembretes/gatilhos re-disparados). Dedup por event.turnIndex (índice
+		// único por turn); fallback para a impressão digital do conteúdo quando
+		// turnIndex não existe.
 		const fingerprint = buildTurnFingerprint(assistantMsg.content);
 		const turnIndex = (event as { turnIndex?: number }).turnIndex;
 		const { skip, state: nextState } = nextTurnDedup(turnIndex, fingerprint, turnDedupState);
@@ -186,8 +186,8 @@ export default function (pi: ExtensionAPI) {
 
 		const branch = ctx.sessionManager.getBranch();
 
-		// Find the last user prompt and collect tool results
-		// from the current turn (role="toolResult" messages after the last prompt)
+		// Encontra o último user prompt e coleta os resultados de tools do turn
+		// atual (mensagens role="toolResult" após o último prompt)
 		let userPrompt = "";
 		let lastUserIdx = -1;
 		for (let i = branch.length - 1; i >= 0; i--) {
@@ -199,11 +199,11 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Tool calls from the assistant content (source order)
+		// Tool calls do conteúdo do assistente (ordem de origem)
 		const toolCalls = extractToolCalls(assistantMsg.content);
 
-		// This turn's results from the branch (role="toolResult" messages
-		// after the last user — also in source order, as documented)
+		// Resultados deste turn vindos do branch (mensagens role="toolResult" após
+		// o último user — também em ordem de origem, como documentado)
 		const branchResults: ToolObservation[] = [];
 		if (lastUserIdx >= 0) {
 			for (let i = lastUserIdx + 1; i < branch.length; i++) {
@@ -218,7 +218,7 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		// Align toolCalls[i] ↔ branchResults[i]; buffer enriches by id
+		// Alinha toolCalls[i] ↔ branchResults[i]; o buffer enriquece por id
 		let toolResults: ToolObservation[];
 		if (toolCalls.length > 0) {
 			toolResults = toolCalls.map((tc, i) => {
@@ -227,7 +227,7 @@ export default function (pi: ExtensionAPI) {
 				return branchResults[i] ?? { name: tc.name };
 			});
 		} else {
-			// No toolCall blocks in content: use branchResults directly
+			// Sem blocos toolCall no conteúdo: usa branchResults direto
 			toolResults =
 				branchResults.length > 0
 					? branchResults
@@ -247,11 +247,11 @@ export default function (pi: ExtensionAPI) {
 		const obs = formatObservation(obsNumber, userPrompt, toolResults, agentResponse);
 		appendFileSync(sessionFile, obs + "\n");
 
-		// Send a message to the LLM at each threshold crossing (50, 100, ...).
-		// Delivered via "nextTurn" (not followUp): no intra-turn delay, no
-		// extra cycle. lastPromptedBucket (monotonic) already guarantees 1x/threshold;
-		// it is not reset in before_agent_start nor in session_tree for the same
-		// project (prevents re-firing the same bucket with a pending message).
+		// Envia mensagem ao LLM em cada cruzamento de threshold (50, 100, ...).
+		// Entregue via "nextTurn" (não followUp): sem atraso intra-turn, sem
+		// ciclo extra. lastPromptedBucket (monotônico) já garante 1x/threshold;
+		// não é resetado em before_agent_start nem em session_tree para o mesmo
+		// projeto (evita re-disparar o mesmo bucket com mensagem pendente).
 		const count = countObservations(sessionFile);
 		const { prompt, bucket } = shouldPromptExtraction(count, state.lastPromptedBucket);
 		if (prompt) {
@@ -263,20 +263,20 @@ export default function (pi: ExtensionAPI) {
 					{ deliverAs: "nextTurn" },
 				);
 			} catch {
-				// Fallback: inject at the next before_agent_start
+				// Fallback: injeta no próximo before_agent_start
 				extractionDueCount = count;
 			}
 		}
 
-		// Turn changed code and passed the cooldown → remind the LLM to save
-		// durable learning directly via memory_save (without waiting for extract).
-		// Max 1x per USER turn: saveReminderSent guard is reset in
-		// agent_settled (real end of prompt) — NOT in before_agent_start, which
-		// also fires for extension-generated cycles and reset the
-		// guard mid-turn (duplicated reminders).
-		// Delivered via "nextTurn": doesn't interrupt or add an extra cycle — the
-		// message arrives at the next user prompt, with no delay inside the
-		// turn and no re-fire by the followUp itself.
+		// Turn mudou código e passou o cooldown → lembra o LLM de salvar
+		// aprendizado durável direto via memory_save (sem esperar o extract).
+		// Máx 1x por USER turn: a guarda saveReminderSent é resetada em
+		// agent_settled (fim real do prompt) — NÃO em before_agent_start, que
+		// também dispara para ciclos gerados pela extensão e resetaria a guarda
+		// no meio do turn (lembretes duplicados).
+		// Entregue via "nextTurn": não interrompe nem adiciona ciclo extra — a
+		// mensagem chega no próximo user prompt, sem atraso dentro do turn e
+		// sem re-disparo pelo followUp.
 		if (
 			!saveReminderSent &&
 			shouldRemindSave(
@@ -300,14 +300,14 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		// NOTE: do NOT reset saveReminderSent here. before_agent_start also fires
-		// for extension-generated cycles (sendUserMessage), which
-		// reset the guard mid-turn and allowed duplicated reminders.
-		// Reset happens in agent_settled (real end of the user prompt).
+		// NOTA: NÃO resete saveReminderSent aqui. before_agent_start também
+		// dispara para ciclos gerados pela extensão (sendUserMessage), que
+		// resetavam a guarda no meio do turn e permitiam lembretes duplicados.
+		// O reset acontece em agent_settled (fim real do user prompt).
 
-		// Memory index in the SYSTEM PROMPT (rebuilt per turn — doesn't
-		// pollute the message history like the customType message did).
-		// Cache per session, invalidated on writes (memory_save/extract/decay).
+		// Índice de memórias no SYSTEM PROMPT (reconstruído por turn — não polui
+		// o histórico como a mensagem customType fazia). Cache por sessão,
+		// invalidado em escritas (memory_save/extract/decay).
 		const withIndex = (prompt: string): string => {
 			if (!state.projectId) return prompt;
 			if (state.cachedIndexText === null) {
@@ -348,9 +348,9 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_settled", async (_event, _ctx) => {
-		// agent_settled = real end of the prompt (after retries/compaction/followUps).
-		// Resetting the guard here (not in before_agent_start) guarantees at most
-		// 1 reminder per USER turn, even with long tool turns.
+		// agent_settled = fim real do prompt (após retries/compaction/followUps).
+		// Resetar a guarda aqui (não em before_agent_start) garante no máximo 1
+		// lembrete por USER turn, mesmo com turns longos de tools.
 		saveReminderSent = false;
 	});
 

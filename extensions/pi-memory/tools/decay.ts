@@ -33,7 +33,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 		parameters: DecaySchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			// Write changes the memory index → invalidate system prompt cache
+			// Escrita muda o índice de memórias → invalida o cache do system prompt
 			state.cachedIndexText = null;
 			if (!state.projectId) {
 				return {
@@ -61,7 +61,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 			const { meta, body } = parseFrontmatter(content);
 			const currentConf = typeof meta.confidence === "number" ? meta.confidence : 0.5;
 
-			// Force move to .supersedes/
+			// Move forçado para .supersedes/
 			if (move_to_supersedes) {
 				const supPath = moveToSupersedes(filePath, {
 					superseded_reason: reason,
@@ -82,7 +82,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 
 			const newConf = applyDecay(currentConf, delta);
 
-			// Confidence reached 0 — move to .supersedes/
+			// Confiança chegou a 0 — move para .supersedes/
 			if (newConf <= 0) {
 				const supPath = moveToSupersedes(filePath, {
 					superseded_reason: reason,
@@ -99,7 +99,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 				};
 			}
 
-			// Update confidence in place. Reindexa o documento INTEIRO (corpo +
+			// Atualiza a confiança no lugar. Reindexa o documento INTEIRO (corpo +
 			// hash + metadados) — não apenas confidence: o markdown mudou e o
 			// content_hash precisa acompanhar para o sync incremental não
 			// reindexar à toa na próxima sessão. Falha de índice degrada e segue

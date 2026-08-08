@@ -1,12 +1,12 @@
 /**
- * pi-memory — Tool parameter schemas (no PI dependency beyond typebox).
+ * pi-memory — Schemas de parâmetros das tools (sem dependência do PI além de typebox).
  */
 
 import { Type } from "typebox";
 
 /**
- * Creates a TypeBox union of literal string types.
- * Equivalent to StringEnum from @earendil-works/pi-ai.
+ * Cria uma união TypeBox de tipos literal string.
+ * Equivalente ao StringEnum de @earendil-works/pi-ai.
  */
 function StringEnum<T extends readonly string[]>(values: T) {
 	return Type.Union(values.map((v) => Type.Literal(v)));

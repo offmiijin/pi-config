@@ -33,7 +33,7 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 		parameters: SaveSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			// Write changes the memory index → invalidate system prompt cache
+			// Escrita muda o índice de memórias → invalida o cache do system prompt
 			state.cachedIndexText = null;
 			if (!state.projectId) {
 				return {

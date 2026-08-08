@@ -1,5 +1,5 @@
 /**
- * pi-memory — Shared constants + project setup.
+ * pi-memory — Constantes compartilhadas + setup de projeto.
  *
  * Portabilidade: usa getAgentDir() do pi-coding-agent (honra $PI_AGENT_DIR
  * e rebrandings via CONFIG_DIR_NAME) em vez de hardcodar ~/.pi/agent —
@@ -17,8 +17,8 @@ export const MEMORIES_ROOT = join(getAgentDir(), "memories");
 export const OBSERVATION_THRESHOLD = 50;
 
 /**
- * Token budgets for observation fields (approx, ~4 chars/token).
- * Equivalent to ~4000 chars prompt, ~8000 chars response, ~2000 chars per tool result.
+ * Orçamentos de tokens para campos de observação (aprox., ~4 chars/token).
+ * Equivalente a ~4000 chars de prompt, ~8000 de resposta, ~2000 por tool result.
  */
 export const OBSERVATION_TOKEN_BUDGETS = {
 	prompt: 1000,
@@ -30,9 +30,9 @@ export const OBSERVATION_TOKEN_BUDGETS = {
 export const CHARS_PER_TOKEN = 4;
 
 /**
- * Token budget of observations per memory_extract call (incremental batch).
- * ~7-8 typical observations (~4K tokens each); total prompt stays ~40K with
- * overhead, safe for models with >= 64K context.
+ * Orçamento de tokens de observações por chamada do memory_extract (lote
+ * incremental). ~7-8 observações típicas (~4K tokens cada); o prompt total
+ * fica ~40K com overhead, seguro para modelos com >= 64K de contexto.
  */
 export const EXTRACT_BATCH_TOKEN_BUDGET = 30_000;
 
@@ -65,11 +65,11 @@ export function getGitRemoteUrl(cwd: string): string | null {
 }
 
 /**
- * Identifies the project by git remote origin.
+ * Identifica o projeto pela URL do remote origin do git.
  *
- * 1. Tries `git remote get-url origin` (git opcional — sem git, cai no fallback)
- * 2. Normalizes to `host_user_repo` format (e.g. `github.com_user_repo`)
- * 3. Falls back to `__unmanaged_<cwd_hash_12>`
+ * 1. Tenta `git remote get-url origin` (git opcional — sem git, cai no fallback)
+ * 2. Normaliza para o formato `host_user_repo` (ex.: `github.com_user_repo`)
+ * 3. Cai para `__unmanaged_<cwd_hash_12>`
  */
 export function identifyProject(
 	cwd: string,
@@ -92,7 +92,7 @@ export function identifyProject(
 }
 
 /**
- * Returns the list of all directories that should exist for a given project.
+ * Retorna a lista de todos os diretórios que devem existir para um projeto.
  */
 export function getMemoryDirectories(projectId: string): string[] {
 	const globalDirs = MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "_global", t));
@@ -109,7 +109,7 @@ export function getMemoryDirectories(projectId: string): string[] {
 }
 
 /**
- * Ensures all required memory directories exist (private, 0o700).
+ * Garante que todos os diretórios de memória existam (privados, 0o700).
  * Idempotente. Retorna TODOS os paths esperados (contrato antigo).
  *
  * Portabilidade: falha de permissão num diretório NÃO derruba a extensão —

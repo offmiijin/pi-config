@@ -87,7 +87,7 @@ describe("memory_save schema", () => {
 		const s = SaveSchema as Record<string, unknown>;
 		const props = s.properties as Record<string, unknown>;
 		const typeProp = props.type as Record<string, unknown>;
-		// StringEnum creates a union (anyOf) of literals
+		// StringEnum cria uma união (anyOf) de literais
 		const variants = (typeProp.anyOf ?? typeProp.oneOf ?? []) as Array<Record<string, unknown>>;
 		expect(variants.length).toBeGreaterThan(0);
 		const values = variants.map((v) => v.const);
@@ -138,7 +138,7 @@ describe("memory_decay schema", () => {
 	});
 
 	it("delta is number type", () => {
-		// Number in typebox can be "number" or "integer" in JSON Schema
+		// Number no typebox pode ser "number" ou "integer" no JSON Schema
 		const s = DecaySchema as Record<string, unknown>;
 		const props = s.properties as Record<string, unknown>;
 		const delta = props.delta as Record<string, unknown>;
@@ -167,7 +167,7 @@ describe("MemoryTypeEnum values", () => {
 		const e = MemoryTypeEnum as Record<string, unknown>;
 		const variants = (e.anyOf ?? e.oneOf ?? []) as Array<Record<string, unknown>>;
 		if (variants.length > 0) {
-			// Union of literals: each is { type: "string", const: "..." }
+			// União de literais: cada um é { type: "string", const: "..." }
 			const values = variants.map((v) => v.const);
 			expect(values).toContain("_rules");
 			expect(values).toContain("decisions");

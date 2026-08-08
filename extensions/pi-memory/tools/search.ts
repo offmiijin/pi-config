@@ -259,7 +259,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 					};
 				}
 
-				// Found results — reset empty-search counter (can keep searching)
+				// Resultados encontrados — reseta o contador de buscas vazias (pode continuar buscando)
 				state.consecutiveEmptySearches = 0;
 
 				return {
