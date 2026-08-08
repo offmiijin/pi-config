@@ -41,7 +41,7 @@ let nestedBwrapWorks = false;
 if (bwrapAvailable) {
   try {
     const probe = await execInSandbox(noLandlockConfig, {
-      command: ["echo", "probe"], cwd: "/tmp",
+      command: ["echo", "probe"], cwd: fixture(),
     });
     nestedBwrapWorks = probe.exitCode === 0;
   } catch {
