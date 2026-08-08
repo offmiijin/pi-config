@@ -142,12 +142,23 @@ export default function (pi: ExtensionAPI) {
 		}
 		state.projectId = nextProjectId;
 
-		// Sincroniza o índice para o novo projeto (global + projeto novo)
+		// Sincroniza o índice para o novo projeto (global + projeto novo).
+		// Falha no sync não derruba a sessão: fecha o índice (estado
+		// potencialmente inconsistente com o disco) — memory_search cai no
+		// fallback rg e o próximo session_start reconstrói.
 		if (state.index?.isOpen) {
 			try {
 				state.index.syncIncremental(nextProjectId);
 			} catch (err) {
-				console.warn(`[pi-memory] índice não sincronizado p/ ${nextProjectId}: ${(err as Error).message}`);
+				console.warn(
+					`[pi-memory] índice não sincronizado p/ ${nextProjectId}: ${(err as Error).message} — busca via rg`,
+				);
+				try {
+					state.index.close();
+				} catch {
+					// close best-effort — estado já degradado
+				}
+				state.index = null;
 			}
 		}
 

@@ -63,3 +63,96 @@ describe("formatIndexResults", () => {
 		expect(text).toContain("memories/projects/p1/lessons/x.md");
 	});
 });
+
+// ── Fallback completo de busca (#4) ────────────────────────────────────────
+
+import {
+	dispatchSearch,
+	formatRgResults,
+	hasMeaningfulTerm,
+} from "../tools/search.ts";
+import type { SearchResult } from "../memory-search.ts";
+
+function rgResult(overrides: Partial<SearchResult> = {}): SearchResult {
+	return {
+		file: "/home/u/.pi/agent/memories/_global/gotchas/cache.md",
+		lines: ["L7: O bug era no cache"],
+		...overrides,
+	};
+}
+
+describe("hasMeaningfulTerm", () => {
+	it("true quando ao menos um termo tem conteúdo", () => {
+		expect(hasMeaningfulTerm(["cache", "  "])).toBeTrue();
+		expect(hasMeaningfulTerm([" x "])).toBeTrue();
+	});
+	it("false quando todos os termos são vazios/espaços", () => {
+		expect(hasMeaningfulTerm([])).toBeFalse();
+		expect(hasMeaningfulTerm(["", "   "])).toBeFalse();
+	});
+});
+
+describe("formatRgResults", () => {
+	it("formata contagem, path relativo e linhas", () => {
+		const text = formatRgResults([rgResult()]);
+		expect(text).toContain("Found 1 result(s):");
+		expect(text).toContain("memories/_global/gotchas/cache.md");
+		expect(text).toContain("L7: O bug era no cache");
+	});
+	it("trunca além de 5 linhas por arquivo", () => {
+		const lines = Array.from({ length: 8 }, (_, i) => `L${i}: linha ${i}`);
+		const text = formatRgResults([rgResult({ lines })]);
+		expect(text).toContain("... 3 more matches");
+	});
+	it("lida com lista vazia", () => {
+		expect(formatRgResults([])).toContain("Found 0 result(s):");
+	});
+});
+
+describe("dispatchSearch", () => {
+	it("SQLite ok → engine sqlite, sem primaryError", () => {
+		const d = dispatchSearch(
+			() => [{ path: "a.md" } as IndexSearchResult],
+			() => [rgResult()],
+		);
+		expect(d.engine).toBe("sqlite");
+		expect(d.count).toBe(1);
+		expect(d.text).toContain("memories/a.md");
+		expect(d.primaryError).toBeUndefined();
+	});
+	it("SQLite falha → fallback rg, engine rg-after-sqlite-error, primaryError", () => {
+		const d = dispatchSearch(
+			() => {
+				throw new Error("sqlite locked");
+			},
+			() => [rgResult()],
+		);
+		expect(d.engine).toBe("rg-after-sqlite-error");
+		expect(d.count).toBe(1);
+		expect(d.text).toContain("memories/_global/gotchas/cache.md");
+		expect(d.primaryError).toContain("sqlite locked");
+	});
+	it("SQLite e rg falham → lança erro combinado", () => {
+		expect(() =>
+			dispatchSearch(
+				() => {
+					throw new Error("sqlite broken");
+				},
+				() => {
+					throw new Error("rg missing");
+				},
+			),
+		).toThrow(/sqlite broken/);
+	});
+	it("SQLite falha e rg sem resultados → count 0, engine de fallback", () => {
+		const d = dispatchSearch(
+			() => {
+				throw new Error("boom");
+			},
+			() => [],
+		);
+		expect(d.engine).toBe("rg-after-sqlite-error");
+		expect(d.count).toBe(0);
+		expect(d.text).toBe("");
+	});
+});

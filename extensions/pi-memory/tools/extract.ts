@@ -23,7 +23,7 @@ import {
 	splitObservations,
 } from "../memory-extract.ts";
 import { ExtractSchema } from "../schemas.ts";
-import type { ToolState } from "./state.ts";
+import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 
 export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -220,10 +220,13 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 
 			// Sincroniza o índice SQLite em lote (1 transação) — remove paths
 			// arquivados (supersedes/consolidate) e upsert dos docs salvos.
+			// Falha de índice degrada e segue: markdowns já persistidos.
+			let index: IndexStatus = "off";
 			if ((docsToIndex.length > 0 || pathsToRemove.length > 0) && state.index?.isOpen) {
 				try {
-					state.index.syncMutation({ upsert: docsToIndex, remove: pathsToRemove });
+					index = syncIndex(state, { upsert: docsToIndex, remove: pathsToRemove });
 				} catch (err) {
+					index = "degraded";
 					console.warn(
 						`[pi-memory] extract: índice não sincronizado: ${(err as Error).message}`,
 					);
@@ -291,6 +294,7 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 						processed: batch.length,
 						remaining: remaining.length,
 						reset: false,
+						index,
 					},
 				};
 			}
@@ -316,6 +320,7 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 					session_file: sessionFile,
 					archive_file: archivePath,
 					reset: true,
+					index,
 				},
 			};
 		},

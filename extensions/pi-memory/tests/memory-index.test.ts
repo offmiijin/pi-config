@@ -939,3 +939,71 @@ describe("MemoryIndex syncIncremental (Fase 4)", () => {
 		expect(docPaths(dbPath)).toContain(`projects/${otherProj}/gotchas/outro.md`);
 	});
 });
+
+// ── syncMutationSafe: semântica tolerante a falha (#4) ─────────────────────
+
+describe("MemoryIndex syncMutationSafe (#4)", () => {
+	let root: string;
+	let dbDir: string;
+	let dbPath: string;
+	let proj: string;
+	let idx: MemoryIndex;
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), "pi-memory-safe-root-"));
+		dbDir = mkdtempSync(join(tmpdir(), "pi-memory-safe-db-"));
+		dbPath = join(dbDir, "safe.sqlite");
+		proj = `__test_safe_${Date.now()}`;
+		writeFixture(root, `projects/${proj}/gotchas/a.md`, "type: gotchas\nconfidence: 0.7\n", "## [2026-08-08 10:00:00] A\n\nconteúdo A\n");
+		idx = new MemoryIndex(dbPath, root);
+		idx.open();
+		idx.rebuild(proj);
+	});
+
+	afterAll(() => {
+		idx.close();
+		rmSync(root, { recursive: true, force: true });
+		rmSync(dbDir, { recursive: true, force: true });
+	});
+
+	it("sucesso: {ok:true} e documento sincronizado", () => {
+		const doc = docFromFixture(
+			root,
+			`projects/${proj}/gotchas/b.md`,
+			"type: gotchas\nconfidence: 0.6\n",
+			"## [2026-08-08 10:00:00] B\n\nconteúdo B\n",
+		);
+		const r = idx.syncMutationSafe({ upsert: [doc], remove: [] });
+		expect(r).toEqual({ ok: true });
+		expect(docPaths(dbPath)).toContain(`projects/${proj}/gotchas/b.md`);
+	});
+
+	it("falha (índice fechado): {ok:false, error} sem lançar e marca needsRebuild", () => {
+		const closed = new MemoryIndex(join(dbDir, "closed.sqlite"), root);
+		closed.open();
+		closed.rebuild(proj);
+		closed.close();
+
+		const doc = docFromFixture(
+			root,
+			`projects/${proj}/gotchas/c.md`,
+			"type: gotchas\nconfidence: 0.6\n",
+			"## [2026-08-08 10:00:00] C\n\nconteúdo C\n",
+		);
+		expect(() => closed.syncMutationSafe({ upsert: [doc], remove: [] })).not.toThrow();
+		const r = closed.syncMutationSafe({ upsert: [doc], remove: [] });
+		expect(r.ok).toBe(false);
+		expect(typeof r.error).toBe("string");
+		expect(closed.needsRebuild).toBe(true);
+	});
+
+	it("falha de remoção também degrada sem lançar", () => {
+		const closed = new MemoryIndex(join(dbDir, "closed2.sqlite"), root);
+		closed.open();
+		closed.rebuild(proj);
+		closed.close();
+		const r = closed.syncMutationSafe({ upsert: [], remove: [`projects/${proj}/gotchas/a.md`] });
+		expect(r.ok).toBe(false);
+		expect(closed.needsRebuild).toBe(true);
+	});
+});

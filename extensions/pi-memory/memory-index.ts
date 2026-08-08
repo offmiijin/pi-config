@@ -287,6 +287,12 @@ export interface SyncStats {
 	skipped: number;
 }
 
+/** Resultado de syncMutationSafe — nunca lança, sempre retorna { ok }. */
+export interface SyncMutationResult {
+	ok: boolean;
+	error?: string;
+}
+
 /** Caminho relativo a MEMORIES_ROOT a partir de um path absoluto. */
 export function relFromMemoriesRoot(absPath: string): string {
 	const prefix = MEMORIES_ROOT + "/";
@@ -477,6 +483,23 @@ export class MemoryIndex {
 		} catch (err) {
 			db.exec("ROLLBACK");
 			throw err;
+		}
+	}
+
+	/**
+	 * Variante tolerante a falha de syncMutation — nunca lança.
+	 * Falha marca needsRebuild: o índice pode estar inconsistente com o disco;
+	 * a próxima busca cai no fallback rg (search bloqueia com needsRebuild) e o
+	 * próximo syncIncremental reconstrói. Operação canônica (markdown) já
+	 * aconteceu antes da chamada — não é revertida aqui.
+	 */
+	syncMutationSafe(opts: { upsert: IndexDocument[]; remove: string[] }): SyncMutationResult {
+		try {
+			this.syncMutation(opts);
+			return { ok: true };
+		} catch (err) {
+			this.needsRebuild = true;
+			return { ok: false, error: (err as Error).message ?? String(err) };
 		}
 	}
 

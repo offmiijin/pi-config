@@ -7,7 +7,7 @@ import { MEMORY_LANGUAGE_RULE } from "../constants.ts";
 import { readMemoryDocFromFile, relFromMemoriesRoot, type IndexDocument } from "../memory-index.ts";
 import { saveMemory } from "../memory.ts";
 import { SaveSchema } from "../schemas.ts";
-import type { ToolState } from "./state.ts";
+import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 
 export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -55,6 +55,7 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 			// markdown (canônico); avisa e segue. Paths arquivados por
 			// supersedes/consolidate saem da FTS na MESMA transação: a memória
 			// antiga não continua buscável até o próximo sync incremental.
+			let index: IndexStatus = "off";
 			if (state.index?.isOpen) {
 				try {
 					const upsert: IndexDocument[] = [];
@@ -65,8 +66,9 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 						);
 					}
 					for (const p of result.archived ?? []) remove.push(relFromMemoriesRoot(p));
-					state.index.syncMutation({ upsert, remove });
+					index = syncIndex(state, { upsert, remove });
 				} catch (err) {
+					index = "degraded";
 					console.warn(
 						`[pi-memory] save: índice não sincronizado (${result.file}): ${(err as Error).message}`,
 					);
@@ -82,7 +84,7 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 
 			return {
 				content: [{ type: "text", text }],
-				details: result,
+				details: { ...result, index },
 			};
 		},
 	});
