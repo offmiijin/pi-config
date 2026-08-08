@@ -106,6 +106,7 @@ export function identifyProject(
 export function getMemoryDirectories(projectId: string): string[] {
 	const globalDirs = MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "_global", t));
 	const supersedesGlobal = MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, ".supersedes", "_global", t));
+	const historyGlobal = MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, ".history", "_global", t));
 	const projectDirs = [
 		...MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "projects", projectId, t)),
 		join(MEMORIES_ROOT, "projects", projectId, "sessions"),
@@ -113,8 +114,19 @@ export function getMemoryDirectories(projectId: string): string[] {
 	const supersedesProject = MEMORY_TYPES.map((t) =>
 		join(MEMORIES_ROOT, ".supersedes", "projects", projectId, t),
 	);
+	const historyProject = MEMORY_TYPES.map((t) =>
+		join(MEMORIES_ROOT, ".history", "projects", projectId, t),
+	);
 
-	return [MEMORIES_ROOT, ...globalDirs, ...supersedesGlobal, ...projectDirs, ...supersedesProject];
+	return [
+		MEMORIES_ROOT,
+		...globalDirs,
+		...supersedesGlobal,
+		...historyGlobal,
+		...projectDirs,
+		...supersedesProject,
+		...historyProject,
+	];
 }
 
 /**

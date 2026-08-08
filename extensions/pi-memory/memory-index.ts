@@ -24,7 +24,7 @@ import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
-import { extractLastEntryTitle, parseFrontmatter } from "./memory.ts";
+import { extractLastEntryTitle, extractTitle, parseFrontmatter } from "./memory.ts";
 import { DatabaseCtor, type DatabaseLike, type StatementLike } from "./db.ts";
 
 export const INDEX_DB_FILENAME = ".index.sqlite";
@@ -117,6 +117,7 @@ export function inferFromRelPath(relPath: string): {
 /** Corpo limpo para indexação FTS (mesma limpeza do excerpt, sem truncar). */
 export function cleanBody(body: string): string {
 	return body
+		.replace(/^#\s+.*$/m, "") // título v2 (snapshot)
 		.replace(/^## \[[^\]]+\][^\n]*\n/gm, "")
 		.replace(/^confidence:.*$/gm, "")
 		.replace(/\n{3,}/g, "\n\n")
@@ -233,7 +234,7 @@ export function readMemoryDocFromFile(absPath: string, relPath: string): IndexDo
 		projectId,
 		type,
 		context,
-		title: extractLastEntryTitle(body) ?? context,
+		title: extractTitle(body) ?? extractLastEntryTitle(body) ?? context,
 		summary: typeof meta.summary === "string" ? meta.summary : null,
 		tags,
 		confidence: typeof meta.confidence === "number" ? meta.confidence : 0.5,

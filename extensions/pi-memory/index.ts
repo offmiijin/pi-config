@@ -201,6 +201,7 @@ export default function (pi: ExtensionAPI) {
 				confidence: candidate.confidence ?? 0.5,
 				summary: candidate.summary ?? undefined,
 				tags: [],
+				evidence: candidate.evidenceIds,
 				mode: candidate.action === "update" ? "consolidate" : "append",
 				supersedes:
 					candidate.action === "supersede" ? candidate.supersedes ?? undefined : undefined,

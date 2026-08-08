@@ -53,9 +53,9 @@ export const SaveSchema = Type.Object({
 			[Type.Literal("append"), Type.Literal("consolidate")],
 			{
 				description:
-					"append (default): adiciona entrada datada ao arquivo. " +
-					"consolidate: reescreve a memória — arquiva a versão atual do MESMO context em .supersedes/ e cria arquivo novo " +
-					"(use quando a informação nova atualiza/contradiz a existente; para substituir memória de OUTRO context use supersedes).",
+					"Fase 5: 'append' (legado) e 'consolidate' são equivalentes — toda " +
+					"escrita reescreve o snapshot atual; a versão anterior vai para .history/. " +
+					"Para substituir memória de OUTRA chave, use supersedes.",
 			},
 		),
 	),

@@ -6,10 +6,10 @@
  */
 
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
-import { ensureFileDir, formatDateTime } from "./session.ts";
+import { ensureFileDir } from "./session.ts";
 
 /**
  * Sanitiza uma string para ser segura como nome de arquivo.
@@ -41,6 +41,7 @@ export function getMemoryFilePath(
 
 /**
  * Retorna o caminho em .supersedes/ para um caminho de arquivo de memória.
+ * Memória substituída por OUTRA chave (semântica de obsolescência).
  */
 export function getSupersedesPath(originalPath: string): string {
 	const relative = originalPath.startsWith(MEMORIES_ROOT + "/")
@@ -50,12 +51,27 @@ export function getSupersedesPath(originalPath: string): string {
 }
 
 /**
- * Move um arquivo de memória para .supersedes/, preservando a estrutura e
- * adicionando metadados de superseded. O arquivo original é removido.
- * Retorna o novo caminho.
+ * Retorna o caminho em .history/ para uma revisão de um arquivo de memória:
+ *   _global/gotchas/foo.md → .history/_global/gotchas/foo/v{N}.md
+ * Versão anterior do MESMO contexto (semântica de revisão).
  */
-export function moveToSupersedes(
+export function getHistoryPath(filePath: string, revision: number): string {
+	const relative = filePath.startsWith(MEMORIES_ROOT + "/")
+		? filePath.slice(MEMORIES_ROOT.length + 1)
+		: filePath;
+	const dir = dirname(relative);
+	const base = basename(relative, ".md");
+	return join(MEMORIES_ROOT, ".history", dir, base, `v${revision}.md`);
+}
+
+/**
+ * Arquiva um arquivo de memória (frontmatter + corpo) num caminho de
+ * destino, com metadados de superseded e confidence zerada. O original é
+ * removido. Usado por .supersedes/ (moveToSupersedes) e .history/ (revisão).
+ */
+export function archiveFile(
 	filePath: string,
+	targetPath: string,
 	extraMeta: Record<string, unknown> = {},
 ): string {
 	const content = readFileSync(filePath, "utf-8");
@@ -67,11 +83,28 @@ export function moveToSupersedes(
 		meta[k] = v;
 	}
 
-	const supPath = getSupersedesPath(filePath);
-	ensureFileDir(supPath);
-	writeFileSync(supPath, formatFrontmatter(meta) + body);
+	ensureFileDir(targetPath);
+	writeFileSync(targetPath, formatFrontmatter(meta) + body);
 	rmSync(filePath, { force: true });
-	return supPath;
+	return targetPath;
+}
+
+/**
+ * Move um arquivo de memória para .supersedes/, preservando a estrutura e
+ * adicionando metadados de superseded. O arquivo original é removido.
+ * Retorna o novo caminho.
+ */
+export function moveToSupersedes(
+	filePath: string,
+	extraMeta: Record<string, unknown> = {},
+): string {
+	return archiveFile(filePath, getSupersedesPath(filePath), extraMeta);
+}
+
+/** Título v2 (snapshot): linha `# Título` do corpo. */
+export function extractTitle(body: string): string | undefined {
+	const m = body.match(/^#\s+(.+)$/m);
+	return m ? m[1].trim() : undefined;
 }
 
 /**
@@ -148,6 +181,7 @@ export function extractLastEntryTitle(body: string): string | undefined {
 /** Trecho cru do fim do corpo (append adiciona entradas novas por último). */
 function extractExcerpt(body: string, maxChars = 150): string {
 	const clean = body
+		.replace(/^#\s+.*$/m, "") // título v2 (snapshot)
 		.replace(/^## \[[^\]]+\][^\n]*\n/g, "")
 		.replace(/^confidence:.*$/gm, "")
 		.replace(/\n{3,}/g, "\n\n")
@@ -181,7 +215,7 @@ export function listMemoryIndex(projectId: string): MemoryIndexEntry[] {
 						scope,
 						type,
 						context,
-						title: extractLastEntryTitle(body) ?? context,
+						title: extractTitle(body) ?? extractLastEntryTitle(body) ?? context,
 						confidence: typeof meta.confidence === "number" ? meta.confidence : 0.5,
 						updated: typeof meta.updated === "string" ? meta.updated : "",
 						...(typeof meta.summary === "string" ? { summary: meta.summary } : {}),
@@ -405,7 +439,7 @@ export function recalcOverallConfidence(
 }
 
 /**
- * Parâmetros de entrada do saveMemory.
+ * Parâmetros de entrada do saveMemory (Fase 5 — snapshot consolidado).
  */
 export interface SaveMemoryParams {
 	type: string;
@@ -418,46 +452,58 @@ export interface SaveMemoryParams {
 	supersedes?: string;
 	/**
 	 * Resumo conciso (1-2 frases, PT-BR) do estado ATUAL da memória.
-	 * Persistido no frontmatter e sobrescrito em todo append/consolidate
-	 * quando fornecido. Usado pelo memory_extract para dedup.
+	 * Persistido no frontmatter e sobrescrito em toda escrita quando
+	 * fornecido. Usado pelo memory_extract para dedup.
 	 */
 	summary?: string;
+	/** Ids de evidência do pipeline que embasam esta versão (frontmatter). */
+	evidence?: string[];
 	/**
-	 * append (padrão): adiciona entrada datada ao arquivo (retrocompatível).
-	 * consolidate: reescreve a memória — arquiva a versão atual em .supersedes/
-	 * e cria arquivo novo (use quando o conteúdo novo atualiza ou contradiz a
-	 * memória existente com a MESMA chave de contexto; para substituir memória
-	 * de OUTRA chave, use supersedes).
+	 * Compatibilidade: "append" (legado) e "consolidate" são tratados da
+	 * mesma forma — toda escrita reescreve o snapshot atual; a versão
+	 * anterior vai para .history/ (Fase 5).
 	 */
 	mode?: "append" | "consolidate";
 }
 
 /**
  * Salva ou atualiza um arquivo de memória. Compartilhado por memory_save e
- * memory_extract.
+ * pelo commit do pipeline (Fase 4/5).
  *
- * - Contexto novo → cria arquivo com frontmatter + primeira entrada
- * - Contexto existente → anexa entrada e atualiza frontmatter (entries, confidence, tags)
- * - supersedes → move a memória antiga para .supersedes/ primeiro
- * - mode "consolidate" → arquiva a versão atual do MESMO contexto em
- *   .supersedes/ e cria arquivo novo (merge-in-place, sem crescimento por append)
+ * Fase 5 — snapshot consolidado:
+ * - Contexto novo → cria arquivo com frontmatter v2 (revision: 1, created,
+ *   updated, confidence, scope, tags, summary, evidence).
+ * - Contexto existente → a versão atual vai para .history/{context}/v{N}.md
+ *   e a nova substitui o ativo (revision N+1). "append" legado = consolidate.
+ * - supersedes → move a memória da OUTRA chave para .supersedes/ primeiro.
+ *
+ * Retorna revision atual e os paths arquivados (o índice SQLite precisa
+ * removê-los da FTS — memória antiga não pode continuar buscável).
  */
 export function saveMemory(
 	projectId: string,
 	params: SaveMemoryParams,
 ): {
-	action: "created" | "appended" | "consolidated" | "error";
+	action: "created" | "consolidated" | "error";
 	file: string;
-	entries?: number;
+	revision: number;
 	error?: string;
-	/** Paths absolutos arquivados em .supersedes/ por supersedes|consolidate. */
+	/** Paths absolutos arquivados nesta chamada (.supersedes/ ou .history/). */
 	archived: string[];
 } {
-	const { type, context, title, content, scope, tags = [], confidence = 0.5, supersedes, mode = "append", summary } = params;
-	const now = formatDateTime();
-	const today = now.slice(0, 10);
-	// Paths movidos para .supersedes/ nesta chamada — o índice SQLite precisa
-	// removê-los da FTS (memória antiga não pode continuar buscável).
+	const {
+		type,
+		context,
+		title,
+		content,
+		scope,
+		tags = [],
+		confidence = 0.5,
+		supersedes,
+		summary,
+		evidence = [],
+	} = params;
+	const today = new Date().toISOString().slice(0, 10);
 	const archived: string[] = [];
 
 	// Guarda defensiva: tipo inválido criaria diretório no lugar errado
@@ -466,6 +512,7 @@ export function saveMemory(
 		return {
 			action: "error",
 			file: "",
+			revision: 0,
 			error: `Invalid memory type "${type}" (expected one of: ${MEMORY_TYPES.join(", ")})`,
 			archived,
 		};
@@ -482,69 +529,62 @@ export function saveMemory(
 		}
 	}
 
-	// Consolidate: arquiva a versão atual do MESMO contexto antes de criar a
-	// nova — merge-in-place via .supersedes (histórico preservado, arquivo
-	// sempre limpo, confiança sem distorção de média acumulada).
-	let consolidated = false;
-	if (mode === "consolidate") {
-		const ownPath = getMemoryFilePath(projectId, type, context, scope);
-		if (existsSync(ownPath)) {
-			moveToSupersedes(ownPath, {
-				superseded_by: context,
-				superseded_reason: "consolidated",
-			});
-			archived.push(ownPath);
-			consolidated = true;
-		}
-	}
-
 	const filePath = getMemoryFilePath(projectId, type, context, scope);
 	ensureFileDir(filePath);
 
-	const entry = formatMemoryEntry(now, title, content, confidence);
-
-	if (!existsSync(filePath)) {
-		const meta: Record<string, unknown> = {
-			context,
-			type,
-			created: today,
-			updated: today,
-			confidence,
-			entries: 1,
-		};
-		if (tags.length > 0) meta.tags = tags;
-		if (summary) meta.summary = summary;
-
-		writeFileSync(filePath, formatFrontmatter(meta) + entry + "\n");
-		return {
-			action: consolidated ? "consolidated" : "created",
-			file: filePath,
-			archived,
-		};
+	// Snapshot consolidado: versão atual (se existir) vai para .history/ e a
+	// nova substitui o ativo. mode "append" (legado) é tratado como
+	// consolidate — toda escrita é a reescrita do estado atual.
+	let revision = 1;
+	let created = today;
+	let existingTags: string[] = [];
+	let existingEvidence: string[] = [];
+	let existingSummary: string | null = null;
+	let existed = false;
+	if (existsSync(filePath)) {
+		const existing = readFileSync(filePath, "utf-8");
+		const { meta } = parseFrontmatter(existing);
+		const oldRevision = typeof meta.revision === "number" ? meta.revision : 1;
+		created = typeof meta.created === "string" ? meta.created : today;
+		existingTags = Array.isArray(meta.tags) ? (meta.tags as string[]) : [];
+		existingEvidence = Array.isArray(meta.evidence) ? (meta.evidence as string[]) : [];
+		existingSummary = typeof meta.summary === "string" ? meta.summary : null;
+		archiveFile(filePath, getHistoryPath(filePath, oldRevision), {
+			superseded_by: context,
+			superseded_reason: "consolidated",
+		});
+		archived.push(filePath);
+		revision = oldRevision + 1;
+		existed = true;
 	}
 
-	const existing = readFileSync(filePath, "utf-8");
-	const { meta, body } = parseFrontmatter(existing);
-	// Média ponderada real: currentConf é a média das entradas atuais (e já
-	// reflete decays). (currentConf * N + new) / (N+1) converge para a média
-	// exata — média sucessiva (a+b)/2 penderia para a entrada mais recente.
-	// Recalcular do corpo faria o decay sumir no append.
-	const currentConf = typeof meta.confidence === "number" ? meta.confidence : 0.5;
-	const currentEntries = (meta.entries as number) || extractEntryConfidences(body).length || 1;
-	const newOverall = Math.round(((currentConf * currentEntries + confidence) / (currentEntries + 1)) * 100) / 100;
+	const mergedTags = [...new Set([...existingTags, ...tags])];
+	const mergedEvidence = [...new Set([...existingEvidence, ...evidence])];
 
-	meta.updated = today;
-	meta.confidence = newOverall;
-	meta.entries = currentEntries + 1;
+	const metaOut: Record<string, unknown> = {
+		context,
+		type,
+		scope,
+		revision,
+		created,
+		updated: today,
+		// Snapshot: confiança desta versão (quem salva decide). Decay é
+		// reaplicado depois via memory_decay quando necessário.
+		confidence,
+	};
+	if (mergedTags.length > 0) metaOut.tags = mergedTags;
+	// Summary reflete o estado ATUAL: sobrescreve quando fornecido; preserva
+	// o anterior quando omitido (dedup futuro não pode perder o resumo).
+	if (summary) metaOut.summary = summary;
+	else if (existingSummary !== null) metaOut.summary = existingSummary;
+	if (mergedEvidence.length > 0) metaOut.evidence = mergedEvidence;
 
-	if (tags.length > 0) {
-		const existingTags = (meta.tags as string[]) || [];
-		meta.tags = [...new Set([...existingTags, ...tags])];
-	}
-
-	// Summary sempre reflete o estado ATUAL — sobrescreve o anterior.
-	if (summary) meta.summary = summary;
-
-	writeFileSync(filePath, formatFrontmatter(meta) + body + entry + "\n");
-	return { action: "appended", file: filePath, entries: meta.entries as number, archived };
+	const body = `# ${title}\n\n${content.trim()}\n`;
+	writeFileSync(filePath, formatFrontmatter(metaOut) + body);
+	return {
+		action: existed ? "consolidated" : "created",
+		file: filePath,
+		revision,
+		archived,
+	};
 }

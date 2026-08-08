@@ -73,6 +73,7 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 		idx.close();
 		rmSync(join(MEMORIES_ROOT, "projects", proj), { recursive: true, force: true });
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", proj), { recursive: true, force: true });
+		rmSync(join(MEMORIES_ROOT, ".history", "projects", proj), { recursive: true, force: true });
 		rmSync(dbDir, { recursive: true, force: true });
 	});
 
@@ -150,7 +151,7 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 		expect(searchPaths(["token_cons_novo_xyz"], proj)).toContain(`projects/${proj}/gotchas/cons-save.md`);
 	});
 
-	it("append sem supersede mantém o conteúdo antigo e archived vazio", async () => {
+	it("reescrita (append legado) arquiva em .history/ e mantém só a versão nova na FTS", async () => {
 		const a = saveMemory(proj, {
 			type: "gotchas",
 			context: "append-save",
@@ -176,12 +177,13 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 		);
 
 		expect(res.details!.index).toBe("synced");
-		expect(res.details!.action).toBe("appended");
-		expect(res.details!.archived).toHaveLength(0);
+		expect(res.details!.action).toBe("consolidated");
+		expect((res.details!.archived as string[])[0]).toBe(a.file);
 
-		// Corpo acumulado — os dois tokens continuam buscáveis
-		expect(searchPaths(["token_app_antigo_xyz"], proj)).toContain(`projects/${proj}/gotchas/append-save.md`);
+		// Snapshot: só a versão nova fica buscável; a antiga foi para .history/
+		expect(searchPaths(["token_app_antigo_xyz"], proj)).not.toContain(`projects/${proj}/gotchas/append-save.md`);
 		expect(searchPaths(["token_app_novo_xyz"], proj)).toContain(`projects/${proj}/gotchas/append-save.md`);
+		expect(existsSync(join(MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "append-save", "v1.md"))).toBeTrue();
 	});
 
 	it("índice indisponível (off): markdown salvo, index=off", async () => {

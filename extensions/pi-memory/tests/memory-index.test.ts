@@ -145,6 +145,24 @@ describe("readMemoryDocFromFile", () => {
 		expect(doc.title).toBe("Sem frontmatter");
 		expect(doc.updated).toBe("");
 	});
+
+	it("lê formato v2 (snapshot): título de `# ` e corpo sem o título", () => {
+		writeFixture(
+			root,
+			"_global/gotchas/snapshot.md",
+			'context: snapshot\ntype: gotchas\nscope: global\nrevision: 3\nconfidence: 0.9\nupdated: 2026-08-08\nsummary: "Resumo snapshot"\nevidence: ["ev_1", "ev_2"]\n',
+			"# Título do Snapshot\n\nconteúdo consolidado do snapshot.\n",
+		);
+		const doc = readMemoryDocFromFile(
+			join(root, "_global/gotchas/snapshot.md"),
+			"_global/gotchas/snapshot.md",
+		);
+		expect(doc.title).toBe("Título do Snapshot");
+		expect(doc.body).toBe("conteúdo consolidado do snapshot.");
+		expect(doc.body).not.toContain("Título do Snapshot");
+		expect(doc.summary).toBe("Resumo snapshot");
+		expect(doc.confidence).toBe(0.9);
+	});
 });
 
 describe("cleanBody", () => {

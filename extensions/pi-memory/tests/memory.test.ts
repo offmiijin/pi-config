@@ -130,7 +130,7 @@ describe("getMemoryDirectories", () => {
 
 	it("returns correct number of directories", () => {
 		const dirs = getMemoryDirectories("test_project");
-		expect(dirs).toHaveLength(1 + 5 + 5 + 5 + 1 + 5);
+		expect(dirs).toHaveLength(1 + 5 + 5 + 5 + 5 + 1 + 5 + 5);
 	});
 });
 
@@ -643,6 +643,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		const { MEMORIES_ROOT } = await import("../constants.ts");
 		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId), { recursive: true, force: true });
+		rmSync(join(MEMORIES_ROOT, ".history", "projects", testProjectId), { recursive: true, force: true });
 		// "supersedes across different type and scope" cria cache-rule em
 		// _global/_rules e move para .supersedes — limpa o resíduo global
 		rmSync(join(MEMORIES_ROOT, ".supersedes", "_global", "_rules", "cache-rule.md"), { force: true });
@@ -663,7 +664,8 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		const content = readFileSync(result.file, "utf-8");
 		expect(content).toContain("context: \"test-ctx\"");
-		expect(content).toContain("## ");
+		expect(content).toContain("# Test memory"); // snapshot v2 (título no corpo)
+		expect(content).toContain("revision: 1");
 		expect(content).toContain("Some rich content");
 	});
 
@@ -684,29 +686,42 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(existsSync(bogusDir)).toBeFalse();
 	});
 
-	it("appends to existing memory file", () => {
+	it("reescreve snapshot ao salvar de novo (append legado = consolidate)", () => {
 		const result = saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "test-ctx",
-			title: "Second entry",
-			content: "More content",
+			title: "Segunda versão",
+			content: "Conteúdo novo",
 			scope: "project",
 			confidence: 0.6,
 		});
 
-		expect(result.action).toBe("appended");
-		expect(result.entries).toBe(2);
+		expect(result.action).toBe("consolidated");
+		expect(result.revision).toBe(2);
 
 		const content = readFileSync(result.file, "utf-8");
-		expect(content).toContain("Second entry");
-		expect(content).toContain("entries: 2");
+		expect(content).toContain("# Segunda versão");
+		expect(content).toContain("Conteúdo novo");
+		expect(content).not.toContain("Some rich content");
+
+		// Versão anterior arquivada em .history/ (não mais acumulada no ativo)
+		const histPath = join(
+			MEMORIES_ROOT,
+			".history",
+			"projects",
+			testProjectId,
+			"gotchas",
+			"test-ctx",
+			"v1.md",
+		);
+		expect(existsSync(histPath)).toBeTrue();
 	});
 
-	it("computes real average across multiple entries (not successive-mean distortion)", () => {
+	it("snapshot: confiança é a da última escrita; .history/ acumula revisões", () => {
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "multi-avg",
-			title: "First",
+			title: "Primeira",
 			content: "content",
 			scope: "project",
 			confidence: 0.7,
@@ -714,7 +729,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "multi-avg",
-			title: "Second",
+			title: "Segunda",
 			content: "content",
 			scope: "project",
 			confidence: 0.6,
@@ -722,7 +737,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "multi-avg",
-			title: "Third",
+			title: "Terceira",
 			content: "content",
 			scope: "project",
 			confidence: 0.5,
@@ -730,15 +745,18 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "multi-avg.md");
 		const { meta } = parseFrontmatter(readFileSync(fp, "utf-8"));
-		expect(meta.confidence).toBe(0.6); // real mean (0.7+0.6+0.5)/3 — successive would give 0.575
-		expect(meta.entries).toBe(3);
+		expect(meta.confidence).toBe(0.5); // decisão da última versão (não média)
+		expect(meta.revision).toBe(3);
+		expect(
+			existsSync(join(MEMORIES_ROOT, ".history", "projects", testProjectId, "gotchas", "multi-avg", "v2.md")),
+		).toBeTrue();
 	});
 
-	it("preserves decay across multiple entries", () => {
+	it("nova escrita substitui confiança decayed (snapshot)", () => {
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "decay-multi",
-			title: "First",
+			title: "Primeira",
 			content: "content",
 			scope: "project",
 			confidence: 0.7,
@@ -746,12 +764,11 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "decay-multi",
-			title: "Second",
+			title: "Segunda",
 			content: "content",
 			scope: "project",
 			confidence: 0.6,
 		});
-		// conf agora 0.65, entries 2
 
 		// Simula decay: reduz a confiança do frontmatter para 0.3
 		const fp = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "decay-multi.md");
@@ -759,12 +776,11 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		meta.confidence = 0.3;
 		writeFileSync(fp, formatFrontmatter(meta) + body);
 
-		// Decay deve pesar sobre todas as entradas: (0.3*2 + 0.5)/3 = 0.3666... → 0.37
-		// (média sucessiva daria 0.4)
+		// Nova versão decide a própria confiança — decay não vaza pela média
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "decay-multi",
-			title: "Third",
+			title: "Terceira",
 			content: "content",
 			scope: "project",
 			confidence: 0.5,
@@ -772,15 +788,15 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		const updated = readFileSync(fp, "utf-8");
 		const { meta: meta2 } = parseFrontmatter(updated);
-		expect(meta2.confidence).toBe(0.37);
-		expect(meta2.entries).toBe(3);
+		expect(meta2.confidence).toBe(0.5);
+		expect(meta2.revision).toBe(3);
 	});
 
-	it("preserves decayed confidence on append", () => {
+	it("reescrita substitui confiança decayed no snapshot", () => {
 		const result = saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "decay-persist",
-			title: "First",
+			title: "Primeira",
 			content: "content",
 			scope: "project",
 			confidence: 0.7,
@@ -793,11 +809,11 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		meta.confidence = 0.4;
 		writeFileSync(fp, formatFrontmatter(meta) + body);
 
-		// Novo append com 0.5 — a média deve ser (0.4 + 0.5) / 2 = 0.45
+		// Nova versão com 0.5 — snapshot usa a confiança da nova versão
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "decay-persist",
-			title: "Second",
+			title: "Segunda",
 			content: "more",
 			scope: "project",
 			confidence: 0.5,
@@ -805,7 +821,8 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		const updated = readFileSync(fp, "utf-8");
 		const { meta: meta2 } = parseFrontmatter(updated);
-		expect(meta2.confidence).toBe(0.45);
+		expect(meta2.confidence).toBe(0.5);
+		expect(meta2.revision).toBe(2);
 	});
 
 	it("handles supersedes", async () => {
@@ -901,27 +918,29 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 
 		expect(consolidated.action).toBe("consolidated");
 
-		// Arquivo novo: conteúdo v2, uma entrada, confiança limpa (sem média)
+		// Arquivo novo: conteúdo v2, snapshot com revision, confiança da versão
 		const content = readFileSync(consolidated.file, "utf-8");
+		expect(content).toContain("# v2");
 		expect(content).toContain("conteúdo consolidado novo");
 		expect(content).not.toContain("conteúdo antigo");
-		expect(content).toContain("entries: 1");
+		expect(content).toContain("revision: 2");
 		expect(content).toContain("confidence: 0.8");
 
-		// Versão antiga arquivada em .supersedes com metadados
-		const supPath = join(
+		// Versão antiga arquivada em .history/ com metadados
+		const histPath = join(
 			MEMORIES_ROOT,
-			".supersedes",
+			".history",
 			"projects",
 			testProjectId,
 			"gotchas",
-			"consol-ctx.md",
+			"consol-ctx",
+			"v1.md",
 		);
-		expect(existsSync(supPath)).toBeTrue();
-		const supContent = readFileSync(supPath, "utf-8");
-		expect(supContent).toContain("conteúdo antigo");
-		expect(supContent).toContain("superseded_by: \"consol-ctx\"");
-		expect(supContent).toContain("superseded_reason: \"consolidated\"");
+		expect(existsSync(histPath)).toBeTrue();
+		const histContent = readFileSync(histPath, "utf-8");
+		expect(histContent).toContain("conteúdo antigo");
+		expect(histContent).toContain("superseded_by: \"consol-ctx\"");
+		expect(histContent).toContain("superseded_reason: \"consolidated\"");
 	});
 
 	it("consolidate on non-existent context creates normally", () => {
@@ -963,6 +982,7 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 			recursive: true,
 			force: true,
 		});
+		rmSync(join(MEMORIES_ROOT, ".history", "projects", testProjectId), { recursive: true, force: true });
 	});
 
 	it("supersedes entre contextos retorna o path ativo arquivado", () => {
@@ -992,8 +1012,8 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 			supersedes: "arch-a",
 		});
 
-		expect(r.action).toBe("appended");
-		expect(r.archived).toHaveLength(1);
+		expect(r.action).toBe("consolidated"); // arch-b já existia → reescrita
+		expect(r.archived).toHaveLength(2); // arch-a → .supersedes/; arch-b → .history/
 		expect(r.archived[0]).toBe(a.file);
 		expect(existsSync(a.file)).toBeFalse(); // movido para .supersedes/
 	});
@@ -1022,7 +1042,7 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 		expect(existsSync(c.file)).toBeTrue(); // recriado ativo
 	});
 
-	it("create/append sem supersede retornam archived vazio", () => {
+	it("create retorna archived vazio; reescrita arquiva em .history/", () => {
 		const created = saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "arch-plain",
@@ -1032,14 +1052,15 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 		});
 		expect(created.archived).toEqual([]);
 
-		const appended = saveMemory(testProjectId, {
+		const rewritten = saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "arch-plain",
 			title: "P2",
 			content: "mais",
 			scope: "project",
 		});
-		expect(appended.archived).toEqual([]);
+		expect(rewritten.action).toBe("consolidated");
+		expect(rewritten.archived).toEqual([created.file]); // mesmo path → .history/
 	});
 
 	it("erro (tipo inválido) retorna archived vazio", () => {
@@ -1070,6 +1091,7 @@ describe("saveMemory summary", () => {
 			recursive: true,
 			force: true,
 		});
+		rmSync(join(MEMORIES_ROOT, ".history", "projects", testProjectId), { recursive: true, force: true });
 	});
 
 	it("stores summary in frontmatter on create", () => {
