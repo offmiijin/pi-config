@@ -1,5 +1,5 @@
 /**
- * pi-memory — Memory search via ripgrep (no PI dependency).
+ * pi-memory — Memory search via ripgrep, fallback do índice SQLite (no PI dependency).
  */
 
 import { spawnSync } from "node:child_process";
@@ -64,7 +64,8 @@ export function buildSearchPattern(terms: string[]): string {
 }
 
 /**
- * Searches memories via ripgrep.
+ * Searches memories via ripgrep (fallback quando o índice SQLite/FTS5
+ * não está disponível — falha de abertura/sync no startup).
  * Returns matching file paths with context lines.
  */
 export function searchMemories(options: SearchOptions): SearchResult[] {

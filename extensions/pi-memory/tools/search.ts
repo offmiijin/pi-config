@@ -28,7 +28,8 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 		name: "memory_search",
 		label: "Memory Search",
 		description:
-			"Searches memories via ripgrep. query accepts multiple keywords (OR semantics — any term matches). " +
+			"Searches memories via SQLite FTS5/BM25 index (ripgrep fallback). " +
+			"query accepts multiple keywords (OR semantics — any term matches). " +
 			"scope: 'global' (only global), 'project' (only current project), 'all' (default: current project + global). " +
 			"Use when you need past context about a topic. " +
 			`Max ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results — then abandon and search the code instead. ` +

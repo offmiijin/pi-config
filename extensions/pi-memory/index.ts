@@ -3,7 +3,7 @@
  *
  * Manages persistent memories (rules, decisions, gotchas, lessons, patterns)
  * across global and project scopes. Memories are rich markdown files grouped
- * by context, searchable via ripgrep.
+ * by context, searchable via SQLite FTS5/BM25 index (ripgrep fallback).
  *
  * The LLM drives all memory operations via tools. The extension only appends
  * raw observations to the session file automatically at turn_end.
@@ -13,7 +13,7 @@
  *   constants.ts        — shared constants + project setup
  *   session.ts          — session observation lifecycle
  *   memory.ts           — memory file CRUD + index + save
- *   memory-search.ts    — ripgrep search
+ *   memory-search.ts    — ripgrep search fallback (índice indisponível)
  *   memory-extract.ts   — LLM-assisted extraction helpers
  *   schemas.ts          — tool parameter schemas
  *   tools/*.ts          — one file per tool (status, save, search, decay, extract)
