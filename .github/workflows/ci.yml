@@ -89,9 +89,7 @@ jobs:
           - name: Ubuntu 24.04
             image: ubuntu:24.04
             update: apt-get update && apt-get install -y curl
-            node_setup: |
-              curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-              apt-get install -y nodejs
+            node_setup: curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs
           - name: Fedora 41
             image: fedora:41
             update: dnf makecache
