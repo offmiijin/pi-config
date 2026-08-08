@@ -16,9 +16,11 @@
  *   memory_fts                        — FTS5 (title, summary, tags, body), rowid = doc id
  *   index_meta                        — schema_version, rebuilt_at
  *
- * Fase 1: abertura/schema/validação FTS5 + rebuild completo. Busca e sync
- * incremental entram nas fases seguintes (a classe já expõe os pontos de
- * ancoragem: open/close/rebuild/getMeta).
+ * Fase 1: abertura/schema/validação FTS5 + rebuild completo.
+ * Fase 2: sincronização de escrita (upsertDocument/removeDocument/syncDocuments/updateConfidence).
+ * Fase 3: busca FTS5/BM25 (buildFtsQuery + search com pesos por coluna, boost
+ *         de confiança/recência e snippet).
+ * Fase 4 (pendente): sync incremental no startup por content_hash.
  */
 
 import { createHash } from "node:crypto";
@@ -125,6 +127,52 @@ export function cleanBody(body: string): string {
 		.replace(/^confidence:.*$/gm, "")
 		.replace(/\n{3,}/g, "\n\n")
 		.trim();
+}
+
+// ── Busca FTS5/BM25 (Fase 3) ──────────────────────────────────────────────
+
+/**
+ * Monta uma query FTS5 a partir de termos crus (OR entre termos).
+ * FTS5 não tem escape por barra invertida — cada termo vira uma frase
+ * entre aspas (aspas internas duplicadas) com `*` no último token, que dá
+ * matching por prefixo (≈ substring do rg antigo).
+ */
+export function buildFtsQuery(terms: string[]): string {
+	const parts: string[] = [];
+	for (const raw of terms) {
+		const term = raw.trim();
+		if (!term) continue;
+		parts.push(`"${term.replace(/"/g, '""')}"*`);
+	}
+	return parts.join(" OR ");
+}
+
+export interface IndexSearchOptions {
+	/** Termos crus — OR entre eles; termo com espaço vira frase. */
+	terms: string[];
+	scope?: "global" | "project" | "all";
+	/** Obrigatório para scope=project/all (como no search via rg). */
+	projectId?: string;
+	type?: string;
+	minConfidence?: number;
+	limit?: number;
+}
+
+export interface IndexSearchResult {
+	/** Caminho relativo a MEMORIES_ROOT. */
+	path: string;
+	scope: "global" | "project";
+	projectId: string | null;
+	type: string;
+	context: string;
+	title: string;
+	summary: string | null;
+	confidence: number;
+	updated: string;
+	/** Trecho relevante (coluna body), vazio quando o corpo é vazio. */
+	snippet: string;
+	/** Maior = melhor (BM25 ponderado + boost confiança/recência). */
+	score: number;
 }
 
 /**
@@ -275,15 +323,6 @@ export class MemoryIndex {
 		const files = listActiveMemoryFiles(projectId, this.memoriesRoot);
 		const now = new Date().toISOString();
 
-		const insertDoc = db.query(
-			`INSERT INTO memory_documents
-			   (path, scope, project_id, type, context, title, summary, tags_json,
-			    confidence, updated, content_hash, created_at, modified_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		);
-		const insertFts = db.query(
-			"INSERT INTO memory_fts (rowid, title, summary, tags, body) VALUES (?, ?, ?, ?, ?)",
-		);
 		const delFtsById = db.query("DELETE FROM memory_fts WHERE rowid = ?");
 
 		let removed = 0;
@@ -308,28 +347,7 @@ export class MemoryIndex {
 			for (const rel of files) {
 				try {
 					const doc = readMemoryDocFromFile(join(this.memoriesRoot, rel), rel);
-					const res = insertDoc.run(
-						rel,
-						doc.scope,
-						doc.projectId,
-						doc.type,
-						doc.context,
-						doc.title,
-						doc.summary,
-						JSON.stringify(doc.tags),
-						doc.confidence,
-						doc.updated,
-						doc.contentHash,
-						now,
-						now,
-					);
-					insertFts.run(
-						Number(res.lastInsertRowid),
-						doc.title,
-						doc.summary ?? "",
-						doc.tags.join(" "),
-						doc.body,
-					);
+					this.upsertDocAndFts(db, doc, now);
 					added++;
 				} catch (err) {
 					skipped++;
@@ -350,11 +368,197 @@ export class MemoryIndex {
 		return { projectId, added, removed, skipped, rebuiltAt: now, dbPath: this.dbPath };
 	}
 
+	// ── Sincronização de escrita (Fase 2) ────────────────────────────────────
+
+	/** Insere ou atualiza um documento (doc + FTS) em transação própria. */
+	upsertDocument(doc: IndexDocument): void {
+		const db = this.requireDb();
+		db.exec("BEGIN");
+		try {
+			this.upsertDocAndFts(db, doc, new Date().toISOString());
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Upsert em lote numa única transação (usado por memory_extract). */
+	syncDocuments(docs: IndexDocument[]): void {
+		if (docs.length === 0) return;
+		const db = this.requireDb();
+		const now = new Date().toISOString();
+		db.exec("BEGIN");
+		try {
+			for (const doc of docs) this.upsertDocAndFts(db, doc, now);
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Remove um documento (doc + FTS). Path inexistente é no-op. */
+	removeDocument(path: string): void {
+		const db = this.requireDb();
+		const row = db
+			.query("SELECT id FROM memory_documents WHERE path = ?")
+			.get(path) as { id: number | bigint } | undefined;
+		if (!row) return;
+		db.exec("BEGIN");
+		try {
+			db.query("DELETE FROM memory_fts WHERE rowid = ?").run(row.id);
+			db.query("DELETE FROM memory_documents WHERE id = ?").run(row.id);
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Atualiza só metadados (confiança/updated) — corpo não mudou, FTS intocado. */
+	updateConfidence(path: string, confidence: number, updated: string): void {
+		const db = this.requireDb();
+		db.query(
+			"UPDATE memory_documents SET confidence = ?, updated = ?, modified_at = ? WHERE path = ?",
+		).run(confidence, updated, new Date().toISOString(), path);
+	}
+
+	// ── Busca (Fase 3) ───────────────────────────────────────────────────────
+
+	/**
+	 * Busca FTS5/BM25 com filtros SQL. Score = -bm25 ponderado por coluna
+	 * (título > summary > tags > corpo) com boost pequeno de confiança e
+	 * recência — match lexical nunca perde para metadado.
+	 */
+	search(options: IndexSearchOptions): IndexSearchResult[] {
+		const db = this.requireDb();
+		if (this.needsRebuild) {
+			throw new Error("Índice precisa rebuild antes da busca (needsRebuild=true).");
+		}
+
+		const { terms, scope = "all", type, minConfidence, limit = 10 } = options;
+		const matchQuery = buildFtsQuery(terms);
+		if (!matchQuery) return [];
+
+		if (scope !== "global" && !options.projectId) {
+			throw new Error("search: projectId é obrigatório para scope=project/all");
+		}
+
+		const params: (string | number)[] = [matchQuery];
+		let scopeSql: string;
+		if (scope === "global") {
+			scopeSql = "d.scope = 'global'";
+		} else if (scope === "project") {
+			scopeSql = "d.scope = 'project' AND d.project_id = ?";
+			params.push(options.projectId!);
+		} else if (scope === "all") {
+			scopeSql = "(d.scope = 'global' OR (d.scope = 'project' AND d.project_id = ?))";
+			params.push(options.projectId!);
+		} else {
+			throw new Error(`search: escopo inválido "${scope}"`);
+		}
+
+		if (type) {
+			scopeSql += " AND d.type = ?";
+			params.push(type);
+		}
+		if (minConfidence !== undefined) {
+			scopeSql += " AND d.confidence >= ?";
+			params.push(minConfidence);
+		}
+		params.push(limit);
+
+		const rows = db
+			.query(
+				`SELECT d.path, d.scope, d.project_id, d.type, d.context, d.title, d.summary,
+				        d.confidence, d.updated,
+				        snippet(memory_fts, 3, '', '', '…', 24) AS snippet_text,
+				        -bm25(memory_fts, 8.0, 4.0, 2.0, 1.0)
+				          - 0.4 * (1.0 - d.confidence)
+				          - COALESCE(
+				              CASE WHEN d.updated = '' THEN 0.3
+				                   ELSE 0.3 * MIN(MAX((julianday('now') - julianday(d.updated)) / 90.0, 0.0), 1.0)
+				              END, 0.3
+				            ) AS score
+				 FROM memory_fts
+				 JOIN memory_documents d ON d.id = memory_fts.rowid
+				 WHERE memory_fts MATCH ? AND ${scopeSql}
+				 ORDER BY score DESC
+				 LIMIT ?`,
+			)
+			.all(...params) as Record<string, unknown>[];
+
+		return rows.map((r) => ({
+			path: String(r.path),
+			scope: r.scope as "global" | "project",
+			projectId: r.project_id === null ? null : String(r.project_id),
+			type: String(r.type),
+			context: String(r.context),
+			title: String(r.title),
+			summary: r.summary === null ? null : String(r.summary),
+			confidence: Number(r.confidence),
+			updated: String(r.updated),
+			snippet: r.snippet_text === null ? "" : String(r.snippet_text),
+			score: Number(r.score),
+		}));
+	}
+
 	// ── Internos ────────────────────────────────────────────────────────────
 
 	private requireDb(): Database {
 		if (!this.db) throw new Error("MemoryIndex não está aberto — chame open() antes.");
 		return this.db;
+	}
+
+	/**
+	 * Upsert do documento relacional + recriação da linha FTS (delete+insert).
+	 * ON CONFLICT(path) preserva o id — a linha FTS mantém rowid = id do doc.
+	 */
+	private upsertDocAndFts(db: Database, doc: IndexDocument, now: string): void {
+		const res = db
+			.query(
+				`INSERT INTO memory_documents
+				   (path, scope, project_id, type, context, title, summary, tags_json,
+				    confidence, updated, content_hash, created_at, modified_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(path) DO UPDATE SET
+				   scope=excluded.scope, project_id=excluded.project_id, type=excluded.type,
+				   context=excluded.context, title=excluded.title, summary=excluded.summary,
+				   tags_json=excluded.tags_json, confidence=excluded.confidence,
+				   updated=excluded.updated, content_hash=excluded.content_hash,
+				   modified_at=excluded.modified_at`,
+			)
+			.run(
+				doc.path,
+				doc.scope,
+				doc.projectId,
+				doc.type,
+				doc.context,
+				doc.title,
+				doc.summary,
+				JSON.stringify(doc.tags),
+				doc.confidence,
+				doc.updated,
+				doc.contentHash,
+				now,
+				now,
+			);
+
+		// Upsert faz UPDATE: lastInsertRowid devolve o rowid da linha afetada.
+		const id = Number(res.lastInsertRowid) || this.docIdByPath(db, doc.path);
+			db.query("DELETE FROM memory_fts WHERE rowid = ?").run(id);
+			db.query(
+				"INSERT INTO memory_fts (rowid, title, summary, tags, body) VALUES (?, ?, ?, ?, ?)",
+			).run(id, doc.title, doc.summary ?? "", doc.tags.join(" "), doc.body);
+	}
+
+	private docIdByPath(db: Database, path: string): number {
+		const row = db
+			.query("SELECT id FROM memory_documents WHERE path = ?")
+			.get(path) as { id: number | bigint } | undefined;
+		if (!row) throw new Error(`Documento não encontrado no índice: ${path}`);
+		return Number(row.id);
 	}
 
 	private ensureSchema(): void {

@@ -15,6 +15,8 @@ import { ensureFileDir } from "../session.ts";
 import {
 	MemoryIndex,
 	SCHEMA_VERSION,
+	IndexDocument,
+	buildFtsQuery,
 	cleanBody,
 	hashContent,
 	inferFromRelPath,
@@ -59,6 +61,12 @@ function docPaths(dbPath: string): string[] {
 	} finally {
 		probe.close();
 	}
+}
+
+/** Escreve fixture e devolve o doc normalizado (fluxo real save → upsert). */
+function docFromFixture(root: string, rel: string, fm: string, body: string): IndexDocument {
+	writeFixture(root, rel, fm, body);
+	return readMemoryDocFromFile(join(root, rel), rel);
 }
 
 // ── inferFromRelPath ───────────────────────────────────────────────────────
@@ -355,5 +363,336 @@ describe("MemoryIndex", () => {
 		expect(idx.isOpen).toBeFalse();
 		expect(() => idx.rebuild(projectA)).toThrow(/aberto/);
 		expect(() => idx.getMeta("schema_version")).toThrow(/aberto/);
+	});
+});
+
+// ── buildFtsQuery ───────────────────────────────────────────────────────────
+
+describe("buildFtsQuery", () => {
+	it("envolve cada termo em frase com prefixo (OR entre termos)", () => {
+		expect(buildFtsQuery(["cache", "invalidação"])).toBe('"cache"* OR "invalidação"*');
+	});
+
+	it("duplica aspas internas (sem escape por barra no FTS5)", () => {
+		expect(buildFtsQuery(['say "hi"'])).toBe('"say ""hi"""*');
+	});
+
+	it("filtra termos vazios", () => {
+		expect(buildFtsQuery(["", "  ", "foo"])).toBe('"foo"*');
+	});
+
+	it("retorna vazio sem termos", () => {
+		expect(buildFtsQuery([])).toBe("");
+	});
+});
+
+// ── Sincronização de escrita (Fase 2) ───────────────────────────────────────
+
+describe("MemoryIndex write sync (Fase 2)", () => {
+	let root: string;
+	let dbDir: string;
+	let dbPath: string;
+	let proj: string;
+	let idx: MemoryIndex;
+
+	function counts(): { docs: number; fts: number } {
+		const probe = openProbe(dbPath);
+		try {
+			const d = probe.query("SELECT count(*) AS c FROM memory_documents").get() as { c: number };
+			const f = probe.query("SELECT count(*) AS c FROM memory_fts").get() as { c: number };
+			return { docs: Number(d.c), fts: Number(f.c) };
+		} finally {
+			probe.close();
+		}
+	}
+
+	function docTitle(path: string): string {
+		const probe = openProbe(dbPath);
+		try {
+			const row = probe
+				.query("SELECT title FROM memory_documents WHERE path = ?")
+				.get(path) as { title: string } | undefined;
+			return row?.title ?? "";
+		} finally {
+			probe.close();
+		}
+	}
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), "pi-memory-sync-root-"));
+		dbDir = mkdtempSync(join(tmpdir(), "pi-memory-sync-db-"));
+		dbPath = join(dbDir, "sync.sqlite");
+		proj = `__test_sync_${Date.now()}`;
+		idx = new MemoryIndex(dbPath, root);
+		idx.open();
+		idx.rebuild(proj);
+	});
+
+	afterAll(() => {
+		idx.close();
+		rmSync(root, { recursive: true, force: true });
+		rmSync(dbDir, { recursive: true, force: true });
+	});
+
+	it("upsert insere documento novo (relacional + FTS)", () => {
+		const doc = docFromFixture(
+			root,
+			`projects/${proj}/gotchas/a.md`,
+			"type: gotchas\nconfidence: 0.7\n",
+			"## [2026-08-08 10:00:00] Memória A\n\nconteúdo A sobre cache\n",
+		);
+		idx.upsertDocument(doc);
+		expect(counts()).toEqual({ docs: 1, fts: 1 });
+	});
+
+	it("upsert atualiza documento existente (mesmo path, id preservado)", () => {
+		const rel = `projects/${proj}/gotchas/a.md`;
+		const probe = openProbe(dbPath);
+		const before = probe
+			.query("SELECT id, created_at FROM memory_documents WHERE path = ?")
+			.get(rel) as { id: number; created_at: string };
+		probe.close();
+
+		const updated = docFromFixture(
+			root,
+			rel,
+			"type: gotchas\nconfidence: 0.9\n",
+			"## [2026-08-08 10:00:00] Memória A v2\n\nconteúdo A atualizado\n",
+		);
+		idx.upsertDocument(updated);
+
+		expect(counts()).toEqual({ docs: 1, fts: 1 });
+		expect(docTitle(rel)).toBe("Memória A v2");
+		const after = openProbe(dbPath)
+			.query("SELECT id, created_at FROM memory_documents WHERE path = ?")
+			.get(rel) as { id: number; created_at: string };
+		expect(after.id).toBe(before.id);
+		expect(after.created_at).toBe(before.created_at);
+	});
+
+	it("removeDocument remove das duas tabelas; path inexistente é no-op", () => {
+		const rel = `projects/${proj}/gotchas/a.md`;
+		idx.removeDocument(rel);
+		expect(counts()).toEqual({ docs: 0, fts: 0 });
+		expect(() => idx.removeDocument("projects/x/gotchas/inexistente.md")).not.toThrow();
+	});
+
+	it("syncDocuments insere lote numa transação", () => {
+		const docs = [
+			docFromFixture(
+				root,
+				`projects/${proj}/gotchas/b.md`,
+				"type: gotchas\nconfidence: 0.6\n",
+				"## [2026-08-08] Memória B\n\nconteúdo B\n",
+			),
+			docFromFixture(
+				root,
+				`projects/${proj}/lessons/c.md`,
+				"type: lessons\nconfidence: 0.6\n",
+				"## [2026-08-08] Memória C\n\nconteúdo C\n",
+			),
+		];
+		idx.syncDocuments(docs);
+		expect(counts()).toEqual({ docs: 2, fts: 2 });
+	});
+
+	it("syncDocuments com lista vazia é no-op", () => {
+		idx.syncDocuments([]);
+		expect(counts()).toEqual({ docs: 2, fts: 2 });
+	});
+
+	it("updateConfidence atualiza metadados sem reindexar FTS", () => {
+		const rel = `projects/${proj}/gotchas/b.md`;
+		idx.updateConfidence(rel, 0.4, "2026-08-09");
+		const probe = openProbe(dbPath);
+		try {
+			const doc = probe
+				.query("SELECT confidence, updated FROM memory_documents WHERE path = ?")
+				.get(rel) as { confidence: number; updated: string };
+			expect(doc.confidence).toBe(0.4);
+			expect(doc.updated).toBe("2026-08-09");
+			expect(Number((probe.query("SELECT count(*) AS c FROM memory_fts").get() as { c: number }).c)).toBe(2);
+		} finally {
+			probe.close();
+		}
+	});
+});
+
+// ── Busca (Fase 3) ──────────────────────────────────────────────────────────
+
+describe("MemoryIndex search (Fase 3)", () => {
+	let root: string;
+	let dbDir: string;
+	let dbPath: string;
+	let proj: string;
+	let idx: MemoryIndex;
+
+	const rel = (name: string, type = "gotchas") => `projects/${proj}/${type}/${name}.md`;
+
+	beforeAll(() => {
+		root = mkdtempSync(join(tmpdir(), "pi-memory-search-root-"));
+		dbDir = mkdtempSync(join(tmpdir(), "pi-memory-search-db-"));
+		dbPath = join(dbDir, "search.sqlite");
+		proj = `__test_search_${Date.now()}`;
+
+		// Global
+		writeFixture(root, "_global/gotchas/titulo.md", "type: gotchas\nconfidence: 0.7\nupdated: 2026-08-01\n", "## [2026-08-01 10:00:00] Cache invalidação\n\nconteúdo genérico aqui\n");
+		writeFixture(root, "_global/gotchas/corpo.md", "type: gotchas\nconfidence: 0.7\nupdated: 2026-08-01\n", "## [2026-08-01 10:00:00] Outra lição\n\ntexto sobre cache no corpo\n");
+		writeFixture(root, "_global/gotchas/banana.md", "type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n", "## [2026-08-01 10:00:00] Banana\n\napenas banana split\n");
+		writeFixture(root, "_global/gotchas/frase.md", "type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n", "## [2026-08-01 10:00:00] Frase\n\neste é um conteúdo específico para testar\n");
+		writeFixture(root, "_global/gotchas/quotes.md", "type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n", '## [2026-08-01 10:00:00] Quotes\n\nele disse say "hello" mundo\n');
+		writeFixture(root, "_global/gotchas/underscore.md", "type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\n", "## [2026-08-01 10:00:00] Underscore\n\nvariavel id_snake_case aqui\n");
+		writeFixture(root, "_global/gotchas/baixo.md", "type: gotchas\nconfidence: 0.3\nupdated: 2026-08-01\n", "## [2026-08-01 10:00:00] Baixa confiança\n\ncache com confiança baixa\n");
+		writeFixture(root, "_global/gotchas/summary.md", "type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\nsummary: \"resumo rápido de testes\"\n", "## [2026-08-01 10:00:00] Resumo\n\ncorpo vazio aqui\n");
+		writeFixture(root, "_global/gotchas/tags.md", "type: gotchas\nconfidence: 0.6\nupdated: 2026-08-01\ntags: [\"snapshot\"]\n", "## [2026-08-01 10:00:00] Tags\n\ncorpo sem a palavra\n");
+
+		// Projeto (proj-only sem "cache" para dar discriminação idf ao termo)
+		writeFixture(root, rel("proj-only", "lessons"), "type: lessons\nconfidence: 0.7\nupdated: 2026-08-01\n", "## [2026-08-01 10:00:00] Projeto\n\nconteúdo de projeto\n");
+		writeFixture(root, rel("antigo"), "type: gotchas\nconfidence: 0.7\nupdated: 2026-01-01\n", "## [2026-01-01 10:00:00] Antigo\n\ncache match antigo\n");
+		writeFixture(root, rel("novo"), "type: gotchas\nconfidence: 0.7\nupdated: 2026-08-08\n", "## [2026-08-08 10:00:00] Novo\n\ncache match novo\n");
+
+		idx = new MemoryIndex(dbPath, root);
+		idx.open();
+		idx.rebuild(proj);
+	});
+
+	afterAll(() => {
+		idx.close();
+		rmSync(root, { recursive: true, force: true });
+		rmSync(dbDir, { recursive: true, force: true });
+	});
+
+	function search(terms: string[], opts: Partial<Parameters<MemoryIndex["search"]>[0]> = {}): ReturnType<MemoryIndex["search"]> {
+		return idx.search({ terms, projectId: proj, ...opts });
+	}
+
+	function paths(results: ReturnType<MemoryIndex["search"]>): string[] {
+		return results.map((r) => r.path);
+	}
+
+	it("encontra por título, corpo, summary e tags", () => {
+		expect(paths(search(["cache"]))).toContain("_global/gotchas/titulo.md");
+		expect(paths(search(["cache"]))).toContain("_global/gotchas/corpo.md");
+		expect(paths(search(["rápido"]))).toContain("_global/gotchas/summary.md");
+		expect(paths(search(["snapshot"]))).toContain("_global/gotchas/tags.md");
+	});
+
+	it("remove diacríticos na busca (PT-BR sem acento)", () => {
+		expect(paths(search(["invalidação"]))).toContain("_global/gotchas/titulo.md");
+		expect(paths(search(["invalidacao"]))).toContain("_global/gotchas/titulo.md");
+	});
+
+	it("underscore é token único (tokenchars '_')", () => {
+		expect(paths(search(["id_snake_case"]))).toContain("_global/gotchas/underscore.md");
+		expect(paths(search(["id_snake"]))).toContain("_global/gotchas/underscore.md");
+		expect(paths(search(["snake"]))).not.toContain("_global/gotchas/underscore.md");
+	});
+
+	it("OR entre termos", () => {
+		const p = paths(search(["banana", "cache"]));
+		expect(p).toContain("_global/gotchas/banana.md");
+		expect(p).toContain("_global/gotchas/titulo.md");
+	});
+
+	it("termo com espaço vira frase (adjacência)", () => {
+		expect(paths(search(["conteúdo específico"]))).toContain("_global/gotchas/frase.md");
+		expect(paths(search(["conteúdo específico"]))).not.toContain("_global/gotchas/titulo.md");
+	});
+
+	it("escape de aspas na query", () => {
+		expect(paths(search(['say "hello"']))).toContain("_global/gotchas/quotes.md");
+	});
+
+	it("filtra por escopo global", () => {
+		const p = paths(search(["cache"], { scope: "global" }));
+		for (const path of p) expect(path.startsWith("_global/")).toBeTrue();
+		expect(p).not.toContain(rel("novo"));
+		expect(p).not.toContain(rel("proj-only", "lessons"));
+	});
+
+	it("filtra por escopo projeto", () => {
+		const p = paths(search(["projeto"], { scope: "project" }));
+		expect(p).toContain(rel("proj-only", "lessons"));
+		for (const path of p) expect(path.startsWith("projects/")).toBeTrue();
+	});
+
+	it("filtra por tipo", () => {
+		const p = paths(search(["projeto"], { type: "lessons" }));
+		expect(p).toContain(rel("proj-only", "lessons"));
+		expect(p).not.toContain("_global/gotchas/titulo.md");
+	});
+
+	it("filtra por minConfidence", () => {
+		const p = paths(search(["cache"], { minConfidence: 0.5 }));
+		expect(p).not.toContain("_global/gotchas/baixo.md");
+		expect(p).toContain("_global/gotchas/titulo.md");
+	});
+
+	it("ranking: título vence corpo", () => {
+		const results = search(["cache"]);
+		expect(results[0].path).toBe("_global/gotchas/titulo.md");
+	});
+
+	it("ranking: match lexical vence recência; recência desempata", () => {
+		const results = search(["cache"]);
+		const novoIdx = results.findIndex((r) => r.path === rel("novo"));
+		const antigoIdx = results.findIndex((r) => r.path === rel("antigo"));
+		expect(novoIdx).toBeGreaterThanOrEqual(0);
+		expect(antigoIdx).toBeGreaterThanOrEqual(0);
+		expect(novoIdx).toBeLessThan(antigoIdx);
+	});
+
+	it("respeita limit", () => {
+		expect(search(["cache"], { limit: 2 })).toHaveLength(2);
+	});
+
+	it("sem match retorna vazio; termos vazios também", () => {
+		expect(search(["zzz_nao_existe_12345"])).toEqual([]);
+		expect(search([])).toEqual([]);
+	});
+
+	it("snippet contém o termo no corpo", () => {
+		const corpo = search(["cache"]).find((r) => r.path === "_global/gotchas/corpo.md");
+		expect(corpo).toBeDefined();
+		expect(corpo!.snippet).toContain("cache");
+	});
+
+	it("exige projectId fora do escopo global", () => {
+		expect(() => idx.search({ terms: ["cache"], scope: "project" })).toThrow(/projectId/);
+		expect(() => idx.search({ terms: ["cache"], scope: "all" })).toThrow(/projectId/);
+	});
+
+	it("busca bloqueia com needsRebuild", () => {
+		const freshDb = join(dbDir, "fresh.sqlite");
+		const fresh = new MemoryIndex(freshDb, root);
+		fresh.open();
+		expect(fresh.needsRebuild).toBeTrue();
+		expect(() => fresh.search({ terms: ["cache"], projectId: proj })).toThrow(/rebuild/);
+		fresh.close();
+	});
+
+	it("upsert/remove refletem na busca (integração F2+F3)", () => {
+		const relFile = rel("dinamico");
+		const doc = docFromFixture(
+			root,
+			relFile,
+			"type: gotchas\nconfidence: 0.6\n",
+			"## [2026-08-08 10:00:00] Dinâmico\n\ntoken especial único\n",
+		);
+		idx.upsertDocument(doc);
+		expect(paths(search(["especial"]))).toContain(relFile);
+
+		const updated = docFromFixture(
+			root,
+			relFile,
+			"type: gotchas\nconfidence: 0.6\n",
+			"## [2026-08-08 10:00:00] Dinâmico v2\n\ntoken alterado único\n",
+		);
+		idx.upsertDocument(updated);
+		expect(paths(search(["especial"]))).not.toContain(relFile);
+		expect(paths(search(["alterado"]))).toContain(relFile);
+
+		idx.removeDocument(relFile);
+		expect(paths(search(["alterado"]))).not.toContain(relFile);
 	});
 });
