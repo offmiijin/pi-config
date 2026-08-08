@@ -214,11 +214,11 @@ npx vitest run
 ## Portabilidade (Linux)
 
 O sandbox funciona em qualquer distro Linux (Debian/Ubuntu, Fedora/RHEL,
-Arch, openSUSE, NixOS, Alpine/musl) sem configuração extra:
+Arch, openSUSE, Alpine/musl) sem configuração extra:
 
 - **Paths de sistema detectados por distro** (`portability.ts`): bases
   `/usr`, `/bin`, `/lib` + condicionais: `/lib64` (Fedora/RHEL),
-  `/lib32`/`/libx32` (multilib), `/nix` + `/etc/static` (NixOS),
+  `/lib32`/`/libx32` (multilib), `/nix` + `/etc/static` (nix),
   `/etc/ssl`/`/etc/ca-certificates` (TLS). Nenhum path fixo de distro.
 - **`/etc` seletivo**: inclui `ld.so.cache`/`ld.so.conf` quando presentes
   (Debian/Ubuntu/Fedora usam cache do linker — sem ele, libs podem não

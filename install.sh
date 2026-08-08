@@ -3,7 +3,7 @@
 # install.sh — setup de dependências das extensões do pi
 #
 # Resolve, antes de abrir o pi:
-#   1. Node.js >= 22.19 + npm (via mise ou gerenciador de pacotes)
+#   1. Node.js >= 22.19 + npm (via gerenciador de pacotes do sistema)
 #   2. Pacotes de sistema: bubblewrap, ripgrep, git (+ gh e docker opcionais)
 #   3. Dependências npm das extensões (npm ci em <agent>/node_modules)
 #   4. landlock-exec (compila com Rust se disponível)
@@ -124,31 +124,31 @@ pkg_name() {
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo gh;; node) echo nodejs;; npm) echo npm;;
-        docker) echo docker.io;; rust) echo cargo;;
+        docker) echo docker.io;; docker-compose) echo docker-compose-v2;; rust) echo cargo;;
       esac ;;
     dnf)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo gh;; node) echo nodejs;; npm) echo npm;;
-        docker) echo docker;; rust) echo cargo;;
+        docker) echo docker;; docker-compose) echo docker-compose-plugin;; rust) echo cargo;;
       esac ;;
     pacman)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo github-cli;; node) echo nodejs;; npm) echo npm;;
-        docker) echo docker;; rust) echo rust;;
+        docker) echo docker;; docker-compose) echo docker-compose;; rust) echo rust;;
       esac ;;
     zypper)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo gh;; node) echo nodejs20;; npm) echo npm;;
-        docker) echo docker;; rust) echo rust;;
+        docker) echo docker;; docker-compose) echo docker-compose-plugin;; rust) echo rust;;
       esac ;;
     apk)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo github-cli;; node) echo nodejs;; npm) echo npm;;
-        docker) echo docker;; rust) echo cargo;;
+        docker) echo docker;; docker-compose) echo docker-cli-compose;; rust) echo cargo;;
       esac ;;
     *) echo "$tool" ;;
   esac
@@ -213,15 +213,29 @@ resolve_agent_dir() {
 
 # ── Node.js / npm ────────────────────────────────────────────────────────
 # Node >= 22.19.0 (mesmo requisito do doctor/pi-coding-agent).
+MIN_NODE_MAJ=22; MIN_NODE_MIN=19
+
 node_sufficient() {
   local full maj min
   full="$(node -v 2>/dev/null || true)"
   [ -n "$full" ] || return 1
   full="${full#v}"
   maj="${full%%.*}"; min="${full#*.}"; min="${min%%.*}"
-  [ "$maj" -gt 22 ] && return 0
-  [ "$maj" -lt 22 ] && return 1
-  [ "$min" -ge 19 ]
+  [ "$maj" -gt "$MIN_NODE_MAJ" ] && return 0
+  [ "$maj" -lt "$MIN_NODE_MAJ" ] && return 1
+  [ "$min" -ge "$MIN_NODE_MIN" ]
+}
+
+# Instruções de instalação de Node >= 22.19 por distro (sem gerenciador de versão).
+node_install_guide() {
+  local ids="$OS_ID $OS_LIKE"
+  case "$ids" in
+    *debian*|*ubuntu*|*pop*|*zorin*|*mint*)
+      echo "Ubuntu/Debian: NodeSource fornece Node 22.x (https://github.com/nodesource/distributions)"
+      echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
+      echo "  sudo apt-get install -y nodejs" ;;
+    *) echo "Instale Node.js >= ${MIN_NODE_MAJ}.${MIN_NODE_MIN} manualmente (https://nodejs.org/en/download) ou via gerenciador de pacotes da distro." ;;
+  esac
 }
 
 ensure_node() {
@@ -230,24 +244,23 @@ ensure_node() {
     return
   fi
 
-  # Via mise (recomendado — mesmo gerenciador do pi)
-  if has_cmd mise; then
-    if confirm_req "Instalar Node 22 via mise?"; then
-      log "▶ mise install node@22"
-      run mise install node@22
-      run mise use -g node@22 2>/dev/null || true
+  # Node ausente ou antigo → tenta instalar/atualizar via gerenciador do sistema
+  if ! has_cmd node || ! has_cmd npm || ! node_sufficient; then
+    # openSUSE: nodejs20 é antigo demais (precisa >= 22.19); instrui manual
+    if [ "$PKG_MGR" = "zypper" ]; then
+      warn "openSUSE: pacote nodejs20 é < 22.19."
+      node_install_guide
+      die "Node >= ${MIN_NODE_MAJ}.${MIN_NODE_MIN} obrigatório. Instale manualmente e rode de novo."
     fi
-  fi
-
-  # Fallback: gerenciador de pacotes do sistema
-  if ! has_cmd node || ! has_cmd npm; then
     install_system_pkgs 0 node npm
   fi
 
   if has_cmd node && has_cmd npm && node_sufficient; then
     log "✓ Node $(node -v) + npm $(npm -v)"
   else
-    warn "Node/npm ausentes ou < 22.19. Instale manualmente (mise install node@22 ou pacote da distro com Node >= 22.19) e rode de novo."
+    warn "Node/npm ausentes ou < ${MIN_NODE_MAJ}.${MIN_NODE_MIN} (detectado: $(node -v 2>/dev/null || echo 'ausente'))."
+    node_install_guide
+    die "Node >= ${MIN_NODE_MAJ}.${MIN_NODE_MIN} obrigatório. Instale manualmente e rode de novo."
   fi
 }
 
@@ -320,6 +333,9 @@ check_kernel() {
 }
 
 # ── Docker + SearXNG (opcional) ──────────────────────────────────────────
+# O container SearXNG roda no HOST (não no sandbox do pi).
+# O pi acessa via HTTP em localhost:4000 (--share-net compartilha rede do host).
+# Falhas aqui NUNCA abortam o instalador: SearXNG é um extra opcional.
 setup_searxng() {
   local ws="$AGENT_DIR/extensions/pi-web-search"
   [ -d "$ws" ] || { warn "pi-web-search não encontrado — pulando SearXNG."; return; }
@@ -328,13 +344,34 @@ setup_searxng() {
     confirm_opt "Configurar Docker + SearXNG para busca local (opcional)?" || return 0
   fi
 
+  # ── Instala Docker (binário + daemon) ──────────────────────
   if ! has_cmd docker; then
-    # Com --searxng, Docker é obrigatório para o fluxo (instala sem confirmar)
     install_system_pkgs "$([ "$DO_SEARXNG" -eq 1 ] && echo 0 || echo 1)" docker
   fi
-  has_cmd docker || { warn "Docker indisponível — use APIs externas: /web_search config <tavily|exa|serper> <key>"; return; }
+  if ! has_cmd docker; then
+    warn "Docker indisponível — use APIs externas: /web_search config <tavily|exa|serper> <key>"
+    return
+  fi
 
-  # .env com chave aleatória para o SEARXNG_SECRET
+  # ── Verifica daemon rodando ────────────────────────────────
+  if ! docker info >/dev/null 2>&1; then
+    warn "Docker instalado mas daemon não está rodando."
+    warn "  Inicie o daemon (systemctl start docker) e rode o SearXNG manualmente:"
+    warn "    cd $ws && docker compose up -d"
+    return
+  fi
+
+  # ── Plugin docker compose ──────────────────────────────────
+  if ! docker compose version >/dev/null 2>&1; then
+    warn "Plugin 'docker compose' não encontrado — instalando..."
+    install_system_pkgs 1 docker-compose
+    if ! docker compose version >/dev/null 2>&1; then
+      warn "Plugin compose indisponível. Instale docker-compose-plugin manualmente."
+      return
+    fi
+  fi
+
+  # ── .env com chave aleatória para o SEARXNG_SECRET ────────
   local envfile="$ws/.env"
   if [ ! -f "$envfile" ]; then
     local key
@@ -347,10 +384,16 @@ setup_searxng() {
     fi
   fi
 
+  # ── Sobe container (falha não derruba instalador) ─────────
   if [ "$DO_SEARXNG" -eq 1 ] || confirm_opt "Subir container SearXNG (docker compose up -d)?"; then
-    run bash -c "cd '$ws' && docker compose up -d"
-    warn "Após o 1º start, habilite JSON no SearXNG:"
-    warn "  docker exec pi-searxng sed -i 's/  formats:\\n    - html/  formats:\\n    - html\\n    - json/' /etc/searxng/settings.yml && docker restart pi-searxng"
+    if run bash -c "cd '$ws' && docker compose up -d" 2>/dev/null; then
+      log "✓ SearXNG iniciado em http://localhost:4000"
+      warn "Após o 1º start, habilite JSON no SearXNG:"
+      warn "  docker exec pi-searxng sed -i 's/  formats:\\n    - html/  formats:\\n    - html\\n    - json/' /etc/searxng/settings.yml && docker restart pi-searxng"
+    else
+      warn "Falha ao subir SearXNG (porta 4000 ocupada? container já existe?)."
+      warn "  Verifique manualmente: cd $ws && docker compose up -d"
+    fi
   fi
 }
 

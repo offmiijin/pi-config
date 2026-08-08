@@ -5,7 +5,7 @@
  * Objetivo: nenhum path fixo de distribuição Linux. Tudo que é opcional
  * é condicional (existsSync). Suporte a Debian/Ubuntu (ld.so.cache,
  * multiarch /lib/*-linux-gnu via /lib), Fedora/RHEL (/lib64), Arch
- * (merged-usr, /usr/sbin symlink), NixOS (/nix, /etc/static).
+ * (merged-usr, /usr/sbin symlink).
  */
 
 import { execFileSync } from "node:child_process";
@@ -28,8 +28,8 @@ const BASE_RO_DIRS = ["/usr", "/bin", "/lib"];
  * Condicionais por distro:
  *   /lib64            → Fedora/RHEL/openSUSE (glibc 64-bit)
  *   /lib32, /usr/lib32, /libx32, /usr/libx32 → multilib (32-bit compat)
- *   /nix              → NixOS / nix em outra distro
- *   /etc/static       → NixOS (configs geradas)
+ *   /nix              → nix em outra distro (NixOS não suportado)
+ *   /etc/static       → configs estáticas (NixOS não suportado)
  *   /etc/ssl, /etc/ca-certificates → TLS (Debian/Ubuntu usam ca-certificates)
  */
 const CONDITIONAL_RO_DIRS = [
