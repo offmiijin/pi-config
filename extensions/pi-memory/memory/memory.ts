@@ -234,6 +234,33 @@ function extractExcerpt(body: string, maxChars = 150): string {
  * updated desc. Lê frontmatter (confidence, updated, summary) + título da
  * última entrada.
  */
+/**
+ * Conta memórias ativas por escopo (global + project) sem ler conteúdo.
+ * Usado pelo status-bar via evento custom:memory-stats — contagem leve,
+ * apenas readdir. Arquivos .supersedes/ e .history/ ficam fora por layout.
+ */
+export function getMemoryStats(projectId: string): {
+	total: number;
+	global: number;
+	project: number;
+} {
+	let global = 0;
+	let project = 0;
+	for (const scope of ["global", "project"] as const) {
+		for (const type of MEMORY_TYPES) {
+			const dir =
+				scope === "global"
+					? join(MEMORIES_ROOT, "_global", type)
+					: join(MEMORIES_ROOT, "projects", projectId, type);
+			if (!existsSync(dir)) continue;
+			const n = readdirSync(dir).filter((f) => f.endsWith(".md")).length;
+			if (scope === "global") global += n;
+			else project += n;
+		}
+	}
+	return { total: global + project, global, project };
+}
+
 export function listMemoryIndex(projectId: string): MemoryIndexEntry[] {
 	const entries: MemoryIndexEntry[] = [];
 	for (const scope of ["global", "project"] as const) {

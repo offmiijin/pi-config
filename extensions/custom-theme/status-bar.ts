@@ -7,18 +7,8 @@
 import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, SelectListTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import {
-	MEMORIES_ROOT,
-	MEMORY_TYPES,
-	identifyProject,
-} from "../pi-memory/constants.ts";
-import {
-	countObservations,
-	getSessionFilePath,
-	hashSessionFile,
-} from "../pi-memory/session.ts";
 
 function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
@@ -39,7 +29,6 @@ class ModelInfoEditor extends CustomEditor {
 	private contextUsage = 0;
 	private contextWindow = 0;
 	private memoryTotal = 0;
-	private memoryObservations = 0;
 	private piVersion = "";
 
 	constructor(
@@ -78,9 +67,8 @@ class ModelInfoEditor extends CustomEditor {
 		this.invalidate();
 	}
 
-	setMemoryInfo(total: number, observations: number) {
+	setMemoryInfo(total: number) {
 		this.memoryTotal = total;
-		this.memoryObservations = observations;
 		this.invalidate();
 	}
 
@@ -129,8 +117,6 @@ class ModelInfoEditor extends CustomEditor {
 		const memoryInfo = [
 			this.uiTheme.fg("muted", "\u{1f9e0}"), // 🧠
 			this.uiTheme.fg("accent", String(this.memoryTotal)),
-			this.uiTheme.fg("muted", "\u{1f441}"), // 👁
-			this.uiTheme.fg("dim", String(this.memoryObservations)),
 		].join(" ");
 		const memT = truncateToWidth(memoryInfo, innerW);
 		const memW = visibleWidth(memT);
@@ -232,33 +218,14 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		}
 	});
 
-	// ── helper: refresh memory stats from pi-memory store ──
-	function refreshMemoryStats(cwd: string, sessionFile: string | null | undefined) {
-		if (!editorRef) return;
-		try {
-			const projectId = identifyProject(cwd);
-
-			// Counts .md memory files for the project (excludes sessions/)
-			let total = 0;
-			for (const t of MEMORY_TYPES) {
-				const dir = path.join(MEMORIES_ROOT, "projects", projectId, t);
-				if (existsSync(dir)) {
-					total += readdirSync(dir).filter((f) => f.endsWith(".md")).length;
-				}
-			}
-
-			// Counts pending observations for the current session
-			let observations = 0;
-			if (sessionFile) {
-				const hash = hashSessionFile(sessionFile);
-				observations = countObservations(getSessionFilePath(projectId, hash));
-			}
-
-			editorRef.setMemoryInfo(total, observations);
-		} catch {
-			// pi-memory extension missing — keep 0/0
-		}
-	}
+	// ── escuta stats de memória (emitido pelo pi-memory) ──────
+	// Guarda o último valor: o editor só existe após session_start — se o
+	// evento chegar antes, aplica quando o editor for criado.
+	let lastMemoryTotal = 0;
+	pi.events?.on("custom:memory-stats", ({ total }: { total: number }) => {
+		lastMemoryTotal = total;
+		editorRef?.setMemoryInfo(total);
+	});
 
 	// ── helper: read agent type from session ──
 	function readAgentTypeFromSession(ctx: any): string {
@@ -291,8 +258,6 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		const provider = ctx.model?.provider || "";
 		const currentAgent = readAgentTypeFromSession(ctx);
 
-		refreshMemoryStats(ctx.cwd, ctx.sessionManager.getSessionFile());
-
 		ctx.ui.setEditorComponent((tui: TUI, baseTheme: EditorTheme, keybindings: KeybindingsManager) => {
 			const uiTheme = ctx.ui.theme;
 
@@ -317,6 +282,8 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			const ctxU = ctx.getContextUsage?.()?.tokens || 0;
 			editor.setContextInfo(ctxU, ctxW);
 			editor.setTokenInfo(0, 0, sessionTokens, sessionCost);
+			// Último stats recebido do pi-memory (pode ter chegado antes do editor existir)
+			editor.setMemoryInfo(lastMemoryTotal);
 			return editor;
 		});
 
@@ -394,15 +361,5 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	// Refresh agent type at start of each turn (fallback)
 	pi.on("turn_start", async (_event, ctx) => {
 		editorRef?.setAgentType(readAgentTypeFromSession(ctx));
-	});
-
-	// Refresh memory after each turn (delay: ensures pi-memory append)
-	pi.on("turn_end", async (_event, ctx) => {
-		setTimeout(() => refreshMemoryStats(ctx.cwd, ctx.sessionManager.getSessionFile()), 150);
-	});
-
-	// Fallback: refresh após o agente assentar
-	pi.on("agent_settled", async (_event, ctx) => {
-		setTimeout(() => refreshMemoryStats(ctx.cwd, ctx.sessionManager.getSessionFile()), 150);
 	});
 }

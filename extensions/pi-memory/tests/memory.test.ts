@@ -4,7 +4,7 @@
 
 import { after as afterAll, before as beforeAll, describe, it } from "node:test";
 import { expect } from "./expect-shim.ts";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -30,6 +30,7 @@ import {
 	formatFrontmatter,
 	formatMemoryIndexText,
 	getMemoryFilePath,
+	getMemoryStats,
 	getSupersedesPath,
 	listMemoryContexts,
 	listMemoryIndex,
@@ -1274,3 +1275,54 @@ describe("formatMemoryIndexText", () => {
 	});
 });
 
+
+describe("getMemoryStats", () => {
+	const proj = `stats-test-${Date.now()}`;
+
+	afterAll(() => {
+		const dir = join(MEMORIES_ROOT, "projects", proj);
+		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		// cleanup do arquivo criado em _global (nome único do teste)
+		const globalPatterns = join(MEMORIES_ROOT, "_global", "patterns");
+		if (existsSync(globalPatterns)) {
+			for (const f of readdirSync(globalPatterns)) {
+				if (f.endsWith("stats-test-global.md")) {
+					rmSync(join(globalPatterns, f), { force: true });
+				}
+			}
+		}
+	});
+
+	it("conta arquivos .md ativos por escopo (exclui .supersedes/.history)", () => {
+		// 2 memórias no projeto + 1 global de teste
+		for (const [type, name] of [
+			["gotchas", "stats-test-a"],
+			["decisions", "stats-test-b"],
+		] as const) {
+			const dir = join(MEMORIES_ROOT, "projects", proj, type);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, `${name}.md`), "---\ntype: gotchas\n---\nbody");
+		}
+		const globalDir = join(MEMORIES_ROOT, "_global", "patterns");
+		mkdirSync(globalDir, { recursive: true });
+		writeFileSync(join(globalDir, "stats-test-global.md"), "---\ntype: patterns\n---\nbody");
+
+		// arquivo que NÃO deve contar (fora do layout ativo)
+		mkdirSync(join(MEMORIES_ROOT, "projects", proj, "gotchas", ".supersedes"), { recursive: true });
+		writeFileSync(
+			join(MEMORIES_ROOT, "projects", proj, "gotchas", ".supersedes", "stats-test-c.md"),
+			"---\ntype: gotchas\n---\nbody",
+		);
+
+		const stats = getMemoryStats(proj);
+		expect(stats.project).toBe(2);
+		expect(stats.global).toBeGreaterThanOrEqual(1); // pode haver memórias globais reais do usuário
+		expect(stats.total).toBe(stats.global + stats.project);
+	});
+
+	it("retorna project zerado para projeto sem diretórios (global preserva memórias reais)", () => {
+		const stats = getMemoryStats(`stats-empty-${Date.now()}`);
+		expect(stats.project).toBe(0);
+		expect(stats.total).toBe(stats.global);
+	});
+});

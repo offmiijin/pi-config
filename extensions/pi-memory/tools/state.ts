@@ -7,6 +7,8 @@
  * para as tools de Fase 6 consumirem).
  */
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getMemoryStats } from "../memory/memory.ts";
 import type { IndexDocument, MemoryIndex } from "../memory/memory-index.ts";
 import type { PipelineDB } from "../pipeline/pipeline.ts";
 import type { PipelineWorker } from "../pipeline/worker.ts";
@@ -57,4 +59,14 @@ export function syncIndex(
 		console.warn(`[pi-memory] índice não sincronizado: ${(err as Error).message}`);
 		return "degraded";
 	}
+}
+
+/**
+ * Emite o evento custom:memory-stats com a contagem atual de memórias
+ * (global + project). Consumido pelo status-bar do custom-theme — a
+ * apresentação fica desacoplada do storage. No-op sem projectId ativo.
+ */
+export function emitMemoryStats(pi: ExtensionAPI, state: ToolState): void {
+	if (!state.projectId) return;
+	pi.events?.emit("custom:memory-stats", getMemoryStats(state.projectId));
 }

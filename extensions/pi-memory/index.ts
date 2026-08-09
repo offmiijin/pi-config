@@ -76,7 +76,7 @@ import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
 import { registerMemorySearch } from "./tools/search.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
-import type { ToolState } from "./tools/state.ts";
+import { emitMemoryStats, type ToolState } from "./tools/state.ts";
 
 export default function (pi: ExtensionAPI) {
 	// Estado compartilhado entre event handlers e tools (tools mutam via referência)
@@ -207,6 +207,7 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 			state.cachedIndexText = null; // invalida o índice do system prompt
+			emitMemoryStats(pi, state); // status-bar atualiza após commit
 			return { ok: true };
 		} catch (err) {
 			return { ok: false, error: (err as Error).message ?? String(err) };
@@ -308,6 +309,8 @@ export default function (pi: ExtensionAPI) {
 		state.consecutiveEmptySearches = 0;
 		// Reseta o cache do índice de memória da sessão
 		state.cachedIndexText = null;
+
+		emitMemoryStats(pi, state); // stats iniciais p/ status-bar
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -344,6 +347,8 @@ export default function (pi: ExtensionAPI) {
 		state.consecutiveEmptySearches = 0;
 		// Reseta o cache do índice de memória da sessão
 		state.cachedIndexText = null;
+
+		emitMemoryStats(pi, state); // stats do novo projeto p/ status-bar
 	});
 
 	pi.on("before_agent_start", async (event) => {
