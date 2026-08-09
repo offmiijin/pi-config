@@ -23,9 +23,9 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
+import { MEMORIES_ROOT, MEMORY_TYPES } from "../constants.ts";
 import { extractLastEntryTitle, extractTitle, parseFrontmatter } from "./memory.ts";
-import { DatabaseCtor, type DatabaseLike, type StatementLike } from "./db.ts";
+import { DatabaseCtor, type DatabaseLike, type StatementLike } from "../db.ts";
 
 export const INDEX_DB_FILENAME = ".index.sqlite";
 export const INDEX_DB_PATH = join(MEMORIES_ROOT, INDEX_DB_FILENAME);

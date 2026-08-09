@@ -10,13 +10,13 @@
  * - validar a resposta do modelo (TypeBox Check) e separar candidates/ignored
  */
 
-import { CHARS_PER_TOKEN } from "./constants.ts";
+import { CHARS_PER_TOKEN } from "../constants.ts";
 import {
 	EXTRACTION_MAX_EVIDENCE_TOKENS,
 	EXTRACTION_MAX_MEMORY_CONTEXT_TOKENS,
-} from "./config.ts";
+} from "../config.ts";
 import { Check } from "typebox/value";
-import { ExtractionResponseSchema, type ExtractionCandidate } from "./schemas.ts";
+import { ExtractionResponseSchema, type ExtractionCandidate } from "../schemas.ts";
 
 /* ------------------------------------------------------------------ */
 /* Evidências                                                          */

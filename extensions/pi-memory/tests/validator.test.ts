@@ -6,7 +6,7 @@
 import { describe, it } from "node:test";
 import { expect } from "./expect-shim.ts";
 
-import type { CandidateRecord } from "../pipeline.ts";
+import type { CandidateRecord } from "../pipeline/pipeline.ts";
 import {
 	buildReviewPrompt,
 	classifyCandidate,
@@ -16,7 +16,7 @@ import {
 	rejectionReason,
 	validateCandidate,
 	type MemoryFileRef,
-} from "../validator.ts";
+} from "../pipeline/validator.ts";
 
 function makeCandidate(overrides: Partial<CandidateRecord> = {}): CandidateRecord {
 	return {

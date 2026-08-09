@@ -7,9 +7,9 @@
  * para as tools de Fase 6 consumirem).
  */
 
-import type { IndexDocument, MemoryIndex } from "../memory-index.ts";
-import type { PipelineDB } from "../pipeline.ts";
-import type { PipelineWorker } from "../worker.ts";
+import type { IndexDocument, MemoryIndex } from "../memory/memory-index.ts";
+import type { PipelineDB } from "../pipeline/pipeline.ts";
+import type { PipelineWorker } from "../pipeline/worker.ts";
 
 export interface ToolState {
 	projectId: string;

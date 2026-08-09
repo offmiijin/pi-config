@@ -43,34 +43,34 @@ import {
 	migrateLegacyMemories,
 	parseFrontmatter,
 	saveMemory,
-} from "./memory.ts";
+} from "./memory/memory.ts";
 import {
 	INDEX_DB_PATH,
 	MemoryIndex,
 	readMemoryDocFromFile,
 	relFromMemoriesRoot,
-} from "./memory-index.ts";
+} from "./memory/memory-index.ts";
 import {
 	PIPELINE_DB_PATH,
 	PipelineDB,
 	buildEpisodeFingerprint,
 	estimateEpisodeTokens,
-} from "./pipeline.ts";
-import { normalizePendingEpisodes } from "./evidence.ts";
+} from "./pipeline/pipeline.ts";
+import { normalizePendingEpisodes } from "./pipeline/evidence.ts";
 import { generateSessionHash, hashSessionFile } from "./session.ts";
-import { PipelineWorker, maybeCreateJob } from "./worker.ts";
+import { PipelineWorker, maybeCreateJob } from "./pipeline/worker.ts";
 import {
 	EXTRACTION_MODEL_ID,
 	EXTRACTION_MODEL_PROVIDER,
 } from "./config.ts";
-import { formatExistingMemories } from "./extractor.ts";
+import { formatExistingMemories } from "./pipeline/extractor.ts";
 import {
 	createExtractionProcessor,
 	type CompletionResponse,
 	type ExtractionModelRef,
 	type ModelRegistryLike,
-} from "./processor.ts";
-import type { MemoryFileRef } from "./validator.ts";
+} from "./pipeline/processor.ts";
+import type { MemoryFileRef } from "./pipeline/validator.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";

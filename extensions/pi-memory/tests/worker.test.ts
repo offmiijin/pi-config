@@ -19,14 +19,14 @@ import {
 	PipelineDB,
 	type NewEvidence,
 	type NewEpisode,
-} from "../pipeline.ts";
+} from "../pipeline/pipeline.ts";
 import {
 	PipelineWorker,
 	maybeCreateJob,
 	selectEpisodesForJob,
 	type JobExecutionResult,
 	type JobProcessor,
-} from "../worker.ts";
+} from "../pipeline/worker.ts";
 
 let tmpDir: string;
 let dbPath: string;

@@ -40,7 +40,7 @@ import {
 	parseFrontmatter,
 	sanitizeFilename,
 	saveMemory,
-} from "../memory.ts";
+} from "../memory/memory.ts";
 
 describe("identifyProject", () => {
 	let tmpDir: string;

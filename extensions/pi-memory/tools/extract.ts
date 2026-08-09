@@ -13,9 +13,9 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { EPISODE_STATUS } from "../pipeline.ts";
-import { maybeCreateJob } from "../worker.ts";
-import { normalizePendingEpisodes } from "../evidence.ts";
+import { EPISODE_STATUS } from "../pipeline/pipeline.ts";
+import { maybeCreateJob } from "../pipeline/worker.ts";
+import { normalizePendingEpisodes } from "../pipeline/evidence.ts";
 import { ExtractSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 

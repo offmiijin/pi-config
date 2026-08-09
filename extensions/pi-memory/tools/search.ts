@@ -9,8 +9,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MAX_MEMORY_SEARCH_ATTEMPTS } from "../constants.ts";
-import { buildSearchPattern, searchMemories, type SearchResult } from "../memory-search.ts";
-import type { IndexSearchResult } from "../memory-index.ts";
+import { buildSearchPattern, searchMemories, type SearchResult } from "../memory/memory-search.ts";
+import type { IndexSearchResult } from "../memory/memory-index.ts";
 import { SearchSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 

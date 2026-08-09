@@ -11,7 +11,7 @@ import {
 	CANDIDATE_STATUS,
 	EPISODE_STATUS,
 	JOB_STATUS,
-} from "../pipeline.ts";
+} from "../pipeline/pipeline.ts";
 import { StatusSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 

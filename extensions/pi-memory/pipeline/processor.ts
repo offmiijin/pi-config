@@ -20,7 +20,7 @@ import {
 	EXTRACTION_PROMPT_VERSION,
 	EXTRACTION_REASONING,
 	EXTRACTION_SESSION_ID,
-} from "./config.ts";
+} from "../config.ts";
 import {
 	buildEvidenceText,
 	buildExtractionPrompt,

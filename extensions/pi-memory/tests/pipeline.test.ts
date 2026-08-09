@@ -18,7 +18,7 @@ import {
 	estimateEntryTokens,
 	estimateEpisodeTokens,
 	type EpisodeEntryLike,
-} from "../pipeline.ts";
+} from "../pipeline/pipeline.ts";
 
 let tmpDir: string;
 let dbPath: string;

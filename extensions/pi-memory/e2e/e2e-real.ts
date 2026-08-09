@@ -11,13 +11,13 @@ import { tmpdir } from "node:os";
 
 import { ModelRuntime, ModelRegistry } from "@earendil-works/pi-coding-agent";
 
-import { PipelineDB, EPISODE_STATUS, JOB_STATUS } from "../pipeline.ts";
-import { MemoryIndex, readMemoryDocFromFile, relFromMemoriesRoot } from "../memory-index.ts";
-import { normalizePendingEpisodes } from "../evidence.ts";
-import { PipelineWorker } from "../worker.ts";
-import { createExtractionProcessor } from "../processor.ts";
-import { formatExistingMemories } from "../extractor.ts";
-import { findMemoryFile, parseFrontmatter, saveMemory } from "../memory.ts";
+import { PipelineDB, EPISODE_STATUS, JOB_STATUS } from "../pipeline/pipeline.ts";
+import { MemoryIndex, readMemoryDocFromFile, relFromMemoriesRoot } from "../memory/memory-index.ts";
+import { normalizePendingEpisodes } from "../pipeline/evidence.ts";
+import { PipelineWorker } from "../pipeline/worker.ts";
+import { createExtractionProcessor } from "../pipeline/processor.ts";
+import { formatExistingMemories } from "../pipeline/extractor.ts";
+import { findMemoryFile, parseFrontmatter, saveMemory } from "../memory/memory.ts";
 
 const PROJ = "e2e-project";
 const tmp = mkdtempSync(join(tmpdir(), "pi-memory-e2e-"));

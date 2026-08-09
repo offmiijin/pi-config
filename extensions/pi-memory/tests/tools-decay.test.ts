@@ -18,7 +18,7 @@ import { DatabaseCtor } from "../db.ts";
 
 import { MEMORIES_ROOT } from "../constants.ts";
 import { ensureFileDir } from "../session.ts";
-import { MemoryIndex, relFromMemoriesRoot } from "../memory-index.ts";
+import { MemoryIndex, relFromMemoriesRoot } from "../memory/memory-index.ts";
 import { registerMemoryDecay } from "../tools/decay.ts";
 import type { ToolState } from "../tools/state.ts";
 

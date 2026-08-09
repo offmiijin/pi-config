@@ -4,8 +4,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MEMORY_LANGUAGE_RULE } from "../constants.ts";
-import { readMemoryDocFromFile, relFromMemoriesRoot, type IndexDocument } from "../memory-index.ts";
-import { saveMemory } from "../memory.ts";
+import { readMemoryDocFromFile, relFromMemoriesRoot, type IndexDocument } from "../memory/memory-index.ts";
+import { saveMemory } from "../memory/memory.ts";
 import { SaveSchema } from "../schemas.ts";
 import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 

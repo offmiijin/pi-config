@@ -19,8 +19,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 
-import { CHARS_PER_TOKEN, OBSERVATION_TOKEN_BUDGETS } from "./constants.ts";
-import { hashContent } from "./memory-index.ts";
+import { CHARS_PER_TOKEN, OBSERVATION_TOKEN_BUDGETS } from "../constants.ts";
+import { hashContent } from "../memory/memory-index.ts";
 import {
 	EPISODE_STATUS,
 	type EpisodeRecord,
@@ -28,7 +28,7 @@ import {
 	type NewEvidence,
 	type PipelineDB,
 } from "./pipeline.ts";
-import { estimateTokens } from "./session.ts";
+import { estimateTokens } from "../session.ts";
 
 /* ------------------------------------------------------------------ */
 /* Tipos                                                               */

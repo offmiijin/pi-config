@@ -12,7 +12,7 @@
 
 import type { CandidateRecord } from "./pipeline.ts";
 import { hasSecret } from "./evidence.ts";
-import { sanitizeFilename } from "./memory.ts";
+import { sanitizeFilename } from "../memory/memory.ts";
 
 /* ------------------------------------------------------------------ */
 /* Tipos                                                               */

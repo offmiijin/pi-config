@@ -14,8 +14,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { MEMORIES_ROOT } from "../constants.ts";
-import { MemoryIndex, readMemoryDocFromFile, relFromMemoriesRoot } from "../memory-index.ts";
-import { saveMemory } from "../memory.ts";
+import { MemoryIndex, readMemoryDocFromFile, relFromMemoriesRoot } from "../memory/memory-index.ts";
+import { saveMemory } from "../memory/memory.ts";
 import { registerMemorySave } from "../tools/save.ts";
 import type { ToolState } from "../tools/state.ts";
 

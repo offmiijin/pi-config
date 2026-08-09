@@ -18,7 +18,7 @@ import {
 	PipelineDB,
 	type NewCandidate,
 	type NewEpisode,
-} from "../pipeline.ts";
+} from "../pipeline/pipeline.ts";
 import { registerMemoryStatus } from "../tools/status.ts";
 import type { ToolState } from "../tools/state.ts";
 

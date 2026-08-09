@@ -18,9 +18,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { MEMORIES_ROOT } from "./constants.ts";
-import { DatabaseCtor, type DatabaseLike } from "./db.ts";
-import { estimateTokens } from "./session.ts";
+import { MEMORIES_ROOT } from "../constants.ts";
+import { DatabaseCtor, type DatabaseLike } from "../db.ts";
+import { estimateTokens } from "../session.ts";
 
 /** Nome do banco do pipeline dentro de MEMORIES_ROOT. */
 export const PIPELINE_DB_FILENAME = ".pipeline.sqlite";

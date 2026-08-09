@@ -24,8 +24,8 @@ import {
 	listActiveMemoryFiles,
 	normalizeForSearch,
 	readMemoryDocFromFile,
-} from "../memory-index.ts";
-import type { IndexDocument } from "../memory-index.ts";
+} from "../memory/memory-index.ts";
+import type { IndexDocument } from "../memory/memory-index.ts";
 
 let tmpRoot: string;
 let tmpDbDir: string;

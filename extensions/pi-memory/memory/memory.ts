@@ -8,8 +8,8 @@
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { MEMORIES_ROOT, MEMORY_TYPES, type MemoryType } from "./constants.ts";
-import { ensureFileDir } from "./session.ts";
+import { MEMORIES_ROOT, MEMORY_TYPES, type MemoryType } from "../constants.ts";
+import { ensureFileDir } from "../session.ts";
 
 /**
  * Sanitiza uma string para ser segura como nome de arquivo.

@@ -16,13 +16,13 @@ import {
 	PipelineDB,
 	type NewEvidence,
 	type NewEpisode,
-} from "../pipeline.ts";
-import { selectEpisodesForJob } from "../worker.ts";
+} from "../pipeline/pipeline.ts";
+import { selectEpisodesForJob } from "../pipeline/worker.ts";
 import {
 	createExtractionProcessor,
 	type CompletionOptions,
 	type ExtractionModelRef,
-} from "../processor.ts";
+} from "../pipeline/processor.ts";
 
 let tmpDir: string;
 let pipeline: PipelineDB;

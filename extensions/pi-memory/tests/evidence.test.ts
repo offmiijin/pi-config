@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import {
 	PipelineDB,
 	type NewEpisode,
-} from "../pipeline.ts";
+} from "../pipeline/pipeline.ts";
 import {
 	buildBranch,
 	classifyToolCall,
@@ -28,7 +28,7 @@ import {
 	sanitizeEvidenceText,
 	truncateText,
 	type SessionEntry,
-} from "../evidence.ts";
+} from "../pipeline/evidence.ts";
 
 let tmpDir: string;
 let dbPath: string;

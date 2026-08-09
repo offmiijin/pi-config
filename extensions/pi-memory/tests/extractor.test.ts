@@ -12,7 +12,7 @@ import {
 	formatExistingMemories,
 	parseExtractionResponse,
 	type EvidenceBlock,
-} from "../extractor.ts";
+} from "../pipeline/extractor.ts";
 
 const cannedCandidate = {
 	action: "create",

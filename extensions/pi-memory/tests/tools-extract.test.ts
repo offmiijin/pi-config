@@ -13,8 +13,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { EPISODE_STATUS, JOB_STATUS, PipelineDB } from "../pipeline.ts";
-import { PipelineWorker } from "../worker.ts";
+import { EPISODE_STATUS, JOB_STATUS, PipelineDB } from "../pipeline/pipeline.ts";
+import { PipelineWorker } from "../pipeline/worker.ts";
 import { registerMemoryExtract } from "../tools/extract.ts";
 import type { ToolState } from "../tools/state.ts";
 
