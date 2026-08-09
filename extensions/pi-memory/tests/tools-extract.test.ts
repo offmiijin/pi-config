@@ -77,9 +77,30 @@ afterAll(() => {
 });
 
 describe("memory_extract (Fase 6 — async)", () => {
-	it("enfileira job forçado e retorna status imediatamente", async () => {
+	it("sem episódios elegíveis → não cria job vazio", async () => {
 		const tool = captureTool(makeState());
 		const res = await tool.execute("id1", {}, undefined, undefined, {});
+
+		expect(res.details!.job_id).toBeNull();
+		expect(res.content[0].text).toContain("Nothing to extract");
+		expect(pipeline.countJobs(proj, JOB_STATUS.QUEUED)).toBe(0);
+	});
+
+	it("com episódio elegível → enfileira job forçado", async () => {
+		const epId = pipeline.insertEpisode({
+			projectId: proj,
+			sessionId: "s-forced",
+			sessionFile: "/tmp/nonexistent-sess.jsonl",
+			startEntryId: "a",
+			endEntryId: "b",
+			leafId: "b",
+			fingerprint: `fp-forced-${Math.random()}`,
+			tokenEstimate: 10,
+		});
+		pipeline.finalizeEpisode(epId, [], EPISODE_STATUS.NORMALIZED);
+
+		const tool = captureTool(makeState());
+		const res = await tool.execute("id1b", {}, undefined, undefined, {});
 
 		expect(res.details!.job_id).toBeDefined();
 		expect(res.details!.reason).toBe("manual");

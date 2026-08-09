@@ -56,20 +56,28 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 				state.projectId,
 			);
 
-			// 2. Job forçado + acorda o worker (assíncrono — não aguardado).
-			const trigger = maybeCreateJob(state.pipeline, state.projectId, { force: true });
+			// 2. Sem episódios elegíveis (normalized + selected) → nada a
+			//    extrair: NÃO cria job vazio (LLM com prompt sem evidências
+			//    só desperdiça tokens).
+			const elig = state.pipeline.aggregatePendingEpisodes(state.projectId);
+			const trigger =
+				elig.count > 0
+					? maybeCreateJob(state.pipeline, state.projectId, { force: true })
+					: { jobId: null, reason: null, eligibleTokens: 0, eligibleEpisodes: 0 };
 			if (trigger.jobId) state.worker?.wake();
 
 			// 3. Status para o LLM.
 			const pending = state.pipeline.countEpisodes(state.projectId, EPISODE_STATUS.PENDING);
-			const elig = state.pipeline.aggregatePendingEpisodes(state.projectId);
 			const workerRunning = state.worker?.isRunning ?? false;
 
 			const text = trigger.jobId
 				? `Extraction job queued (job: ${trigger.jobId}, reason: ${trigger.reason}).\n` +
 					`Episodes pending: ${pending} | eligible: ${elig.count} (${elig.tokens} tokens) | worker: ${workerRunning ? "running" : "off"}`
-				: `No job created (inconsistent state — active job exists and force failed).\n` +
-					`Episodes pending: ${pending} | eligible: ${elig.count} (${elig.tokens} tokens) | worker: ${workerRunning ? "running" : "off"}`;
+				: elig.count === 0
+					? `Nothing to extract — no eligible episodes.\n` +
+						`Episodes pending: ${pending} | eligible: ${elig.count} (${elig.tokens} tokens) | worker: ${workerRunning ? "running" : "off"}`
+					: `No job created (inconsistent state — active job exists and force failed).\n` +
+						`Episodes pending: ${pending} | eligible: ${elig.count} (${elig.tokens} tokens) | worker: ${workerRunning ? "running" : "off"}`;
 
 			return {
 				content: [{ type: "text", text }],
