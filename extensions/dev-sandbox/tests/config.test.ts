@@ -190,6 +190,28 @@ describe("loadConfig", () => {
     expect(config.filesystem.cacheDirs.clones).toBe("");
   });
 
+  it("quarantineDirs do global mergeia sem perder o outro default", () => {
+    const agentDir = writeGlobal('{"filesystem": {"quarantineDirs": {"fetch": "/custom/fetch"}}}');
+    state.agentDir = agentDir;
+    const config = loadConfig("/cwd/proj");
+    expect(config.filesystem.quarantineDirs.fetch).toBe("/custom/fetch");
+    expect(config.filesystem.quarantineDirs.runs).toBe("");
+  });
+
+  it("merge de perfis: global + projeto", () => {
+    const agentDir = writeGlobal('{"profiles": {"fetch": {"enabled": true}}}');
+    state.agentDir = agentDir;
+    const cwd = fixture();
+    writeProject(cwd, '{"profiles": {"fetch": {"network": false}, "quarantine": {"enabled": false}}}');
+
+    const cfg = loadConfig(cwd);
+    expect(cfg.profiles.fetch.enabled).toBe(true);
+    expect(cfg.profiles.fetch.network).toBe(false);
+    expect(cfg.profiles.quarantine.enabled).toBe(false);
+    expect(cfg.profiles.quarantine.network).toBe(false); // default preservado
+    expect(cfg.profiles.normal.network).toBe(true);      // não tocado
+  });
+
   it("projeto não confiável é ignorado (projectTrusted: false)", () => {
     const agentDir = writeGlobal('{"internet": {"enabled": false}}');
     state.agentDir = agentDir;
@@ -302,6 +324,39 @@ describe("sanitizeConfig", () => {
     const cfg = structuredClone(DEFAULT_CONFIG);
     cfg.landlock.minAbi = 6;
     expect(sanitizeConfig(cfg).landlock.minAbi).toBe(DEFAULT_CONFIG.landlock.minAbi);
+  });
+
+  it("default profiles presentes no DEFAULT_CONFIG", () => {
+    expect(DEFAULT_CONFIG.profiles.normal).toEqual({ enabled: true, workspace: "rw", network: true, ssh: "agent" });
+    expect(DEFAULT_CONFIG.profiles.fetch).toEqual({ enabled: true, workspace: "none", network: true, ssh: "none" });
+    expect(DEFAULT_CONFIG.profiles.quarantine).toEqual({ enabled: true, workspace: "none", network: false, ssh: "none" });
+    expect(DEFAULT_CONFIG.filesystem.quarantineDirs).toEqual({ fetch: "", runs: "" });
+  });
+
+  it("workspace de fetch/quarantine é SEMPRE none (invariante); normal aceita formas verbosas", () => {
+    const agentDir = writeGlobal('{"profiles": {"fetch": {"workspace": "rw"}, "normal": {"workspace": "readonly"}}}');
+    state.agentDir = agentDir;
+    const cfg = loadConfig("/cwd/proj");
+    expect(cfg.profiles.fetch.workspace).toBe("none");
+    expect(cfg.profiles.quarantine.workspace).toBe("none");
+    expect(cfg.profiles.normal.workspace).toBe("ro");
+  });
+
+  it("perfil com campos inválidos volta ao default", () => {
+    const bad = {
+      profiles: { fetch: { network: "yes", ssh: "hack", workspace: "xablau" } },
+      filesystem: { quarantineDirs: { fetch: 42, runs: "ok" } },
+    } as unknown as SandboxConfig;
+    const out = sanitizeConfig(bad);
+    expect(out.profiles.fetch).toEqual(DEFAULT_CONFIG.profiles.fetch);
+    expect(out.filesystem.quarantineDirs.fetch).toBe("");
+    expect(out.filesystem.quarantineDirs.runs).toBe("ok");
+  });
+
+  it("perfil desconhecido é ignorado", () => {
+    const bad = { profiles: { "nao-existe": { network: true } } } as unknown as SandboxConfig;
+    const out = sanitizeConfig(bad);
+    expect(out.profiles).toEqual(DEFAULT_CONFIG.profiles);
   });
 
   it("landlock ausente no objeto → default", () => {
