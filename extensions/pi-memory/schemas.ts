@@ -34,8 +34,8 @@ export const SaveSchema = Type.Object({
 	tags: Type.Optional(Type.Array(Type.String(), { description: "Tags for search (PT-BR)" })),
 	confidence: Type.Optional(
 		Type.Number({
-			description: "0.1-0.9 (default 0.5, minimum 0.5)",
-			minimum: 0.1,
+			description: "0.5-0.9 (default 0.5)",
+			minimum: 0.5,
 			maximum: 0.9,
 		}),
 	),
