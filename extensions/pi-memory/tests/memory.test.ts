@@ -4,8 +4,8 @@
 
 import { after as afterAll, before as beforeAll, describe, it } from "node:test";
 import { expect } from "./expect-shim.ts";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 // identifyProject aceita um runner de git injetado (2º parâmetro) — os
@@ -1043,6 +1043,56 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 		expect(r.archived).toHaveLength(1);
 		expect(r.archived[0]).toBe(c.file); // mesmo path arquivado e recriado
 		expect(existsSync(c.file)).toBeTrue(); // recriado ativo
+	});
+
+	it("escrita atômica não deixa resíduo .tmp (create + consolidate)", () => {
+		const dir = join(MEMORIES_ROOT, "projects", testProjectId, "gotchas");
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-atomic-clean",
+			title: "V1",
+			content: "versão 1",
+			scope: "project",
+		});
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-atomic-clean",
+			title: "V2",
+			content: "versão 2",
+			scope: "project",
+			mode: "consolidate",
+		});
+		expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
+	});
+
+	it("falha de escrita não destrói o snapshot ativo (atômico)", () => {
+		const created = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "arch-atomic-fail",
+			title: "V1",
+			content: "versão 1",
+			scope: "project",
+		});
+		const dir = dirname(created.file);
+		chmodSync(dir, 0o555); // diretório somente leitura → escrita do .tmp falha
+		try {
+			expect(() =>
+				saveMemory(testProjectId, {
+					type: "gotchas",
+					context: "arch-atomic-fail",
+					title: "V2",
+					content: "versão 2",
+					scope: "project",
+					mode: "consolidate",
+				}),
+			).toThrow();
+		} finally {
+			chmodSync(dir, 0o755);
+		}
+		// Snapshot ativo INTACTO com o conteúdo antigo — a escrita nova falhou
+		// no .tmp e nada do ativo foi tocado; sem resíduo .tmp.
+		expect(readFileSync(created.file, "utf-8")).toContain("versão 1");
+		expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
 	});
 
 	it("context existente em OUTRO type/scope é arquivado (unicidade de key)", () => {

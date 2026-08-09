@@ -5,7 +5,7 @@
  * saveMemory compartilhado por memory_save e memory_extract.
  */
 
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import { MEMORIES_ROOT, MEMORY_TYPES, type MemoryType } from "./constants.ts";
@@ -62,6 +62,45 @@ export function getHistoryPath(filePath: string, revision: number): string {
 	const dir = dirname(relative);
 	const base = basename(relative, ".md");
 	return join(MEMORIES_ROOT, ".history", dir, base, `v${revision}.md`);
+}
+
+/**
+ * Escrita atômica de arquivo: grava num temporário no MESMO diretório e
+ * renomeia sobre o destino (rename é atômico no mesmo filesystem). Falha de
+ * escrita não deixa o destino sem conteúdo — o snapshot anterior permanece
+ * até o rename completar.
+ */
+function writeFileAtomic(filePath: string, content: string): void {
+	const tmpPath = `${filePath}.tmp`;
+	try {
+		writeFileSync(tmpPath, content);
+		renameSync(tmpPath, filePath);
+	} catch (err) {
+		rmSync(tmpPath, { force: true });
+		throw err;
+	}
+}
+
+/**
+ * Escreve uma cópia de arquivo de memória (.history/.supersedes/) a partir
+ * do conteúdo lido ANTES da substituição — variante de archiveFile que NÃO
+ * remove o original (o snapshot ativo é substituído atomicamente em
+ * separado). Usada pelo saveMemory/migração: se a escrita nova falhar, nada
+ * foi removido e a operação é retentável.
+ */
+function archiveContent(
+	rawContent: string,
+	targetPath: string,
+	extraMeta: Record<string, unknown> = {},
+): void {
+	const { meta, body } = parseFrontmatter(rawContent);
+	meta.superseded_at = new Date().toISOString().slice(0, 10);
+	meta.confidence = 0;
+	for (const [k, v] of Object.entries(extraMeta)) {
+		meta[k] = v;
+	}
+	ensureFileDir(targetPath);
+	writeFileAtomic(targetPath, formatFrontmatter(meta) + body);
 }
 
 /**
@@ -521,16 +560,35 @@ export function saveMemory(
 	// Busca em TODOS os tipos/escopos (findMemoryFile) — a contradição costuma
 	// cruzar tipo (ex.: lesson supersede pattern). Olhar só o tipo+escopo do
 	// novo save resultaria em no-op silencioso.
+	const filePath = getMemoryFilePath(projectId, type, context, scope);
+	ensureFileDir(filePath);
+
+	// Arquivos a arquivar — as CÓPIAS (.history/.supersedes/) são escritas
+	// ANTES da substituição do snapshot ativo (Bloqueador 4): se a escrita
+	// nova falhar, nada foi removido nem sobrescrito. Originais de OUTRAS
+	// chaves (supersedes/context_moved) só são removidos DEPOIS do snapshot
+	// novo estar em disco.
+	type PendingArchive = {
+		raw: string;
+		targetPath: string;
+		extraMeta: Record<string, unknown>;
+		/** Original ainda existe e precisa ser removido (arquivo de outra chave). */
+		removeOriginalPath: string | null;
+	};
+	const pendingArchives: PendingArchive[] = [];
+
 	if (supersedes) {
 		const oldPath = findMemoryFile(projectId, supersedes);
 		if (oldPath) {
-			moveToSupersedes(oldPath, { superseded_by: context });
+			pendingArchives.push({
+				raw: readFileSync(oldPath, "utf-8"),
+				targetPath: getSupersedesPath(oldPath),
+				extraMeta: { superseded_by: context },
+				removeOriginalPath: oldPath,
+			});
 			archived.push(oldPath);
 		}
 	}
-
-	const filePath = getMemoryFilePath(projectId, type, context, scope);
-	ensureFileDir(filePath);
 
 	// Garantia de unicidade: se o contexto já existe em OUTRO path (type ou
 	// scope divergentes — ex.: update migrou lessons → decisions), a versão
@@ -543,9 +601,11 @@ export function saveMemory(
 		const existingRaw = readFileSync(existingPath, "utf-8");
 		const { meta: existingMeta } = parseFrontmatter(existingRaw);
 		const oldRev = typeof existingMeta.revision === "number" ? existingMeta.revision : 1;
-		archiveFile(existingPath, getHistoryPath(existingPath, oldRev), {
-			superseded_by: context,
-			superseded_reason: "context_moved",
+		pendingArchives.push({
+			raw: existingRaw,
+			targetPath: getHistoryPath(existingPath, oldRev),
+			extraMeta: { superseded_by: context, superseded_reason: "context_moved" },
+			removeOriginalPath: existingPath,
 		});
 		archived.push(existingPath);
 	}
@@ -567,9 +627,11 @@ export function saveMemory(
 		existingTags = Array.isArray(meta.tags) ? (meta.tags as string[]) : [];
 		existingEvidence = Array.isArray(meta.evidence) ? (meta.evidence as string[]) : [];
 		existingSummary = typeof meta.summary === "string" ? meta.summary : null;
-		archiveFile(filePath, getHistoryPath(filePath, oldRevision), {
-			superseded_by: context,
-			superseded_reason: "consolidated",
+		pendingArchives.push({
+			raw: existing,
+			targetPath: getHistoryPath(filePath, oldRevision),
+			extraMeta: { superseded_by: context, superseded_reason: "consolidated" },
+			removeOriginalPath: null, // o rename substitui o ativo — nada a remover
 		});
 		archived.push(filePath);
 		revision = oldRevision + 1;
@@ -597,8 +659,23 @@ export function saveMemory(
 	else if (existingSummary !== null) metaOut.summary = existingSummary;
 	if (mergedEvidence.length > 0) metaOut.evidence = mergedEvidence;
 
+	// Ordem segura: (1) cópias de arquivo (não tocam os originais) → (2)
+	// substituição ATÔMICA do snapshot ativo → (3) remoção de originais de
+	// OUTRAS chaves. Falha em qualquer passo deixa o estado consistente e a
+	// operação retentável (nenhum snapshot ativo some).
+	for (const a of pendingArchives) {
+		archiveContent(a.raw, a.targetPath, a.extraMeta);
+	}
 	const body = `# ${title}\n\n${content.trim()}\n`;
-	writeFileSync(filePath, formatFrontmatter(metaOut) + body);
+	writeFileAtomic(filePath, formatFrontmatter(metaOut) + body);
+	for (const a of pendingArchives) {
+		// Guarda do caso supersedes === context (self-supersede): o original
+		// É o snapshot recém-escrito — removê-lo apagaria a memória nova.
+		if (a.removeOriginalPath && a.removeOriginalPath !== filePath) {
+			rmSync(a.removeOriginalPath, { force: true });
+		}
+	}
+
 	return {
 		action: existed ? "consolidated" : "created",
 		file: filePath,
@@ -639,8 +716,10 @@ export function migrateMemoryToSnapshot(filePath: string): boolean {
 		.trim();
 	if (!lastTitle || !lastContent) return false;
 
-	// Arquiva o v1 inteiro como revisão baseline e recria o snapshot.
-	archiveFile(filePath, getHistoryPath(filePath, 0), {
+	// Cópia do v1 inteiro como revisão baseline — escrita ANTES da
+	// substituição atômica (Bloqueador 4): se o snapshot novo falhar, o
+	// ativo continua v1 e a migração é retentável (idempotente).
+	archiveContent(content, getHistoryPath(filePath, 0), {
 		superseded_by: typeof meta.context === "string" ? meta.context : "",
 		superseded_reason: "migrated_to_snapshot_v2",
 	});
@@ -658,7 +737,7 @@ export function migrateMemoryToSnapshot(filePath: string): boolean {
 	if (Array.isArray(meta.tags)) metaOut.tags = meta.tags;
 	if (typeof meta.summary === "string") metaOut.summary = meta.summary;
 
-	writeFileSync(filePath, formatFrontmatter(metaOut) + `# ${lastTitle}\n\n${lastContent}\n`);
+	writeFileAtomic(filePath, formatFrontmatter(metaOut) + `# ${lastTitle}\n\n${lastContent}\n`);
 	return true;
 }
 
