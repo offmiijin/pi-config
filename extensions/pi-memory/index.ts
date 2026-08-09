@@ -273,6 +273,9 @@ export default function (pi: ExtensionAPI) {
 				// anteriores transitam para normalized/ignored.
 				normalizePendingEpisodes(pipeline, state.projectId);
 				pipeline.recoverStuckJobs();
+				// Jobs 'done' com candidatos pending (estado órfão) voltam para a
+				// fila — o worker refaz a extração até resolver (Bloqueador 2).
+				pipeline.recoverJobsWithPendingCandidates();
 				worker = new PipelineWorker(pipeline, {
 					processor: createExtractionProcessor({
 						getModel,

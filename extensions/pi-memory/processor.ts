@@ -333,23 +333,38 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				outputTokens,
 			});
 
+			const details = {
+				phase: "extraction",
+				candidates: inserted,
+				ignored,
+				committed,
+				rejected,
+				reviewed,
+				pending,
+				promptVersion: EXTRACTION_PROMPT_VERSION,
+				inputTokens,
+				outputTokens,
+			};
+
+			// Candidatos pending (revisor/commit falhou) NÃO podem deixar o job
+			// 'done': nenhum processo os retoma (gatilhos só enxergam episódios
+			// normalized; candidatos pendentes de job done ficam órfãos). Retorno
+			// retryável — o worker re-tenta o MESMO job com backoff; no retry a
+			// extração é refeita (insertCandidates substitui os candidatos) e o
+			// pending resolve ou vira dead_letter após maxAttempts.
+			if (pending > 0) {
+				return {
+					ok: false,
+					retryable: true,
+					error: `${pending} candidato(s) pendente(s) — revisor/commit falhou; retry do job`,
+					details,
+				};
+			}
+
 			return {
 				ok: true,
-				// Fix 2 (próximo commit): com pending > 0 o job volta retryável antes
-				// deste ponto — este ternary cai para sempre "processed".
-				episodesStatus: pending > 0 ? "selected" : "processed",
-				details: {
-					phase: "extraction",
-					candidates: inserted,
-					ignored,
-					committed,
-					rejected,
-					reviewed,
-					pending,
-					promptVersion: EXTRACTION_PROMPT_VERSION,
-					inputTokens,
-					outputTokens,
-				},
+				episodesStatus: "processed",
+				details,
 			};
 		} catch (err) {
 			return {

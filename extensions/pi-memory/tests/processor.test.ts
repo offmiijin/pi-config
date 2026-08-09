@@ -430,7 +430,7 @@ describe("Fase 4: validação, revisor e commit", () => {
 		expect(candidates[0].rejectionReason).toContain("caso pontual");
 	});
 
-	it("revisor indisponível → candidato fica pending", async () => {
+	it("revisor indisponível → candidato pending e job retryável", async () => {
 		const { result, candidates, commits } = await runOnce(
 			"proj-f4-pending",
 			(evId) => candidateJson({ type: "_rules" }, [evId]),
@@ -441,12 +441,15 @@ describe("Fase 4: validação, revisor e commit", () => {
 		expect(result.details?.pending).toBe(1);
 		expect(commits.length).toBe(0);
 		expect(candidates[0].status).toBe("pending");
-		// Pendings não resolvidos → episódios ficam selected (re-elegíveis p/
-		// o próximo job — includeClaimed: true re-seleciona sem perda).
-		expect(result.episodesStatus).toBe("selected");
+		// Candidato pending NÃO deixa o job done — retry do MESMO job com
+		// backoff (episódios continuam elegíveis; no retry o pending resolve
+		// ou vira dead_letter após maxAttempts).
+		expect(result.ok).toBeFalse();
+		expect(result.retryable).toBeTrue();
+		expect(result.error).toContain("pendente");
 	});
 
-	it("falha no commit → candidato fica pending com erro", async () => {
+	it("falha no commit → candidato pending e job retryável", async () => {
 		const proj = "proj-f4-commitfail";
 		const { evidenceId } = makeEpisodeWithEvidence(proj);
 		const jobId = pipeline.createJob(proj, "tokens");
@@ -464,5 +467,8 @@ describe("Fase 4: validação, revisor e commit", () => {
 		expect(result.details?.pending).toBe(1);
 		expect(candidates[0].status).toBe("pending");
 		expect(candidates[0].rejectionReason).toContain("índice quebrado");
+		// Job retryável — o commit será retentado com backoff, não abandonado.
+		expect(result.ok).toBeFalse();
+		expect(result.retryable).toBeTrue();
 	});
 });

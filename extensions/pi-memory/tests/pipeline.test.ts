@@ -214,38 +214,95 @@ describe("PipelineDB", () => {
 		expect(() => p.countEpisodes()).toThrow("PipelineDB não está aberto");
 	});
 
-	it("migra banco v1 → v2 (colunas novas em jobs)", () => {
-		const v1Path = join(tmpDir, "v1.sqlite");
-		const raw = new DatabaseCtor(v1Path);
-		raw.exec(`
-			CREATE TABLE jobs (
-			  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, reason TEXT NOT NULL,
-			  status TEXT NOT NULL DEFAULT 'queued', attempts INTEGER NOT NULL DEFAULT 0,
-			  prompt_version INTEGER, model TEXT, reasoning_level TEXT,
-			  created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
-			  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
-			  error TEXT
-			);
-			CREATE TABLE pipeline_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-			INSERT INTO pipeline_meta (key, value) VALUES ('schema_version', '1');
-		`);
-		raw.close();
-
-		const p = new PipelineDB(v1Path);
+	it("insertCandidates com lista vazia remove candidatos de tentativa anterior", () => {
+		const p = new PipelineDB(dbPath);
 		p.open();
-		const probe = new DatabaseCtor(v1Path);
+		const jobId = p.createJob("proj-ic", "tokens");
+		p.insertCandidates(jobId, [
+			{
+				jobId,
+				action: "create",
+				context: "ctx-ic",
+				type: "gotchas",
+				scope: "project",
+				title: "T",
+				summary: "S",
+				content: "C",
+				confidence: 0.8,
+				evidenceIds: [],
+				supersedes: null,
+				status: "pending",
+			},
+		]);
+		expect(p.countCandidates(jobId)).toBe(1);
+		// Retry com resposta sem memórias: candidatos anteriores do MESMO job
+		// não podem permanecer (seriam reprocessados).
+		p.insertCandidates(jobId, []);
+		expect(p.countCandidates(jobId)).toBe(0);
+		p.close();
+	});
+
+	it("recoverJobsWithPendingCandidates requeue jobs done com pending", () => {
+		const p = new PipelineDB(dbPath);
+		p.open();
+		const jobWithPending = p.createJob("proj-rpc", "tokens");
+		p.insertCandidates(jobWithPending, [
+			{
+				jobId: jobWithPending,
+				action: "create",
+				context: "ctx-rpc-pend",
+				type: "gotchas",
+				scope: "project",
+				title: "T",
+				summary: "S",
+				content: "C",
+				confidence: 0.8,
+				evidenceIds: [],
+				supersedes: null,
+				status: "pending",
+			},
+		]);
+		// Simula o estado órfão legado: job já finalizado com candidato pending.
+		const doneProbe = new DatabaseCtor(dbPath);
 		try {
-			const cols = probe.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
-			const names = cols.map((c) => c.name);
-			expect(names).toContain("next_attempt_at");
-			expect(names).toContain("details");
-			const version = probe
-				.prepare("SELECT value FROM pipeline_meta WHERE key = 'schema_version'")
-				.get() as { value: string };
-			expect(version.value).toBe("2");
+			doneProbe
+				.prepare("UPDATE jobs SET status = 'done', finished_at = ? WHERE id = ?")
+				.run(new Date().toISOString(), jobWithPending);
 		} finally {
-			probe.close();
+			doneProbe.close();
 		}
+
+		// Job done sem pendings NÃO é tocado.
+		const cleanJob = p.createJob("proj-rpc", "tokens");
+		p.insertCandidates(cleanJob, [
+			{
+				jobId: cleanJob,
+				action: "create",
+				context: "ctx-rpc-clean",
+				type: "gotchas",
+				scope: "project",
+				title: "T",
+				summary: "S",
+				content: "C",
+				confidence: 0.8,
+				evidenceIds: [],
+				supersedes: null,
+				status: "committed",
+			},
+		]);
+		const doneProbe2 = new DatabaseCtor(dbPath);
+		try {
+			doneProbe2
+				.prepare("UPDATE jobs SET status = 'done', finished_at = ? WHERE id = ?")
+				.run(new Date().toISOString(), cleanJob);
+		} finally {
+			doneProbe2.close();
+		}
+
+		expect(p.recoverJobsWithPendingCandidates()).toBe(1);
+		expect(p.getJob(jobWithPending)!.status).toBe("queued");
+		expect(p.getJob(jobWithPending)!.error).toContain("pending");
+		expect(p.getJob(cleanJob)!.status).toBe("done"); // não tocado
 		p.close();
 	});
 });

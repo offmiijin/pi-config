@@ -861,12 +861,36 @@ export class PipelineDB {
 	}
 
 	/**
+	 * Jobs 'done' com candidatos pending (estado órfão de versões anteriores /
+	 * shutdown no meio do revisor) voltam para queued: o worker re-seleciona os
+	 * episódios (includeClaimed) e refaz a extração até resolver. Chamado no
+	 * session_start junto com recoverStuckJobs.
+	 */
+	recoverJobsWithPendingCandidates(): number {
+		const db = this.requireDb();
+		const rows = db
+			.prepare(
+				"SELECT DISTINCT j.id FROM jobs j JOIN candidates c ON c.job_id = j.id " +
+					"WHERE c.status = ? AND j.status = ?",
+			)
+			.all(CANDIDATE_STATUS.PENDING, JOB_STATUS.DONE) as { id: string }[];
+		if (rows.length === 0) return 0;
+		const stmt = db.prepare(
+			"UPDATE jobs SET status = ?, started_at = NULL, finished_at = NULL, " +
+				"error = 'recovered: candidatos pending' WHERE id = ?",
+		);
+		for (const row of rows) stmt.run(JOB_STATUS.QUEUED, row.id);
+		return rows.length;
+	}
+
+	/**
 	 * Insere candidatos de um job em transação única. Idempotente: candidatos
 	 * anteriores do MESMO job são removidos antes (retry de job não duplica).
+	 * A remoção acontece mesmo com lista vazia — retry com resposta sem
+	 * memórias não pode deixar candidatos da tentativa anterior pendurados.
 	 * Retorna o número inserido.
 	 */
 	insertCandidates(jobId: string, candidates: NewCandidate[]): number {
-		if (candidates.length === 0) return 0;
 		const db = this.requireDb();
 		db.exec("BEGIN");
 		try {
