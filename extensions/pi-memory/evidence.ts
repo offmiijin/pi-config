@@ -178,7 +178,19 @@ const SECRET_PATTERNS: RegExp[] = [
 	/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, // GitHub tokens
 	/\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id
 	/\bbearer\s+[A-Za-z0-9._~+/=-]{16,}\b/gi, // Authorization header
-	/\b(?:api[_-]?key|token|secret|password|passwd|senha)\b\s*[:=]\s*["']?[^"' \n]{8,}/gi,
+	/\b(?:api[_-]?key|token|secret|password|passwd|senha)\b\s*[:=]\s*["']?[^"' \n]{4,}/gi,
+	// URL de conexão com credenciais embutidas: user:pass@host (qualquer
+	// scheme) ou scheme de banco/mensageria com user@host. `ssh://git@` e
+	// URLs públicas sem credenciais NÃO são segredos — ficam de fora.
+	/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]*:[^\s"'<>]*@[^\s"'<>]+/gi,
+	/\b(?:postgres|postgresql|mysql|mariadb|mongodb|mongodb\+srv|redis|rediss|amqp|amqps|clickhouse):\/\/[^\s"'<>]+@[^\s"'<>]+/gi,
+	// Chave privada PEM (multilinha).
+	/-----BEGIN (?:RSA |EC |DSA |ENCRYPTED |OPENSSH )?PRIVATE KEY-----\s[\s\S]*?-----END (?:RSA |EC |DSA |ENCRYPTED |OPENSSH )?PRIVATE KEY-----/g,
+	// Authorization header com Basic/Digest (base64 de user:pass).
+	/\bauthorization\s*[:=]\s*(?:basic|digest)\s+[A-Za-z0-9+/=]{8,}\b/gi,
+	// Basic standalone com token longo (base64 típico) — mínimo 16 chars
+	// evita falsos positivos em texto comum ("basic template" tem 14).
+	/\bbasic\s+[A-Za-z0-9+/=]{16,}\b/gi,
 ];
 
 /** Substitui padrões de segredo; retorna texto limpo + flag de redação. */

@@ -178,6 +178,50 @@ describe("sanitizeEvidenceText", () => {
 		const { redacted } = sanitizeEvidenceText("o código quebrava com undefined");
 		expect(redacted).toBeFalse();
 	});
+
+	it("redige URL de conexão com credenciais (DATABASE_URL)", () => {
+		const { text, redacted } = sanitizeEvidenceText(
+			"postgres://usuario:senha123@localhost:5432/appdb?sslmode=require",
+		);
+		expect(redacted).toBeTrue();
+		expect(text).toContain("[REDACTED]");
+		expect(text).not.toContain("senha123");
+	});
+
+	it("redige chave privada PEM multilinha", () => {
+		const pem = [
+			"-----BEGIN RSA PRIVATE KEY-----",
+			"MIIEpAIBAAKCAQEA1...dados da chave...",
+			"-----END RSA PRIVATE KEY-----",
+		].join("\n");
+		const { text, redacted } = sanitizeEvidenceText(pem);
+		expect(redacted).toBeTrue();
+		expect(text).not.toContain("PRIVATE KEY");
+		expect(text).toContain("[REDACTED]");
+	});
+
+	it("redige Authorization: Basic ...", () => {
+		const { text, redacted } = sanitizeEvidenceText(
+			"curl -H 'Authorization: Basic dXNlcjpwYXNz' https://api.exemplo.com",
+		);
+		expect(redacted).toBeTrue();
+		expect(text).not.toContain("dXNlcjpwYXNz");
+	});
+
+	it("redige valor curto de api_key/password (mínimo 4 chars)", () => {
+		const { text, redacted } = sanitizeEvidenceText("password: 1234");
+		expect(redacted).toBeTrue();
+		expect(text).not.toContain("1234");
+	});
+
+	it("não redige URL pública nem ssh://git@ (sem credenciais)", () => {
+		expect(
+			sanitizeEvidenceText("git remote: https://github.com/org/repo.git").redacted,
+		).toBeFalse();
+		expect(
+			sanitizeEvidenceText("clone ssh://git@github.com/org/repo.git").redacted,
+		).toBeFalse();
+	});
 });
 
 describe("truncateText", () => {
