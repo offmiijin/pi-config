@@ -288,6 +288,46 @@ describe("createExtractionProcessor", () => {
 		expect(seenProjects.every((p) => p === proj)).toBeTrue();
 	});
 
+	it("limita candidatos por job (top N por confidence)", async () => {
+		const proj = "proj-x-limit";
+		const { evidenceId } = makeEpisodeWithEvidence(proj);
+		const jobId = pipeline.createJob(proj, "tokens");
+
+		// 10 candidatos válidos (confidence 0.95 → 0.77, todos ≥ 0.75 →
+		// auto-accept) — o teto de 8 deve rejeitar os 2 de menor confidence.
+		const memories = Array.from({ length: 10 }, (_, i) => ({
+			action: "create",
+			context: `ctx-limit-${i}`,
+			type: "lessons",
+			scope: "project",
+			title: `T${i}`,
+			summary: `S${i}`,
+			content: `C${i}`,
+			confidence: 0.95 - i * 0.02,
+			evidence_ids: [evidenceId],
+		}));
+		const model = makeFakeModel(JSON.stringify({ memories }));
+		const processor = createExtractionProcessor({
+			getModel: async () => model,
+			getRelatedMemories: async () => "",
+			findExistingMemory: async () => null,
+			commitMemory: async () => ({ ok: true }),
+		});
+		const job = pipeline.getJob(jobId)!;
+		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
+		const result = await processor(pipeline, job, selection);
+
+		const candidates = pipeline.listCandidatesByJob(jobId);
+		expect(result.details?.committed).toBe(8);
+		expect(result.details?.rejected).toBe(2);
+		expect(candidates.filter((c) => c.status === "committed").length).toBe(8);
+		const excess = candidates.filter((c) => c.status === "rejected");
+		expect(excess.length).toBe(2);
+		// Excedentes são os de MENOR confidence (ctx-limit-8 e ctx-limit-9).
+		expect(excess.every((c) => c.rejectionReason?.includes("excedeu limite"))).toBeTrue();
+		expect(excess.map((c) => c.context).sort()).toEqual(["ctx-limit-8", "ctx-limit-9"]);
+	});
+
 	it("agrega uso de tokens do revisor nas métricas do job", async () => {
 		const proj = "proj-x-revusage";
 		const { evidenceId } = makeEpisodeWithEvidence(proj);

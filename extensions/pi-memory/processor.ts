@@ -13,6 +13,7 @@
 
 import {
 	EXTRACTION_CACHE_RETENTION,
+	EXTRACTION_MAX_CANDIDATES_PER_JOB,
 	EXTRACTION_MAX_OUTPUT_TOKENS,
 	EXTRACTION_MODEL_ID,
 	EXTRACTION_MODEL_PROVIDER,
@@ -268,7 +269,23 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 			let reviewInputTokens = 0;
 			let reviewOutputTokens = 0;
 
-			for (const candidate of pipeline.listCandidatesByJob(job.id)) {
+			// Limite de candidatos por job: mantém os top N por confidence —
+			// excedentes são rejeitados sem passar pelo modelo. Um job não
+			// despeja dezenas de memórias triviais de uma vez.
+			const candidatesByJob = pipeline
+				.listCandidatesByJob(job.id)
+				.sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+			const keptCandidates = candidatesByJob.slice(0, EXTRACTION_MAX_CANDIDATES_PER_JOB);
+			for (const c of candidatesByJob.slice(EXTRACTION_MAX_CANDIDATES_PER_JOB)) {
+				pipeline.updateCandidateStatus(
+					c.id,
+					CANDIDATE_STATUS.REJECTED,
+					`excedeu limite de ${EXTRACTION_MAX_CANDIDATES_PER_JOB} candidatos por job`,
+				);
+				rejected++;
+			}
+
+			for (const candidate of keptCandidates) {
 				const existing = await findExistingMemory(job.projectId, candidate.context);
 				const existingSupersedeTarget =
 					candidate.action === "supersede" && candidate.supersedes

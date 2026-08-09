@@ -31,6 +31,12 @@ export const EXTRACTION_MAX_OUTPUT_TOKENS = 4_096;
  */
 export const EXTRACTION_SESSION_ID = "pi-memory-extraction";
 
+/**
+ * Teto de candidatos aceitos por job — mantém os top N por confidence e
+ * rejeita o excedente (evita despejo de dezenas de memórias triviais).
+ */
+export const EXTRACTION_MAX_CANDIDATES_PER_JOB = 8;
+
 /** Orçamentos do prompt de extração (mapping Fase 3, seção 3.4). */
 export const EXTRACTION_MAX_EVIDENCE_TOKENS = 18_000;
 export const EXTRACTION_MAX_MEMORY_CONTEXT_TOKENS = 5_000;
