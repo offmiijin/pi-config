@@ -217,7 +217,15 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				.filter((b) => b.type === "text" && typeof b.text === "string")
 				.map((b) => b.text)
 				.join("\n");
-			const { candidates, ignored } = parseExtractionResponse(responseText);
+			const { candidates, ignored, parseError } = parseExtractionResponse(responseText);
+
+			// Resposta inválida (vazia/JSON quebrado/schema errado) NÃO é
+			// sucesso: retry do job — episódios continuam elegíveis e o lote
+			// não se perde como "processado sem memórias".
+			if (parseError) {
+				return { ok: false, retryable: true, error: parseError };
+			}
+
 			const inserted = pipeline.insertCandidates(
 				job.id,
 				candidates.map((c) => toNewCandidate(job.id, c)),

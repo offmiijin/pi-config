@@ -124,9 +124,14 @@ describe("parseExtractionResponse", () => {
 		expect(r.candidates.length).toBe(1);
 	});
 
-	it("JSON inválido → vazio", () => {
-		expect(parseExtractionResponse("não é json").candidates).toHaveLength(0);
-		expect(parseExtractionResponse("").candidates).toHaveLength(0);
+	it("JSON inválido/vazio → parseError (não é sucesso silencioso)", () => {
+		const bad = parseExtractionResponse("não é json");
+		expect(bad.candidates).toHaveLength(0);
+		expect(bad.parseError).toBeDefined();
+
+		const empty = parseExtractionResponse("");
+		expect(empty.candidates).toHaveLength(0);
+		expect(empty.parseError).toBeDefined();
 	});
 
 	it("candidato sem context (schema inválido) → descartado", () => {

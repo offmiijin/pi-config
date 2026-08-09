@@ -225,28 +225,35 @@ export function buildExtractionPrompt(opts: {
 export interface ParsedExtraction {
 	candidates: ExtractionCandidate[];
 	ignored: number;
+	/**
+	 * Erro de parsing/validação da resposta (vazio, JSON inválido ou fora do
+	 * schema). Diferenciado de "modelo decidiu que não há memórias" — o
+	 * chamador pode marcar o job como retryável em vez de perder o lote.
+	 */
+	parseError?: string;
 }
 
 /**
  * Interpreta a resposta do modelo. Remove code fences, valida contra o schema
  * TypeBox e separa candidates (create/update/supersede) de ignores.
- * Resposta inválida → lista vazia (job é marcado done sem candidatos).
+ * Resposta vazia/JSON inválido/fora do schema → parseError (não é sucesso
+ * silencioso: o chamador decide retry).
  */
 export function parseExtractionResponse(text: string): ParsedExtraction {
 	const cleaned = text
 		.replace(/^```(?:json)?\s*/m, "")
 		.replace(/\s*```$/m, "")
 		.trim();
-	if (!cleaned) return { candidates: [], ignored: 0 };
+	if (!cleaned) return { candidates: [], ignored: 0, parseError: "resposta vazia do modelo" };
 
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(cleaned);
 	} catch {
-		return { candidates: [], ignored: 0 };
+		return { candidates: [], ignored: 0, parseError: "JSON inválido na resposta do modelo" };
 	}
 	if (!Check(ExtractionResponseSchema, parsed)) {
-		return { candidates: [], ignored: 0 };
+		return { candidates: [], ignored: 0, parseError: "resposta fora do schema de extração" };
 	}
 
 	const memories = (parsed as { memories: ExtractionCandidate[] }).memories;

@@ -194,7 +194,7 @@ describe("createExtractionProcessor", () => {
 		expect(result.error).toContain("429");
 	});
 
-	it("resposta inválida → job ok com 0 candidatos", async () => {
+	it("resposta inválida → retryável com erro (episódios não se perdem)", async () => {
 		const proj = "proj-x-badresp";
 		makeEpisodeWithEvidence(proj);
 		const jobId = pipeline.createJob(proj, "tokens");
@@ -207,8 +207,9 @@ describe("createExtractionProcessor", () => {
 		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
 
 		const result = await processor(pipeline, job, selection);
-		expect(result.ok).toBeTrue();
-		expect(result.details?.candidates).toBe(0);
+		expect(result.ok).toBeFalse();
+		expect(result.retryable).toBeTrue();
+		expect(result.error).toContain("JSON");
 	});
 
 	it("passa reasoning/cache configurados na chamada", async () => {
