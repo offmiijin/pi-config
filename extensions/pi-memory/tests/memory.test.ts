@@ -1042,6 +1042,32 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 		expect(existsSync(c.file)).toBeTrue(); // recriado ativo
 	});
 
+	it("context existente em OUTRO type/scope é arquivado (unicidade de key)", () => {
+		const first = saveMemory(testProjectId, {
+			type: "lessons",
+			context: "arch-moved",
+			title: "L",
+			content: "lição antiga",
+			scope: "project",
+		});
+
+		// Reescrita com type divergente (lessons → decisions): a versão antiga
+		// em outro path NÃO pode permanecer ativa — arquiva em .history/.
+		const r = saveMemory(testProjectId, {
+			type: "decisions",
+			context: "arch-moved",
+			title: "D",
+			content: "decisão nova",
+			scope: "project",
+		});
+
+		expect(r.archived).toContain(first.file); // antiga arquivada
+		expect(existsSync(first.file)).toBeFalse();
+		// Só UMA memória ativa com a key — e é a do novo path.
+		expect(findMemoryFile(testProjectId, "arch-moved")).toBe(r.file);
+		expect(r.file).toContain("/decisions/arch-moved.md");
+	});
+
 	it("create retorna archived vazio; reescrita arquiva em .history/", () => {
 		const created = saveMemory(testProjectId, {
 			type: "gotchas",

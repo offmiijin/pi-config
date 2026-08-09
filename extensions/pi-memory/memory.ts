@@ -532,6 +532,24 @@ export function saveMemory(
 	const filePath = getMemoryFilePath(projectId, type, context, scope);
 	ensureFileDir(filePath);
 
+	// Garantia de unicidade: se o contexto já existe em OUTRO path (type ou
+	// scope divergentes — ex.: update migrou lessons → decisions), a versão
+	// antiga é arquivada para .history/ antes de criar a nova. Sem isso,
+	// duas memórias ativas com a MESMA context key quebrariam o contrato
+	// "mesma key = mesmo arquivo" (findMemoryFile retornaria uma delas por
+	// ordem de busca, com a outra invisível para o pipeline de dedup).
+	const existingPath = findMemoryFile(projectId, context);
+	if (existingPath && existingPath !== filePath) {
+		const existingRaw = readFileSync(existingPath, "utf-8");
+		const { meta: existingMeta } = parseFrontmatter(existingRaw);
+		const oldRev = typeof existingMeta.revision === "number" ? existingMeta.revision : 1;
+		archiveFile(existingPath, getHistoryPath(existingPath, oldRev), {
+			superseded_by: context,
+			superseded_reason: "context_moved",
+		});
+		archived.push(existingPath);
+	}
+
 	// Snapshot consolidado: versão atual (se existir) vai para .history/ e a
 	// nova substitui o ativo. mode "append" (legado) é tratado como
 	// consolidate — toda escrita é a reescrita do estado atual.
