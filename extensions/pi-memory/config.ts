@@ -12,7 +12,24 @@ export const EXTRACTION_MODEL_PROVIDER = "opencode-go";
 export const EXTRACTION_MODEL_ID = "deepseek-v4-flash";
 
 export const EXTRACTION_REASONING = "medium";
-export const EXTRACTION_CACHE_RETENTION = "default";
+// API de cache aceita apenas none | short | long — "default" era inválido
+// (o provider tratava como valor desconhecido e nunca habilitava cache).
+export const EXTRACTION_CACHE_RETENTION = "short";
+
+/**
+ * Teto de tokens de saída por chamada (extração E revisor). Sem isso o
+ * modelo pode gerar até o limite do provider — observado 15.7K output num
+ * job real. 4K cobre JSON de candidatos sem inflar o custo.
+ */
+export const EXTRACTION_MAX_OUTPUT_TOKENS = 4_096;
+
+/**
+ * sessionId fixo usado em TODAS as chamadas de extração/revisão: o provider
+ * usa este valor como chave do cache de prompt (prompt_cache_key). UUID novo
+ * por chamada zerava o cache — retry e prompts subsequentes reutilizam o
+ * prefixo estático.
+ */
+export const EXTRACTION_SESSION_ID = "pi-memory-extraction";
 
 /** Orçamentos do prompt de extração (mapping Fase 3, seção 3.4). */
 export const EXTRACTION_MAX_EVIDENCE_TOKENS = 18_000;

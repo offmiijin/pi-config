@@ -11,14 +11,14 @@
  * com fakes sem tocar no runtime do Pi.
  */
 
-import { randomUUID } from "node:crypto";
-
 import {
 	EXTRACTION_CACHE_RETENTION,
+	EXTRACTION_MAX_OUTPUT_TOKENS,
 	EXTRACTION_MODEL_ID,
 	EXTRACTION_MODEL_PROVIDER,
 	EXTRACTION_PROMPT_VERSION,
 	EXTRACTION_REASONING,
+	EXTRACTION_SESSION_ID,
 } from "./config.ts";
 import {
 	buildEvidenceText,
@@ -61,6 +61,8 @@ export interface CompletionOptions {
 	reasoningEffort: string;
 	cacheRetention: string;
 	sessionId: string;
+	/** Teto de tokens de saída — repassado ao provider (max_output_tokens). */
+	maxTokens?: number;
 	/** Cancelamento do job (worker.stop()) — repassado ao provider. */
 	signal?: AbortSignal;
 }
@@ -105,6 +107,17 @@ export interface ExtractionProcessorDeps {
 	 * Fase 4: grava a memória (markdown + índice). Default: no-op ok.
 	 */
 	commitMemory?(candidate: CandidateRecord): Promise<{ ok: boolean; error?: string }>;
+}
+
+/** Extrai tokens de uso de uma resposta (aceita ambos os shapes de usage). */
+function extractUsage(usage: CompletionResponse["usage"]): {
+	inputTokens: number;
+	outputTokens: number;
+} {
+	return {
+		inputTokens: usage?.inputTokens ?? usage?.input ?? 0,
+		outputTokens: usage?.outputTokens ?? usage?.output ?? 0,
+	};
 }
 
 /* ------------------------------------------------------------------ */
@@ -215,7 +228,8 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				{
 					reasoningEffort: EXTRACTION_REASONING,
 					cacheRetention: EXTRACTION_CACHE_RETENTION,
-					sessionId: randomUUID(),
+					sessionId: EXTRACTION_SESSION_ID,
+					maxTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
 					signal,
 				},
 			);
@@ -244,6 +258,9 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 			let rejected = 0;
 			let reviewed = 0;
 			let pending = 0;
+			// Uso do revisor entra nas métricas do job (antes ficava de fora).
+			let reviewInputTokens = 0;
+			let reviewOutputTokens = 0;
 
 			for (const candidate of pipeline.listCandidatesByJob(job.id)) {
 				const existing = await findExistingMemory(candidate.context);
@@ -267,18 +284,20 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				if (decision === "review") {
 					reviewed++;
 					const review = await runReviewer(model, candidate, blocks, existing, signal);
-					if (!review) {
+					reviewInputTokens += review.usage.inputTokens;
+					reviewOutputTokens += review.usage.outputTokens;
+					if (!review.decision) {
 						// Revisor indisponível → candidato fica pending (revisão futura).
 						pending++;
 						continue;
 					}
-					if (review.action === "reject") {
-						pipeline.updateCandidateStatus(candidate.id, CANDIDATE_STATUS.REJECTED, review.reason);
+					if (review.decision.action === "reject") {
+						pipeline.updateCandidateStatus(candidate.id, CANDIDATE_STATUS.REJECTED, review.decision.reason);
 						rejected++;
 						continue;
 					}
-					if (review.action === "modify" && review.modified) {
-						applyReviewModifications(candidate, review.modified);
+					if (review.decision.action === "modify" && review.decision.modified) {
+						applyReviewModifications(candidate, review.decision.modified);
 					}
 					// accept ou modify → commit
 					const reviewCommit = await commitMemory(candidate);
@@ -303,8 +322,9 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				}
 			}
 
-			const inputTokens = response.usage?.inputTokens ?? response.usage?.input ?? 0;
-			const outputTokens = response.usage?.outputTokens ?? response.usage?.output ?? 0;
+			const extract = extractUsage(response.usage);
+			const inputTokens = extract.inputTokens + reviewInputTokens;
+			const outputTokens = extract.outputTokens + reviewOutputTokens;
 			pipeline.updateJob(job.id, {
 				model: `${model.provider}/${model.id}`,
 				reasoningLevel: EXTRACTION_REASONING,
@@ -315,9 +335,8 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 
 			return {
 				ok: true,
-				// Candidatos pending (revisor/commit falhou) NÃO deixam os episódios
-				// presos: eles ficam 'selected' — re-elegíveis para o próximo job
-				// (includeClaimed: true) — e são re-extraídos até resolver.
+				// Fix 2 (próximo commit): com pending > 0 o job volta retryável antes
+				// deste ponto — este ternary cai para sempre "processed".
 				episodesStatus: pending > 0 ? "selected" : "processed",
 				details: {
 					phase: "extraction",
@@ -354,8 +373,9 @@ function applyReviewModifications(candidate: CandidateRecord, modified: Partial<
 
 /**
  * Chama o revisor (mesmo modelo, reasoning low). Evidências filtradas pelas
- * evidence_ids do candidato, orçamento compacto (~3K tokens). Falha → null
- * (candidato permanece pending — não decide sem revisor).
+ * evidence_ids do candidato, orçamento compacto (~3K tokens). Falha →
+ * decision null (candidato permanece pending — não decide sem revisor).
+ * Retorna também o uso de tokens para entrar nas métricas do job.
  */
 async function runReviewer(
 	model: ExtractionModelRef,
@@ -363,7 +383,7 @@ async function runReviewer(
 	blocks: EvidenceBlock[],
 	existing: MemoryFileRef | null,
 	signal?: AbortSignal,
-): Promise<ReviewDecision | null> {
+): Promise<{ decision: ReviewDecision | null; usage: { inputTokens: number; outputTokens: number } }> {
 	const relevant = blocks.filter((b) => candidate.evidenceIds.includes(b.id));
 	const evidence = buildEvidenceText(relevant, 3_000);
 	const prompt = buildReviewPrompt({
@@ -377,7 +397,8 @@ async function runReviewer(
 			{
 				reasoningEffort: "low",
 				cacheRetention: EXTRACTION_CACHE_RETENTION,
-				sessionId: randomUUID(),
+				sessionId: EXTRACTION_SESSION_ID,
+				maxTokens: EXTRACTION_MAX_OUTPUT_TOKENS,
 				signal,
 			},
 		);
@@ -385,8 +406,8 @@ async function runReviewer(
 			.filter((b) => b.type === "text" && typeof b.text === "string")
 			.map((b) => b.text)
 			.join("\n");
-		return parseReviewResponse(text);
+		return { decision: parseReviewResponse(text), usage: extractUsage(response.usage) };
 	} catch {
-		return null;
+		return { decision: null, usage: { inputTokens: 0, outputTokens: 0 } };
 	}
 }

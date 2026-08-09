@@ -212,7 +212,7 @@ describe("createExtractionProcessor", () => {
 		expect(result.error).toContain("JSON");
 	});
 
-	it("passa reasoning/cache configurados na chamada", async () => {
+	it("passa reasoning/cache/maxTokens/sessionId fixo na chamada", async () => {
 		const proj = "proj-x-opts";
 		makeEpisodeWithEvidence(proj);
 		const jobId = pipeline.createJob(proj, "tokens");
@@ -237,8 +237,74 @@ describe("createExtractionProcessor", () => {
 		await processor(pipeline, job, selection);
 
 		expect(captured[0]?.reasoningEffort).toBe("medium");
-		expect(captured[0]?.cacheRetention).toBe("default");
-		expect(captured[0]?.sessionId.length).toBeGreaterThan(0);
+		// "short" (não "default" — valor inválido na API de cache)
+		expect(captured[0]?.cacheRetention).toBe("short");
+		// Teto de saída: evita output de 15K tokens sem controle
+		expect(captured[0]?.maxTokens).toBe(4096);
+		// sessionId FIXO (não UUID por chamada) — cache de prompt reutilizável
+		expect(captured[0]?.sessionId).toBe("pi-memory-extraction");
+	});
+
+	it("agrega uso de tokens do revisor nas métricas do job", async () => {
+		const proj = "proj-x-revusage";
+		const { evidenceId } = makeEpisodeWithEvidence(proj);
+		const jobId = pipeline.createJob(proj, "tokens");
+
+		let calls = 0;
+		const model: ExtractionModelRef = {
+			provider: "fake",
+			id: "fake",
+			complete: async (messages) => {
+				calls++;
+				const text = messages
+					.map((m) => m.content.map((c) => c.text ?? "").join(""))
+					.join("");
+				if (text.includes("Revise esta memória candidata")) {
+					// Revisor: aceita com uso próprio
+					return {
+						content: [{ type: "text", text: '{"action":"accept","reason":"ok"}' }],
+						usage: { inputTokens: 500, outputTokens: 60 },
+					};
+				}
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({
+								memories: [
+									{
+										action: "create",
+										context: "ctx-revusage",
+										type: "_rules",
+										scope: "project",
+										title: "T",
+										summary: "S",
+										content: "C",
+										confidence: 0.9,
+										evidence_ids: [evidenceId],
+									},
+								],
+							}),
+						},
+					],
+					usage: { inputTokens: 200, outputTokens: 40 },
+				};
+			},
+		};
+		const processor = createExtractionProcessor({
+			getModel: async () => model,
+			getRelatedMemories: async () => "",
+			findExistingMemory: async () => null,
+			commitMemory: async () => ({ ok: true }),
+		});
+		const job = pipeline.getJob(jobId)!;
+		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
+		await processor(pipeline, job, selection);
+
+		const updated = pipeline.getJob(jobId)!;
+		expect(calls).toBe(2); // extração + revisor
+		expect(updated.inputTokens).toBe(200 + 500);
+		expect(updated.outputTokens).toBe(40 + 60);
 	});
 });
 
