@@ -315,6 +315,8 @@ describe("Fase 4: validação, revisor e commit", () => {
 		expect(result.details?.committed).toBe(1);
 		expect(commits.length).toBe(1);
 		expect(candidates[0].status).toBe("committed");
+		// Sem pendings → episódios podem ser marcados processed
+		expect(result.episodesStatus).toBe("processed");
 	});
 
 	it("rejeição determinística (conf 0.4) → rejected sem commit", async () => {
@@ -371,6 +373,9 @@ describe("Fase 4: validação, revisor e commit", () => {
 		expect(result.details?.pending).toBe(1);
 		expect(commits.length).toBe(0);
 		expect(candidates[0].status).toBe("pending");
+		// Pendings não resolvidos → episódios ficam selected (re-elegíveis p/
+		// o próximo job — includeClaimed: true re-seleciona sem perda).
+		expect(result.episodesStatus).toBe("selected");
 	});
 
 	it("falha no commit → candidato fica pending com erro", async () => {

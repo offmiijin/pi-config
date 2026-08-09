@@ -308,7 +308,10 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 
 			return {
 				ok: true,
-				episodesStatus: "processed",
+				// Candidatos pending (revisor/commit falhou) NÃO deixam os episódios
+				// presos: eles ficam 'selected' — re-elegíveis para o próximo job
+				// (includeClaimed: true) — e são re-extraídos até resolver.
+				episodesStatus: pending > 0 ? "selected" : "processed",
 				details: {
 					phase: "extraction",
 					candidates: inserted,
