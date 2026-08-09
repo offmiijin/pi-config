@@ -236,7 +236,7 @@ describe("createExtractionProcessor", () => {
 		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
 		await processor(pipeline, job, selection);
 
-		expect(captured[0]?.reasoningEffort).toBe("medium");
+		expect(captured[0]?.reasoningEffort).toBe("low");
 		// "short" (não "default" — valor inválido na API de cache)
 		expect(captured[0]?.cacheRetention).toBe("short");
 		// Teto de saída: evita output de 15K tokens sem controle

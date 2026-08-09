@@ -1007,6 +1007,13 @@ describe("migração v1 → snapshot v2", () => {
 	const proj = "test_project";
 	const legacyDir = join(MEMORIES_ROOT, "projects", proj, "gotchas");
 
+	afterAll(() => {
+		// Limpa o que o teste cria no ROOT REAL de memórias (projeto + arquivos
+		// migrados em .history/) — teste não pode poluir produção.
+		rmSync(join(MEMORIES_ROOT, "projects", proj), { recursive: true, force: true });
+		rmSync(join(MEMORIES_ROOT, ".history", "projects", proj), { recursive: true, force: true });
+	});
+
 	function writeV1(context: string): string {
 		const fp = join(legacyDir, `${context}.md`);
 		const v1 =

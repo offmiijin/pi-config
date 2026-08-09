@@ -11,7 +11,10 @@
 export const EXTRACTION_MODEL_PROVIDER = "opencode-go";
 export const EXTRACTION_MODEL_ID = "deepseek-v4-flash";
 
-export const EXTRACTION_REASONING = "medium";
+export const EXTRACTION_REASONING = "low";
+// "medium" NÃO: modelo deepseek-thinking devolve só reasoning sem texto
+// final intermitentemente (medido 75% de respostas vazias em prompt real) —
+// "low" responde com JSON sempre (4/4) e é o mesmo nível do revisor.
 // API de cache aceita apenas none | short | long — "default" era inválido
 // (o provider tratava como valor desconhecido e nunca habilitava cache).
 export const EXTRACTION_CACHE_RETENTION = "short";
@@ -22,7 +25,6 @@ export const EXTRACTION_CACHE_RETENTION = "short";
  * job real. 4K cobre JSON de candidatos sem inflar o custo.
  */
 export const EXTRACTION_MAX_OUTPUT_TOKENS = 4_096;
-
 /**
  * sessionId fixo usado em TODAS as chamadas de extração/revisão: o provider
  * usa este valor como chave do cache de prompt (prompt_cache_key). UUID novo
