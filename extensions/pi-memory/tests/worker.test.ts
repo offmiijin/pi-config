@@ -346,4 +346,32 @@ describe("PipelineWorker", () => {
 		expect(receivedSignal?.aborted).toBeTrue();
 		expect(w.isRunning).toBeFalse();
 	});
+
+	it("episódios normalizados durante o job abrem novo job automaticamente", async () => {
+		const proj = "proj-w-retrigger";
+		// 5 episódios → gatilho episodes já teria disparado no settle; o job
+		// existe quando o worker inicia (como em produção).
+		for (let i = 0; i < 5; i++) makeNormalizedEpisode(100, proj);
+		const jobA = pipeline.createJob(proj, "episodes");
+		let injected = false;
+		const w = new PipelineWorker(pipeline, {
+			includeClaimed: true, // como o index.ts configura
+			processor: async (_p, _job, _sel) => {
+				// Simula agent_settled DURANTE o job: +5 episódios normalizados
+				// que não entram na seleção atual.
+				if (!injected) {
+					injected = true;
+					for (let i = 0; i < 5; i++) makeNormalizedEpisode(100, proj);
+				}
+				return { ok: true, episodesStatus: "processed" };
+			},
+		});
+		w.setProject(proj);
+		w.start();
+		// Job A termina; a reavaliação pós-job conta os 5 novos (normalized) e
+		// abre o job B automaticamente — sem esperar novo agent_settled.
+		await waitFor(() => pipeline.countJobs(proj, JOB_STATUS.DONE) >= 2);
+		expect(pipeline.getJob(jobA)!.status).toBe(JOB_STATUS.DONE);
+		await w.stop();
+	});
 });

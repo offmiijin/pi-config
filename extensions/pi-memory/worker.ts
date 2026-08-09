@@ -153,7 +153,11 @@ export function maybeCreateJob(
 	const maxTokens = opts.maxEligibleTokens ?? DEFAULT_ELIGIBLE_TOKENS;
 	const maxEpisodes = opts.maxEligibleEpisodes ?? DEFAULT_ELIGIBLE_EPISODES;
 
-	const { tokens, count } = pipeline.aggregatePendingEpisodes(projectId);
+	// Só trabalho NOVO (normalized) conta para o gatilho automático —
+	// episódios 'selected' (reivindicados por job com pendings) não podem
+	// re-disparar jobs em loop; são re-selecionados via includeClaimed quando
+	// um novo job abre (ou via memory_extract manual).
+	const { tokens, count } = pipeline.aggregateNormalizedEpisodes(projectId);
 
 	let reason: string | null = null;
 	if (force) {
@@ -288,6 +292,13 @@ export class PipelineWorker {
 				console.warn(`[pi-memory] worker: erro inesperado no job ${job.id}: ${(err as Error).message}`);
 			} finally {
 				this.activeJobId = null;
+				// Reavalia os gatilhos após cada job: episódios que ficaram em
+				// espera (ex.: selected por pendings de validação, ou capturados
+				// DURANTE o job — fora da seleção) podem abrir um novo job. O
+				// próximo nextEligibleJob() o encontra sem esperar wake.
+				if (this.projectId) {
+					maybeCreateJob(this.pipeline, this.projectId);
+				}
 			}
 		}
 	}

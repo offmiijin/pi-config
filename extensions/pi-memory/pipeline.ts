@@ -795,6 +795,26 @@ export class PipelineDB {
 		return { tokens: Number(row.tokens), count: Number(row.n) };
 	}
 
+	/**
+	 * Só episódios NORMALIZED (trabalho novo). Episódios 'selected' já foram
+	 * reivindicados por um job — contá-los no gatilho automático criaria loop
+	 * (job com pendings deixa episódios selected → gatilho dispara de novo).
+	 * Usado por maybeCreateJob; status/métricas continuam via
+	 * aggregatePendingEpisodes.
+	 */
+	aggregateNormalizedEpisodes(projectId: string): { tokens: number; count: number } {
+		const row = this.requireDb()
+			.prepare(
+				"SELECT COALESCE(SUM(token_estimate), 0) AS tokens, COUNT(*) AS n " +
+					"FROM episodes WHERE project_id = ? AND status = ?",
+			)
+			.get(projectId, EPISODE_STATUS.NORMALIZED) as {
+			tokens: number;
+			n: number;
+		};
+		return { tokens: Number(row.tokens), count: Number(row.n) };
+	}
+
 	/** Lista episódios por status do projeto (mais antigos primeiro). */
 	listEpisodesByStatus(projectId: string, status: EpisodeStatus, limit = 200): EpisodeRecord[] {
 		return this.listEpisodesByStatuses(projectId, [status], limit);
