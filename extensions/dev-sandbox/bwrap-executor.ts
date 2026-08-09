@@ -8,9 +8,9 @@
  */
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
+import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync, chmodSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import type { SandboxConfig, BwrapCall, BwrapResult } from "./types";
+import type { SandboxConfig, BwrapCall, BwrapResult, SandboxProfileName } from "./types";
 import { resolveSystemPaths } from "./portability";
 
 // ─── Env vars seguras (whitelist) ──────────────────────────
@@ -278,6 +278,46 @@ export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<str
   return out;
 }
 
+// ─── Diretórios de quarentena (fetch/runs) ──────────────────────
+
+/** Defaults relativos ao workspace para cada dir de quarentena. */
+const QUARANTINE_DIR_DEFAULTS: Record<"fetch" | "runs", string> = {
+  fetch: ".sandbox-cache/fetch",
+  runs: ".sandbox-cache/runs",
+};
+
+/**
+ * Resolve os caminhos reais dos diretórios de quarentena.
+ * - Vazio "" → <cwd>/.sandbox-cache/<nome>
+ * - Relativo → resolvido contra cwd
+ * - Absoluto → mantido (deve ser montado — ver buildIsolationArgs)
+ */
+export function resolveQuarantineDirs(config: SandboxConfig, cwd: string): { fetch: string; runs: string } {
+  const cfg = (config.filesystem.quarantineDirs ?? {}) as unknown as Record<string, string>;
+  const out: Record<string, string> = {};
+  for (const [name, defaultRel] of Object.entries(QUARANTINE_DIR_DEFAULTS)) {
+    const v = cfg[name];
+    if (!v) out[name] = join(cwd, defaultRel);
+    else if (v.startsWith("/")) out[name] = v;
+    else out[name] = join(cwd, v);
+  }
+  return out as { fetch: string; runs: string };
+}
+
+/**
+ * Cria (se necessário) um diretório de quarentena com permissão 0o700.
+ * Erros são silenciosos — se o diretório não puder ser criado/acessado,
+ * o bwrap falha no bind e a execução é bloqueada (fail-closed).
+ */
+export function ensureQuarantineDir(dir: string): void {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+  } catch {
+    // Degradação segura — bind do bwrap falha se o dir não existir.
+  }
+}
+
 // ─── Cache de argumentos bwrap ──────────────────────────────
 //
 // O cache guarda apenas a parte ESTÁTICA dos args (mounts de
@@ -306,9 +346,10 @@ function envFingerprint(): string {
   return parts.join("|");
 }
 
-function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
+function getBwrapCacheKey(config: SandboxConfig, cwd: string, profile: SandboxProfileName): string {
   const parts = [
     cwd,
+    profile,
     envFingerprint(),
     String(config.internet.enabled),
     config.ssh.mode,
@@ -316,6 +357,7 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
     config.filesystem.extraWritable.join(","),
     config.filesystem.extraReadonly.join(","),
     config.filesystem.cacheDirs ? Object.values(config.filesystem.cacheDirs).join(",") : "",
+    config.filesystem.quarantineDirs ? Object.values(config.filesystem.quarantineDirs).join(",") : "",
     config.capabilities.drop.join(","),
   ];
   return parts.join("|");
@@ -326,18 +368,27 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string): string {
 /**
  * Constrói o array de argumentos base do bwrap.
  * Estes argumentos são comuns a todas as tools.
- * Cache por config+cwd+env para evitar reconstrução a cada tool call.
+ * Cache por config+cwd+env+perfil para evitar reconstrução a cada tool call.
  *
- * A parte cacheada é estática (mounts, capabilities, env). A
- * varredura de denyFilePatterns roda a cada chamada e os binds
- * de /dev/null são anexados ao final — assim um arquivo sensível
- * criado depois da primeira execução não escapa do sandbox.
+ * O parâmetro `profile` seleciona o perfil de isolamento:
+ *   - "normal"      → comportamento atual (workspace rw, rede, SSH, caches)
+ *   - "fetch"       → rede + escrita só em .sandbox-cache/fetch, sem workspace
+ *   - "quarantine"  → sem rede, escrita só em .sandbox-cache/runs, sem workspace
+ *
+ * A parte cacheada é estática (mounts, capabilities, env). A varredura de
+ * denyFilePatterns roda a cada chamada (apenas no perfil normal) e os binds
+ * de /dev/null são anexados ao final — assim um arquivo sensível criado
+ * depois da primeira execução não escapa do sandbox.
  */
-export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
-  const key = getBwrapCacheKey(config, cwd);
+export function buildBwrapArgs(
+  config: SandboxConfig,
+  cwd: string,
+  profile: SandboxProfileName = "normal",
+): string[] {
+  const key = getBwrapCacheKey(config, cwd, profile);
   let cached = bwrapArgsCache.get(key);
   if (!cached) {
-    cached = buildStaticArgs(config, cwd);
+    cached = buildProfileArgs(config, cwd, profile);
     if (bwrapArgsCache.size >= BWRAP_ARGS_CACHE_MAX) {
       const oldest = bwrapArgsCache.keys().next().value;
       if (oldest !== undefined) bwrapArgsCache.delete(oldest);
@@ -347,18 +398,34 @@ export function buildBwrapArgs(config: SandboxConfig, cwd: string): string[] {
   const args = [...cached];
 
   // Arquivos sensíveis no projeto — substituídos por /dev/null.
-  // Anexados ao final (após binds de extraWritable/cache) para que
-  // a negação SEMPRE vença sobre binds de diretórios read-write.
-  appendSensitiveMounts(args, config, cwd);
+  // Apenas no perfil normal (workspace montado). Anexados ao final
+  // (após binds de extraWritable/cache) para que a negação SEMPRE
+  // vença sobre binds de diretórios read-write.
+  if (profile === "normal") {
+    appendSensitiveMounts(args, config, cwd);
+  }
 
   return args;
 }
 
+/** Dispatcher de perfil → construtor de args. */
+function buildProfileArgs(config: SandboxConfig, cwd: string, profile: SandboxProfileName): string[] {
+  switch (profile) {
+    case "fetch":
+      return buildFetchArgs(config, cwd);
+    case "quarantine":
+      return buildQuarantineArgs(config, cwd);
+    default:
+      return buildNormalArgs(config, cwd);
+  }
+}
+
 /**
- * Monta a parte estática dos args (independe do estado atual dos
- * arquivos no workspace). O resultado é cacheado.
+ * Args do perfil NORMAL (comportamento atual): workspace rw, rede do
+ * host, SSH, caches, whitelist de env. A parte estática independe do
+ * estado atual dos arquivos no workspace — o resultado é cacheado.
  */
-function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
+function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
   const home = process.env.HOME || "/root";
   const args: string[] = [
     "--unshare-all",
@@ -617,6 +684,96 @@ function buildStaticArgs(config: SandboxConfig, cwd: string): string[] {
 }
 
 /**
+ * Base comum dos perfis de quarentena (fetch/quarantine).
+ *
+ * NUNCA monta o workspace do projeto: apenas o sistema read-only
+ * (--ro-bind) e os diretórios de quarentena RW passados em `rwDirs`.
+ * Sem HOME real, sem SSH, sem .gitconfig, sem skills, sem PATH sob HOME.
+ * Env é mínima (--clearenv + PATH/HOME/USER fixos).
+ *
+ * `shareNet`: true → --share-net (fetch); false → sem rede (quarantine),
+ * já isolada pelo --unshare-all.
+ */
+function buildIsolationArgs(config: SandboxConfig, rwDirs: string[], shareNet: boolean): string[] {
+  const args: string[] = [
+    "--unshare-all",
+    "--die-with-parent",
+    "--new-session",
+    "--clearenv",
+    "--proc", "/proc",
+    "--dev", "/dev",
+    "--tmpfs", "/tmp",
+    "--tmpfs", "/run",
+    ...resolveSystemPaths().roDirs.map((dir) => ["--ro-bind", dir, dir]).flat(),
+    ...resolveSystemPaths().etcFiles.map((f) => ["--ro-bind", f, f]).flat(),
+  ];
+
+  // ── Landlock executor ─────────────────────
+  // Mesmo helper do perfil normal — usado pelo wrapWithLandlock.
+  if (landlockExecHostPath && config.landlock.enabled) {
+    args.push("--ro-bind", landlockExecHostPath, LANDLOCK_EXEC_SANDBOX_PATH);
+  }
+
+  // ── Paths negados — tmpfs vazio ──────────
+  // Mesmo tratamento de symlink do perfil normal (não mascara o destino).
+  for (const deny of config.filesystem.denyPaths) {
+    let isSymlink = false;
+    try {
+      isSymlink = lstatSync(deny).isSymbolicLink();
+    } catch {
+      // Não existe → --tmpfs cria o diretório normalmente
+    }
+    if (isSymlink) {
+      if (!symlinkWarned.has(deny)) {
+        symlinkWarned.add(deny);
+        console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+      }
+      continue;
+    }
+    args.push("--tmpfs", deny);
+  }
+
+  // ── Diretórios de quarentena — RW exclusivos ──
+  for (const dir of rwDirs) {
+    ensureQuarantineDir(dir);
+    args.push("--bind", dir, dir);
+  }
+
+  // ── Rede ──────────────────────────────────
+  if (shareNet) {
+    args.push("--share-net");
+  }
+
+  // ── Capabilities ──────────────────────────
+  // Mesma lista do perfil normal — defesa em profundidade.
+  for (const cap of config.capabilities.drop) {
+    args.push("--cap-drop", cap);
+  }
+
+  // ── Env mínima — nada do host ─────────────
+  args.push("--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin");
+  args.push("--setenv", "HOME", "/tmp");
+  args.push("--setenv", "USER", "nobody");
+
+  return args;
+}
+
+/** Perfil fetch: rede ligada, escrita só em .sandbox-cache/fetch. */
+function buildFetchArgs(config: SandboxConfig, cwd: string): string[] {
+  const dirs = resolveQuarantineDirs(config, cwd);
+  // Respeita o kill-switch global de rede (internet.enabled).
+  const shareNet = config.internet.enabled && (config.profiles?.fetch?.network ?? true);
+  return buildIsolationArgs(config, [dirs.fetch], shareNet);
+}
+
+/** Perfil quarantine: sem rede, escrita só em .sandbox-cache/runs. */
+function buildQuarantineArgs(config: SandboxConfig, cwd: string): string[] {
+  const dirs = resolveQuarantineDirs(config, cwd);
+  const shareNet = config.internet.enabled && (config.profiles?.quarantine?.network ?? false);
+  return buildIsolationArgs(config, [dirs.runs], shareNet);
+}
+
+/**
  * Anexa binds /dev/null para arquivos que correspondem a
  * denyFilePatterns. Re-escaneado a cada chamada para cobrir
  * arquivos criados após o cache ter sido construído.
@@ -691,7 +848,32 @@ export function resetLandlockAbiCache() {
  *           documentação pi, skills, HOME, extraReadonly.
  * RW paths: cwd, /tmp, /run, caches, extraWritable, SSH agent socket dir.
  */
-function buildLandlockArgs(config: SandboxConfig, cwd: string): string[] {
+function buildLandlockArgs(
+  config: SandboxConfig,
+  cwd: string,
+  profile: SandboxProfileName = "normal",
+): string[] {
+  // ── Perfis de quarentena (fetch/quarantine) ─────────────
+  // Sistema RO + diretório de quarentena RW. NUNCA o workspace.
+  if (profile !== "normal") {
+    const args: string[] = [
+      LANDLOCK_EXEC_SANDBOX_PATH,
+      "--min-abi", String(config.landlock.minAbi),
+    ];
+    const roPaths = ["/usr", "/bin", "/lib"];
+    if (existsSync("/lib64")) roPaths.push("/lib64");
+    roPaths.push("/etc", "/proc");
+    for (const p of roPaths) args.push("--allow-ro", p);
+
+    const rwPaths = ["/tmp", "/run", "/dev"];
+    const dirs = resolveQuarantineDirs(config, cwd);
+    rwPaths.push(profile === "fetch" ? dirs.fetch : dirs.runs);
+    for (const p of rwPaths) args.push("--allow-rw", p);
+
+    args.push("--");
+    return args;
+  }
+
   const home = process.env.HOME || "/root";
   const args: string[] = [
     LANDLOCK_EXEC_SANDBOX_PATH,
@@ -778,11 +960,12 @@ export function wrapWithLandlock(
   command: string[],
   config: SandboxConfig,
   cwd: string,
+  profile: SandboxProfileName = "normal",
 ): string[] {
   if (!config.landlock.enabled) {
     return [...bwrapArgs, ...command];
   }
-  const landlockArgs = buildLandlockArgs(config, cwd);
+  const landlockArgs = buildLandlockArgs(config, cwd, profile);
   return [...bwrapArgs, ...landlockArgs, ...command];
 }
 
@@ -801,6 +984,7 @@ export function wrapWithLandlock(
 export function execInSandbox(
   config: SandboxConfig,
   opts: BwrapCall,
+  profile: SandboxProfileName = "normal",
 ): Promise<BwrapResult> {
   return new Promise((resolve, reject) => {
     // Sinal já abortado antes do spawn → nem cria o processo
@@ -809,7 +993,7 @@ export function execInSandbox(
       return;
     }
 
-    const baseArgs = buildBwrapArgs(config, opts.cwd);
+    const baseArgs = buildBwrapArgs(config, opts.cwd, profile);
     let args = [...baseArgs];
 
     // ── Seccomp BPF ──────────────────────────
@@ -829,7 +1013,7 @@ export function execInSandbox(
 
     // ── Landlock + comando ───────────────────
     // Landlock é aplicado dentro do bwrap, após mounts e seccomp.
-    args = wrapWithLandlock(args, opts.command, config, opts.cwd);
+    args = wrapWithLandlock(args, opts.command, config, opts.cwd, profile);
 
     // stdio: stdin, stdout, stderr, + opcionalmente FD 3 (BPF)
     const stdio: any[] = ["pipe", "pipe", "pipe"];
@@ -905,6 +1089,35 @@ export function execInSandbox(
       }
     });
   });
+}
+
+/**
+ * Executa um comando num perfil de isolamento (fetch/quarantine).
+ *
+ * Validações:
+ *   - perfil existe e está habilitado na configuração;
+ *   - perfil NÃO expõe o workspace ("rw") — exclusivo para quarentena.
+ * Os diretórios de quarentena são criados (0o700) automaticamente
+ * durante a construção dos args (buildIsolationArgs).
+ */
+export function execInProfile(
+  config: SandboxConfig,
+  opts: BwrapCall,
+  profile: SandboxProfileName,
+): Promise<BwrapResult> {
+  const prof = config.profiles?.[profile];
+  if (!prof) {
+    return Promise.reject(new Error(`[dev-sandbox] Perfil '${profile}' não configurado.`));
+  }
+  if (!prof.enabled) {
+    return Promise.reject(new Error(`[dev-sandbox] Perfil '${profile}' desabilitado na configuração.`));
+  }
+  if (prof.workspace === "rw") {
+    return Promise.reject(
+      new Error(`[dev-sandbox] Perfil '${profile}' monta o workspace — não é perfil de quarentena.`),
+    );
+  }
+  return execInSandbox(config, opts, profile);
 }
 
 /**

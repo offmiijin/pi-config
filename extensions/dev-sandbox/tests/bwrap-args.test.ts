@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBwrapArgs } from "../bwrap-executor";
-import { DEFAULT_CONFIG, type SandboxConfig, type SandboxFilesystemConfig } from "../types";
+import { DEFAULT_CONFIG, type SandboxConfig, type SandboxFilesystemConfig, type SandboxProfilesConfig } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -61,6 +61,7 @@ function makeConfig(over: DeepPartial<SandboxConfig> = {}): SandboxConfig {
     capabilities: { ...DEFAULT_CONFIG.capabilities, ...(over.capabilities ?? {}) },
     seccomp: { ...DEFAULT_CONFIG.seccomp, ...(over.seccomp ?? {}) },
     landlock: { ...DEFAULT_CONFIG.landlock, ...(over.landlock ?? {}) },
+    profiles: { ...DEFAULT_CONFIG.profiles, ...(over.profiles ?? {}) } as SandboxProfilesConfig,
   };
 }
 

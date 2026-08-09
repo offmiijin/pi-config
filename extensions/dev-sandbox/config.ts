@@ -11,8 +11,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { getAgentDir, CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import type { SandboxConfig } from "./types";
-import { DEFAULT_CONFIG } from "./types";
+import type { SandboxConfig, SandboxWorkspaceMode } from "./types";
+import { DEFAULT_CONFIG, PROFILE_NAMES } from "./types";
 
 // ── Detecção de SO ────────────────────────────────────────────────────
 
@@ -103,6 +103,19 @@ export function normalizeSshConfig(raw: unknown): unknown {
   return raw;
 }
 
+/**
+ * Normaliza a escrita do modo de workspace de um perfil.
+ * Aceita formas verbosas (legado/usuário): "read-write"/"writable" → "rw",
+ * "readonly"/"read-only" → "ro". Valores canônicos passam intactos.
+ * Valor inválido → undefined (sanitização volta ao default).
+ */
+export function normalizeWorkspaceMode(v: unknown): SandboxWorkspaceMode | undefined {
+  if (v === "rw" || v === "ro" || v === "none") return v;
+  if (v === "read-write" || v === "writable") return "rw";
+  if (v === "readonly" || v === "read-only") return "ro";
+  return undefined;
+}
+
 /** Opções de carregamento da configuração. */
 export interface LoadConfigOptions {
   /**
@@ -146,6 +159,12 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
         if (typeof cd[k] === "string") out.filesystem.cacheDirs[k] = cd[k];
       }
     }
+    if (fs.quarantineDirs && typeof fs.quarantineDirs === "object") {
+      const qd = fs.quarantineDirs as unknown as Record<string, unknown>;
+      for (const k of ["fetch", "runs"] as const) {
+        if (typeof qd[k] === "string") out.filesystem.quarantineDirs[k] = qd[k];
+      }
+    }
   }
 
   if (raw.ssh && (raw.ssh.mode === "agent" || raw.ssh.mode === "mount" || raw.ssh.mode === "none")) {
@@ -167,6 +186,28 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
     if (typeof l.required === "boolean") out.landlock.required = l.required;
     if (typeof l.minAbi === "number" && Number.isInteger(l.minAbi) && l.minAbi >= 1 && l.minAbi <= 5) {
       out.landlock.minAbi = l.minAbi;
+    }
+  }
+
+  // Perfis de isolamento
+  if (raw.profiles && typeof raw.profiles === "object") {
+    const rp = raw.profiles as Record<string, unknown>;
+    for (const name of PROFILE_NAMES) {
+      const p = rp[name];
+      if (!p || typeof p !== "object") continue;
+      const prof = p as Record<string, unknown>;
+      const target = out.profiles[name];
+      if (typeof prof.enabled === "boolean") target.enabled = prof.enabled;
+      // workspace de fetch/quarantine é SEMPRE "none" (invariante de
+      // quarentena) — não há como liberar acesso ao projeto por perfil.
+      if (name === "normal") {
+        const ws = normalizeWorkspaceMode(prof.workspace);
+        if (ws !== undefined) target.workspace = ws;
+      }
+      if (typeof prof.network === "boolean") target.network = prof.network;
+      if (prof.ssh === "agent" || prof.ssh === "mount" || prof.ssh === "none") {
+        target.ssh = prof.ssh;
+      }
     }
   }
 
