@@ -298,6 +298,24 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 					}
 					if (review.decision.action === "modify" && review.decision.modified) {
 						applyReviewModifications(candidate, review.decision.modified);
+						// Revalidação pós-modificação (Bloqueador 3): o revisor pode
+						// introduzir segredo, tipo inválido, conteúdo acima do limite
+						// ou confidence fora do intervalo — a camada determinística
+						// não pode ser contornada. Rejeita se o modify gerou erro.
+						const reissues = validateCandidate(candidate, {
+							existing,
+							existingSupersedeTarget,
+							validEvidenceIds,
+						});
+						if (reissues.some((i) => i.severity === "error")) {
+							pipeline.updateCandidateStatus(
+								candidate.id,
+								CANDIDATE_STATUS.REJECTED,
+								rejectionReason(reissues),
+							);
+							rejected++;
+							continue;
+						}
 					}
 					// accept ou modify → commit
 					const reviewCommit = await commitMemory(candidate);

@@ -418,6 +418,22 @@ describe("Fase 4: validação, revisor e commit", () => {
 		expect(commits[0].title).toBe("Regra: invalidação antes da leitura");
 	});
 
+	it("revisor modify inválido (tipo/confidence) → rejected sem commit", async () => {
+		const { result, candidates, commits } = await runOnce(
+			"proj-f4-modify-invalid",
+			(evId) => candidateJson({ type: "_rules" }, [evId]),
+			'{"action":"modify","reason":"ajustes","modified":{"type":"gotcha","confidence":0.2}}',
+		);
+		// Revalidação pós-modificação: tipo "gotcha" (inválido) e confidence 0.2
+		// (fora de [0.5, 1]) — o modify NÃO pode contornar a validação
+		// determinística. Candidato rejeitado, nada commitado.
+		expect(result.details?.rejected).toBe(1);
+		expect(commits.length).toBe(0);
+		expect(candidates[0].status).toBe("rejected");
+		expect(candidates[0].rejectionReason).toContain("tipo");
+		expect(candidates[0].rejectionReason).toContain("confidence");
+	});
+
 	it("revisor reject → rejected sem commit", async () => {
 		const { result, candidates, commits } = await runOnce(
 			"proj-f4-rev-reject",
