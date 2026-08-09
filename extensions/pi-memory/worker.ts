@@ -242,6 +242,13 @@ export class PipelineWorker {
 
 	/** Define o projeto ativo (chamado em session_start/session_tree). */
 	setProject(projectId: string | null): void {
+		// Troca de projeto ABORTA o job em processamento: a extração em voo
+		// era do projeto anterior — continuar gastaria tokens num contexto que
+		// o usuário deixou. O abort vira retry do job (próximo acesso ao
+		// projeto o retoma via nextEligibleJob, que filtra por projectId).
+		if (projectId !== this.projectId) {
+			this.abortController?.abort();
+		}
 		this.projectId = projectId;
 		this.wake();
 	}

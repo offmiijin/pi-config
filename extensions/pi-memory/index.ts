@@ -140,9 +140,11 @@ export default function (pi: ExtensionAPI) {
 
 	// Localiza memória existente pelo context key (dedup/contradição e
 	// validação de supersede). Best-effort — falha vira "sem memória".
-	const findExistingMemory = async (context: string): Promise<MemoryFileRef | null> => {
+	// projectId vem do JOB (não do state.projectId global): troca de projeto
+	// durante a extração não consulta o projeto errado (P1).
+	const findExistingMemory = async (projectId: string, context: string): Promise<MemoryFileRef | null> => {
 		try {
-			const fp = findMemoryFile(state.projectId, context);
+			const fp = findMemoryFile(projectId, context);
 			if (!fp) return null;
 			const { meta, body } = parseFrontmatter(readFileSync(fp, "utf-8"));
 			return {
@@ -160,7 +162,10 @@ export default function (pi: ExtensionAPI) {
 
 	// Grava a memória no markdown (canônico) e sincroniza o índice FTS5.
 	// Falha de índice degrada e segue (próximo syncIncremental reconcilia).
-	const commitMemory = async (candidate: {
+	// projectId vem do JOB — commit nunca vai para o projeto errado (P1).
+	const commitMemory = async (
+		projectId: string,
+		candidate: {
 		context: string;
 		action: string;
 		type: string | null;
@@ -176,7 +181,7 @@ export default function (pi: ExtensionAPI) {
 			if (!candidate.type || !candidate.scope || !candidate.title || !candidate.content) {
 				return { ok: false, error: "candidato incompleto para commit" };
 			}
-			const result = saveMemory(state.projectId, {
+			const result = saveMemory(projectId, {
 				type: candidate.type,
 				context: candidate.context,
 				title: candidate.title,

@@ -99,14 +99,18 @@ export interface ExtractionProcessorDeps {
 	getModel(): Promise<ExtractionModelRef | null>;
 	getRelatedMemories(projectId: string, terms: string[]): Promise<string>;
 	/**
-	 * Fase 4: localiza memória existente pelo context key (dedup/contradição
-	 * e validação de supersede). Default: nenhuma.
+	 * Fase 4: localiza memória existente pelo context key no PROJETO DO JOB
+	 * (dedup/contradição e validação de supersede). projectId vem do job —
+	 * troca de projeto durante extração não pode consultar o projeto errado.
+	 * Default: nenhuma.
 	 */
-	findExistingMemory?(context: string): Promise<MemoryFileRef | null>;
+	findExistingMemory?(projectId: string, context: string): Promise<MemoryFileRef | null>;
 	/**
-	 * Fase 4: grava a memória (markdown + índice). Default: no-op ok.
+	 * Fase 4: grava a memória no PROJETO DO JOB (markdown + índice).
+	 * projectId vem do job — commit nunca vai para o projeto errado.
+	 * Default: no-op ok.
 	 */
-	commitMemory?(candidate: CandidateRecord): Promise<{ ok: boolean; error?: string }>;
+	commitMemory?(projectId: string, candidate: CandidateRecord): Promise<{ ok: boolean; error?: string }>;
 }
 
 /** Extrai tokens de uso de uma resposta (aceita ambos os shapes de usage). */
@@ -197,12 +201,14 @@ export function toNewCandidate(jobId: string, c: {
  *    commit via deps.commitMemory → status committed/rejected/pending.
  */
 export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobProcessor {
-	const findExistingMemory = deps.findExistingMemory ?? (async () => null);
+	const findExistingMemory = deps.findExistingMemory ?? (async (_projectId: string, _context: string) => null);
 	// Tipagem explícita do default: `{ ok: true }` só criaria união com o tipo
 	// da interface e `.error` deixaria de existir no branch default.
 	const commitMemory: NonNullable<ExtractionProcessorDeps["commitMemory"]> =
 		deps.commitMemory ??
-		(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }));
+		(async (_projectId: string, _candidate: CandidateRecord): Promise<{ ok: boolean; error?: string }> => ({
+			ok: true,
+		}));
 
 	return async (pipeline, job, selection, signal): Promise<JobExecutionResult> => {
 		const model = await deps.getModel();
@@ -263,10 +269,10 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 			let reviewOutputTokens = 0;
 
 			for (const candidate of pipeline.listCandidatesByJob(job.id)) {
-				const existing = await findExistingMemory(candidate.context);
+				const existing = await findExistingMemory(job.projectId, candidate.context);
 				const existingSupersedeTarget =
 					candidate.action === "supersede" && candidate.supersedes
-						? await findExistingMemory(candidate.supersedes)
+						? await findExistingMemory(job.projectId, candidate.supersedes)
 						: null;
 				const issues = validateCandidate(candidate, {
 					existing,
@@ -318,7 +324,7 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 						}
 					}
 					// accept ou modify → commit
-					const reviewCommit = await commitMemory(candidate);
+					const reviewCommit = await commitMemory(job.projectId, candidate);
 					if (reviewCommit.ok) {
 						pipeline.updateCandidateStatus(candidate.id, CANDIDATE_STATUS.COMMITTED);
 						committed++;
@@ -330,7 +336,7 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				}
 
 				// auto-accept
-				const acceptCommit = await commitMemory(candidate);
+				const acceptCommit = await commitMemory(job.projectId, candidate);
 				if (acceptCommit.ok) {
 					pipeline.updateCandidateStatus(candidate.id, CANDIDATE_STATUS.COMMITTED);
 					committed++;

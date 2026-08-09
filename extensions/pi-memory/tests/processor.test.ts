@@ -245,6 +245,49 @@ describe("createExtractionProcessor", () => {
 		expect(captured[0]?.sessionId).toBe("pi-memory-extraction");
 	});
 
+	it("passa projectId do job para findExistingMemory/commitMemory", async () => {
+		const proj = "proj-x-jobid";
+		const { evidenceId } = makeEpisodeWithEvidence(proj);
+		const jobId = pipeline.createJob(proj, "tokens");
+
+		const seenProjects: string[] = [];
+		const model = makeFakeModel(
+			JSON.stringify({
+				memories: [
+					{
+						action: "create",
+						context: "ctx-jobid",
+						type: "lessons",
+						scope: "project",
+						title: "T",
+						summary: "S",
+						content: "C",
+						confidence: 0.8,
+						evidence_ids: [evidenceId],
+					},
+				],
+			}),
+		);
+		const processor = createExtractionProcessor({
+			getModel: async () => model,
+			getRelatedMemories: async () => "",
+			findExistingMemory: async (projectId) => {
+				seenProjects.push(projectId);
+				return null;
+			},
+			commitMemory: async (projectId) => {
+				seenProjects.push(projectId);
+				return { ok: true };
+			},
+		});
+		const job = pipeline.getJob(jobId)!;
+		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
+		await processor(pipeline, job, selection);
+
+		expect(seenProjects.length).toBeGreaterThan(0);
+		expect(seenProjects.every((p) => p === proj)).toBeTrue();
+	});
+
 	it("agrega uso de tokens do revisor nas métricas do job", async () => {
 		const proj = "proj-x-revusage";
 		const { evidenceId } = makeEpisodeWithEvidence(proj);
@@ -363,7 +406,7 @@ describe("Fase 4: validação, revisor e commit", () => {
 			getModel: async () => model,
 			getRelatedMemories: async () => "",
 			findExistingMemory: async () => null,
-			commitMemory: async (c) => {
+			commitMemory: async (_projectId, c) => {
 				commits.push({ title: c.title, context: c.context });
 				return { ok: true };
 			},

@@ -347,6 +347,37 @@ describe("PipelineWorker", () => {
 		expect(w.isRunning).toBeFalse();
 	});
 
+	it("setProject aborta o job em processamento do projeto anterior", async () => {
+		const projA = "proj-w-abort-switch-a";
+		const projB = "proj-w-abort-switch-b";
+		pipeline.createJob(projA, "tokens");
+		let receivedSignal: AbortSignal | undefined;
+		let resolved = false;
+		const w = new PipelineWorker(pipeline, {
+			processor: async (_p, _job, _sel, signal) => {
+				receivedSignal = signal;
+				// Simula chamada LLM longa que respeita o signal
+				await new Promise<void>((resolve) => {
+					signal?.addEventListener("abort", () => resolve());
+				});
+				resolved = true;
+				return { ok: false, retryable: true, error: "abortado por troca de projeto" };
+			},
+		});
+		w.setProject(projA);
+		w.start();
+		await waitFor(() => receivedSignal !== undefined);
+
+		// Troca de projeto no meio da extração → aborta o job de A.
+		w.setProject(projB);
+		await waitFor(() => resolved);
+
+		expect(receivedSignal?.aborted).toBeTrue();
+		// O job de A não é processado como done — fica retryável para quando
+		// o projeto A voltar a ser ativo.
+		await w.stop();
+	});
+
 	it("episódios normalizados durante o job abrem novo job automaticamente", async () => {
 		const proj = "proj-w-retrigger";
 		// 5 episódios → gatilho episodes já teria disparado no settle; o job
