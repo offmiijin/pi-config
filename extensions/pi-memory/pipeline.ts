@@ -613,15 +613,27 @@ export class PipelineDB {
 		return rows.map(mapEvidenceRow);
 	}
 
-	/** Conta evidências, opcionalmente de um episódio específico. */
-	countEvidence(episodeId?: string): number {
-		const sql =
-			episodeId !== undefined
-				? "SELECT COUNT(*) AS n FROM evidence WHERE episode_id = ?"
-				: "SELECT COUNT(*) AS n FROM evidence";
-		const row = this.requireDb().prepare(sql).get(...(episodeId !== undefined ? [episodeId] : [])) as {
-			n: number;
-		};
+	/**
+	 * Conta evidências, filtrando por episódio e/ou projeto (join com
+	 * episodes). Sem filtro → total geral.
+	 */
+	countEvidence(opts?: { episodeId?: string; projectId?: string }): number {
+		const clauses: string[] = [];
+		const params: string[] = [];
+		if (opts?.episodeId) {
+			clauses.push("e.episode_id = ?");
+			params.push(opts.episodeId);
+		}
+		if (opts?.projectId) {
+			clauses.push("ep.project_id = ?");
+			params.push(opts.projectId);
+		}
+		const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+		const row = this.requireDb()
+			.prepare(
+				`SELECT COUNT(*) AS n FROM evidence e LEFT JOIN episodes ep ON ep.id = e.episode_id${where}`,
+			)
+			.get(...params) as { n: number };
 		return Number(row.n);
 	}
 

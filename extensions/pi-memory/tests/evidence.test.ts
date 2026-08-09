@@ -442,7 +442,7 @@ describe("normalizeEpisode → PipelineDB", () => {
 		const result = normalizeEpisode(p, episode);
 		expect(result.status).toBe("ignored");
 		expect(p.getEpisode(episodeId)!.status).toBe("ignored");
-		expect(p.countEvidence(episodeId)).toBe(0);
+		expect(p.countEvidence({ episodeId })).toBe(0);
 		p.close();
 	});
 

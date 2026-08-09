@@ -54,7 +54,7 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 				failed: countE(EPISODE_STATUS.FAILED),
 				total: p.countEpisodes(state.projectId),
 			};
-			const evidenceCount = p.countEvidence();
+			const evidenceCount = p.countEvidence({ projectId: state.projectId });
 			const elig = p.aggregatePendingEpisodes(state.projectId);
 			const jobs = {
 				queued: p.countJobs(state.projectId, JOB_STATUS.QUEUED),

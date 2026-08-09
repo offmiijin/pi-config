@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 
 import { DatabaseCtor } from "../db.ts";
 import {
+	EPISODE_STATUS,
 	PipelineDB,
 	buildEpisodeFingerprint,
 	estimateEntryTokens,
@@ -239,6 +240,62 @@ describe("PipelineDB", () => {
 		// não podem permanecer (seriam reprocessados).
 		p.insertCandidates(jobId, []);
 		expect(p.countCandidates(jobId)).toBe(0);
+		p.close();
+	});
+
+	it("countEvidence filtra por projeto (join com episodes)", () => {
+		const p = new PipelineDB(dbPath);
+		p.open();
+		const ep = (projectId: string, sessionId: string) => ({
+			projectId,
+			sessionId,
+			sessionFile: "/tmp/sess.jsonl",
+			startEntryId: "a",
+			endEntryId: "b",
+			leafId: "b",
+			fingerprint: `fp-${sessionId}`,
+			tokenEstimate: 42,
+		});
+		const epA = p.insertEpisode(ep("proj-ev-a", "sess-a"));
+		const epB = p.insertEpisode(ep("proj-ev-b", "sess-b"));
+		p.finalizeEpisode(epA, [
+			{
+				episodeId: epA,
+				kind: "correction",
+				payloadJson: JSON.stringify({ text: "a1" }),
+				contentHash: "h-a1",
+				tokenEstimate: 5,
+				redactionFlags: 0,
+				isError: 0,
+				priority: 1,
+			},
+		], EPISODE_STATUS.NORMALIZED);
+		p.finalizeEpisode(epB, [
+			{
+				episodeId: epB,
+				kind: "correction",
+				payloadJson: JSON.stringify({ text: "b1" }),
+				contentHash: "h-b1",
+				tokenEstimate: 5,
+				redactionFlags: 0,
+				isError: 0,
+				priority: 1,
+			},
+			{
+				episodeId: epB,
+				kind: "command",
+				payloadJson: JSON.stringify({ text: "b2" }),
+				contentHash: "h-b2",
+				tokenEstimate: 5,
+				redactionFlags: 0,
+				isError: 0,
+				priority: 1,
+			},
+		], EPISODE_STATUS.NORMALIZED);
+		expect(p.countEvidence({ projectId: "proj-ev-a" })).toBe(1);
+		expect(p.countEvidence({ projectId: "proj-ev-b" })).toBe(2);
+		expect(p.countEvidence()).toBe(3); // sem filtro — total geral
+		expect(p.countEvidence({ episodeId: epB })).toBe(2);
 		p.close();
 	});
 
