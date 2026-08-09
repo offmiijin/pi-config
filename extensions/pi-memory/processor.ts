@@ -61,6 +61,8 @@ export interface CompletionOptions {
 	reasoningEffort: string;
 	cacheRetention: string;
 	sessionId: string;
+	/** Cancelamento do job (worker.stop()) — repassado ao provider. */
+	signal?: AbortSignal;
 }
 
 export interface CompletionResponse {
@@ -185,7 +187,7 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 	const findExistingMemory = deps.findExistingMemory ?? (async () => null);
 	const commitMemory = deps.commitMemory ?? (async () => ({ ok: true }));
 
-	return async (pipeline, job, selection): Promise<JobExecutionResult> => {
+	return async (pipeline, job, selection, signal): Promise<JobExecutionResult> => {
 		const model = await deps.getModel();
 		if (!model) {
 			return {
@@ -210,6 +212,7 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 					reasoningEffort: EXTRACTION_REASONING,
 					cacheRetention: EXTRACTION_CACHE_RETENTION,
 					sessionId: randomUUID(),
+					signal,
 				},
 			);
 
@@ -259,7 +262,7 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 
 				if (decision === "review") {
 					reviewed++;
-					const review = await runReviewer(model, candidate, blocks, existing);
+					const review = await runReviewer(model, candidate, blocks, existing, signal);
 					if (!review) {
 						// Revisor indisponível → candidato fica pending (revisão futura).
 						pending++;
@@ -355,6 +358,7 @@ async function runReviewer(
 	candidate: CandidateRecord,
 	blocks: EvidenceBlock[],
 	existing: MemoryFileRef | null,
+	signal?: AbortSignal,
 ): Promise<ReviewDecision | null> {
 	const relevant = blocks.filter((b) => candidate.evidenceIds.includes(b.id));
 	const evidence = buildEvidenceText(relevant, 3_000);
@@ -370,6 +374,7 @@ async function runReviewer(
 				reasoningEffort: "low",
 				cacheRetention: EXTRACTION_CACHE_RETENTION,
 				sessionId: randomUUID(),
+				signal,
 			},
 		);
 		const text = response.content

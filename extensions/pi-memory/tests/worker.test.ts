@@ -318,4 +318,32 @@ describe("PipelineWorker", () => {
 		await w.stop();
 		expect(w.isRunning).toBeFalse();
 	});
+
+	it("stop aborta o job em processamento (signal no processor)", async () => {
+		const proj = "proj-w-abort";
+		pipeline.createJob(proj, "tokens");
+		let receivedSignal: AbortSignal | undefined;
+		let resolved = false;
+		const w = new PipelineWorker(pipeline, {
+			processor: async (_p, _job, _sel, signal) => {
+				receivedSignal = signal;
+				// Simula chamada LLM longa que respeita o signal
+				await new Promise<void>((resolve) => {
+					signal?.addEventListener("abort", () => resolve());
+				});
+				resolved = true;
+				return { ok: true };
+			},
+		});
+		w.setProject(proj);
+		w.start();
+		await waitFor(() => receivedSignal !== undefined);
+
+		const stopPromise = w.stop();
+		await waitFor(() => resolved); // abort liberou o processador
+		await stopPromise;
+
+		expect(receivedSignal?.aborted).toBeTrue();
+		expect(w.isRunning).toBeFalse();
+	});
 });

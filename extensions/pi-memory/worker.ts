@@ -68,6 +68,7 @@ export type JobProcessor = (
 	pipeline: PipelineDB,
 	job: JobRecord,
 	selection: SelectedEpisodes,
+	signal?: AbortSignal,
 ) => Promise<JobExecutionResult>;
 
 export interface WorkerOptions {
@@ -209,6 +210,8 @@ export class PipelineWorker {
 	private activeJobId: string | null = null;
 	/** Projeto ativo (definido pelo index.ts — o worker só processa o atual). */
 	private projectId: string | null = null;
+	/** Controller do job em processamento — abortado no stop() para não bloquear shutdown. */
+	private abortController: AbortController | null = null;
 
 	// Sinal de wake: promise resolvida por wake(); flag evita wake perdido
 	// entre o fim do drain e o início da espera.
@@ -245,11 +248,12 @@ export class PipelineWorker {
 		this.loopPromise = this.runLoop();
 	}
 
-	/** Para o loop graciosamente; job em processamento é abandonado (o
-	 *  próximo start recupera via recoverStuckJobs). */
+	/** Para o loop graciosamente; job em processamento é ABORTADO (signal no
+	 *  model.complete) — stop() não espera uma chamada LLM terminar. */
 	async stop(): Promise<void> {
 		if (!this.running) return;
 		this.running = false;
+		this.abortController?.abort();
 		this.wake(); // libera a espera (clearTimeout incluso)
 		if (this.loopPromise) {
 			await this.loopPromise;
@@ -326,11 +330,17 @@ export class PipelineWorker {
 			includeClaimed: this.includeClaimed,
 		});
 
+		// Controller por job: stop() aborta a chamada LLM em andamento.
+		const controller = new AbortController();
+		this.abortController = controller;
+
 		let result: JobExecutionResult;
 		try {
-			result = await this.processor(this.pipeline, job, selection);
+			result = await this.processor(this.pipeline, job, selection, controller.signal);
 		} catch (err) {
 			result = { ok: false, retryable: true, error: (err as Error).message ?? String(err) };
+		} finally {
+			this.abortController = null;
 		}
 
 		if (result.ok) {
