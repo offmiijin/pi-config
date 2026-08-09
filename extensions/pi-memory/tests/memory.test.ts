@@ -119,9 +119,9 @@ describe("getMemoryDirectories", () => {
 		}
 	});
 
-	it("includes sessions directory for project", () => {
+	it("não inclui mais diretório sessions (pipeline grava só em SQLite)", () => {
 		const dirs = getMemoryDirectories("test_project");
-		expect(dirs).toContain(join(MEMORIES_ROOT, "projects", "test_project", "sessions"));
+		expect(dirs).not.toContain(join(MEMORIES_ROOT, "projects", "test_project", "sessions"));
 	});
 
 	it("includes supersedes project directories", () => {
@@ -133,7 +133,7 @@ describe("getMemoryDirectories", () => {
 
 	it("returns correct number of directories", () => {
 		const dirs = getMemoryDirectories("test_project");
-		expect(dirs).toHaveLength(1 + 5 + 5 + 5 + 5 + 1 + 5 + 5);
+		expect(dirs).toHaveLength(1 + 5 + 5 + 5 + 5 + 5 + 5);
 	});
 });
 
