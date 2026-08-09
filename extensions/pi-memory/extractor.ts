@@ -15,7 +15,6 @@ import {
 	EXTRACTION_MAX_EVIDENCE_TOKENS,
 	EXTRACTION_MAX_MEMORY_CONTEXT_TOKENS,
 } from "./config.ts";
-import { estimateTokens } from "./session.ts";
 import { Check } from "typebox/value";
 import { ExtractionResponseSchema, type ExtractionCandidate } from "./schemas.ts";
 
@@ -50,27 +49,28 @@ export function buildEvidenceText(
 	}
 
 	const lines: string[] = [];
-	let total = estimateTokens("");
+	// Orçamento medido em CARACTERES (maxTokens × chars/token): soma direta
+	// dos comprimentos — não re-estimar (estimar sobre estimativa permitia
+	// ~4× o teto configurado).
+	let total = 0;
 	let truncated = false;
 	for (const [episodeId, eps] of byEpisode) {
 		const header = `## Episódio ${episodeId}`;
-		const headerTokens = estimateTokens(header);
-		if (total + headerTokens > maxChars && lines.length > 0) {
+		if (total + header.length > maxChars && lines.length > 0) {
 			truncated = true;
 			break;
 		}
 		lines.push(header);
-		total += headerTokens;
+		total += header.length;
 		for (const b of eps) {
 			const label = b.toolName ? `${b.kind}:${b.toolName}` : b.kind;
 			const line = `- [${label}] (id ${b.id}) ${b.text}`;
-			const t = estimateTokens(line);
-			if (total + t > maxChars) {
+			if (total + line.length > maxChars) {
 				truncated = true;
 				break;
 			}
 			lines.push(line);
-			total += t;
+			total += line.length;
 		}
 		if (truncated) break;
 	}
@@ -162,17 +162,18 @@ export function formatExistingMemories(
 		"Memórias existentes (reutilize context keys; action 'update' se a informação nova atualiza/contradiz a MESMA chave; 'supersedes' se substitui OUTRA chave):",
 		"",
 	];
-	let total = estimateTokens(lines.join("\n"));
+	// Mesma regra do buildEvidenceText: orçamento em caracteres, soma direta
+	// de lengths (evita ~4× o teto por re-estimar).
+	let total = lines.join("\n").length;
 
 	for (let i = 0; i < memories.length; i++) {
 		const m = memories[i];
 		let line = `- [${m.scope}/${m.type}/${m.context}] (conf ${m.confidence}) ${m.title}`;
 		if (i < 3 && m.snippet) line += ` — ${m.snippet}`;
 		else if (m.summary) line += ` — ${m.summary}`;
-		const t = estimateTokens(line);
-		if (total + t > maxChars) break;
+		if (total + line.length > maxChars) break;
 		lines.push(line);
-		total += t;
+		total += line.length;
 	}
 	return lines.join("\n");
 }
