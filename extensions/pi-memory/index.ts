@@ -191,7 +191,6 @@ export default function (pi: ExtensionAPI) {
 				summary: candidate.summary ?? undefined,
 				tags: [],
 				evidence: candidate.evidenceIds,
-				mode: candidate.action === "update" ? "consolidate" : "append",
 				supersedes:
 					candidate.action === "supersede" ? candidate.supersedes ?? undefined : undefined,
 			});

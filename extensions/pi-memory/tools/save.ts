@@ -16,7 +16,6 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 		description:
 			"Saves or updates a memory as a consolidated snapshot (Fase 5): same context key = same file, " +
 			"every write rewrites the CURRENT state and archives the previous version to .history/. " +
-			"The 'mode' parameter is deprecated — 'append' and 'consolidate' are equivalent now. " +
 			"Provide 'summary' (1-2 sentences, PT-BR) describing the CURRENT state — it is persisted and updated on every write. " +
 			"Use supersedes to mark a memory under a DIFFERENT context key as replaced. " +
 			"NATIVE pi tool — call memory_save directly, NOT via mcp({ tool: 'memory_save' }) or the mcp gateway.",
@@ -41,13 +40,6 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 					content: [{ type: "text", text: "Error: no active project" }],
 					details: { error: "no_active_project" },
 				};
-			}
-
-			// mode é legado (append = consolidate desde a Fase 5) — avisa e segue
-			if (params.mode !== undefined) {
-				console.warn(
-					`[pi-memory] memory_save: parâmetro mode=${params.mode} é legado — toda escrita é snapshot (append e consolidate são equivalentes)`,
-				);
 			}
 
 			const result = saveMemory(state.projectId, params);

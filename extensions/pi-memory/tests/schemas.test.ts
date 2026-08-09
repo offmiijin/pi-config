@@ -71,17 +71,6 @@ describe("memory_save schema", () => {
 		expect(propIsOptional(SaveSchema, "supersedes")).toBeTrue();
 	});
 
-	it("has optional mode field (append|consolidate)", () => {
-		expect(propIsOptional(SaveSchema, "mode")).toBeTrue();
-		const s = SaveSchema as unknown as Record<string, unknown>;
-		const props = s.properties as Record<string, unknown>;
-		const mode = props.mode as Record<string, unknown>;
-		const variants = (mode.anyOf ?? mode.oneOf ?? []) as Array<Record<string, unknown>>;
-		const values = variants.map((v) => v.const);
-		expect(values).toContain("append");
-		expect(values).toContain("consolidate");
-	});
-
 	it("type field is a union of literal strings", () => {
 		expect(schemaHasProperty(SaveSchema, "type")).toBeTrue();
 		const s = SaveSchema as unknown as Record<string, unknown>;

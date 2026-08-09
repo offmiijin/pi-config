@@ -26,10 +26,8 @@ import {
 
 import {
 	applyDecay,
-	extractEntryConfidences,
 	findMemoryFile,
 	formatFrontmatter,
-	formatMemoryEntry,
 	formatMemoryIndexText,
 	getMemoryFilePath,
 	getSupersedesPath,
@@ -40,10 +38,8 @@ import {
 	moveToSupersedes,
 	type MemoryIndexEntry,
 	parseFrontmatter,
-	recalcOverallConfidence,
 	sanitizeFilename,
 	saveMemory,
-	summarizeExistingMemories
 } from "../memory.ts";
 
 describe("identifyProject", () => {
@@ -327,148 +323,6 @@ describe("formatFrontmatter", () => {
 		const fm = formatFrontmatter(meta);
 		const { meta: parsed } = parseFrontmatter(fm + "\nbody");
 		expect(parsed.reason).toBe('API "v15": substituída\nnova linha');
-	});
-});
-
-describe("formatMemoryEntry", () => {
-	it("formats entry with confidence", () => {
-		
-		const result = formatMemoryEntry("2025-01-15", "My Title", "Some content", 0.8);
-		expect(result).toContain("## [2025-01-15] My Title");
-		expect(result).toContain("confidence: 0.8");
-		expect(result).toContain("Some content");
-	});
-
-	it("formats entry without confidence", () => {
-		
-		const result = formatMemoryEntry("2025-06-01", "Just Title", "Just content");
-		expect(result).toContain("## [2025-06-01] Just Title");
-		expect(result).not.toContain("confidence:");
-		expect(result).toContain("Just content");
-	});
-});
-
-describe("extractEntryConfidences", () => {
-	it("extracts confidence values from body", () => {
-		
-		const body = ["## [2025-01-15] First", "confidence: 0.8", "", "content", "", "## [2025-01-20] Second", "confidence: 0.6", ""].join("\n");
-		expect(extractEntryConfidences(body)).toEqual([0.8, 0.6]);
-	});
-
-	it("returns empty array when no confidences", () => {
-		
-		expect(extractEntryConfidences("just text")).toEqual([]);
-	});
-});
-
-describe("recalcOverallConfidence", () => {
-	it("averages confidences", () => {
-		
-		expect(recalcOverallConfidence([0.8, 0.6], 0.7)).toBe(0.7); // (0.8+0.6+0.7)/3 = 0.7
-	});
-
-	it("returns single confidence if no existing", () => {
-		
-		expect(recalcOverallConfidence([], 0.5)).toBe(0.5);
-	});
-
-	it("rounds to 2 decimal places", () => {
-		
-		expect(recalcOverallConfidence([0.5, 0.6], 0.7)).toBe(0.6);
-	});
-});
-
-describe("memory_save integration", () => {
-	let tmpRoot: string;
-	let origMemoriesRoot: string;
-
-	beforeAll(async () => {
-		const { MEMORIES_ROOT } = await import("../constants.ts");
-		origMemoriesRoot = MEMORIES_ROOT;
-		tmpRoot = mkdtempSync(join(tmpdir(), "pi-memory-save-"));
-	});
-
-	afterAll(() => {
-		rmSync(tmpRoot, { recursive: true, force: true });
-	});
-
-	it("creates a new memory file", async () => {
-		const { getMemoryFilePath, formatFrontmatter, formatMemoryEntry } = await import("../memory.ts");
-		const { ensureFileDir } = await import("../session.ts");
-		const { writeFileSync, existsSync } = await import("node:fs");
-
-		const ctx = "my-context";
-		const fp = join(tmpRoot, "_global", "_rules", ctx + ".md");
-
-		// Simula a lógica de save
-		const meta = { context: ctx, type: "_rules", created: "2025-01-15", updated: "2025-01-15", confidence: 0.7, entries: 1 };
-		const entry = formatMemoryEntry("2025-01-15", "Test Title", "Test content", 0.7);
-		ensureFileDir(fp);
-		writeFileSync(fp, formatFrontmatter(meta) + entry + "\n");
-
-		expect(existsSync(fp)).toBeTrue();
-		const content = readFileSync(fp, "utf-8");
-		expect(content).toContain("context: \"my-context\"");
-		expect(content).toContain("## [2025-01-15] Test Title");
-		expect(content).toContain("Test content");
-	});
-
-	it("appends entry to existing memory file", async () => {
-		const { formatMemoryEntry, formatFrontmatter, parseFrontmatter, extractEntryConfidences, recalcOverallConfidence } = await import("../memory.ts");
-		const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
-
-		const fp = join(tmpRoot, "_global", "_rules", "my-context.md");
-
-		// Lê o existente, anexa
-		const existing = readFileSync(fp, "utf-8");
-		const { meta, body } = parseFrontmatter(existing);
-
-		const confs = extractEntryConfidences(body);
-		meta.confidence = recalcOverallConfidence(confs, 0.6);
-		meta.updated = "2025-01-20";
-		meta.entries = (meta.entries as number) + 1;
-
-		const newEntry = formatMemoryEntry("2025-01-20", "Second Entry", "More content", 0.6);
-		writeFileSync(fp, formatFrontmatter(meta) + body + newEntry + "\n");
-
-		const updated = readFileSync(fp, "utf-8");
-		expect(updated).toContain("## [2025-01-20] Second Entry");
-		expect(updated).toContain("entries: 2");
-		expect(updated).toContain("confidence: 0.65"); // (0.7 + 0.6) / 2
-	});
-
-	it("creates and moves to .supersedes on supersede", async () => {
-		const { getSupersedesPath, formatFrontmatter, formatMemoryEntry } = await import("../memory.ts");
-		const { ensureFileDir } = await import("../session.ts");
-		const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
-
-		// Cria memória antiga
-		const oldFp = join(tmpRoot, "_global", "_rules", "old-context.md");
-		const meta = { context: "old-context", type: "_rules", created: "2025-01-01", updated: "2025-01-01", confidence: 0.5, entries: 1 };
-		const entry = formatMemoryEntry("2025-01-01", "Old info", "Outdated", 0.5);
-		ensureFileDir(oldFp);
-		writeFileSync(oldFp, formatFrontmatter(meta) + entry + "\n");
-
-		// Move para supersedes
-		const supPath = join(tmpRoot, ".supersedes", "_global", "_rules", "old-context.md");
-		const oldContent = readFileSync(oldFp, "utf-8");
-
-		// Add superseded meta
-		
-		const parsed = parseFrontmatter(oldContent);
-		parsed.meta.superseded_at = "2025-01-15";
-		parsed.meta.superseded_by = "new-context";
-		parsed.meta.confidence = 0;
-
-		ensureFileDir(supPath);
-		writeFileSync(supPath, formatFrontmatter(parsed.meta) + parsed.body);
-
-		expect(existsSync(supPath)).toBeTrue();
-		const supContent = readFileSync(supPath, "utf-8");
-		expect(supContent).toContain("superseded_at: \"2025-01-15\"");
-		expect(supContent).toContain("superseded_by: \"new-context\"");
-		expect(supContent).toContain("confidence: 0");
-		expect(supContent).toContain("## [2025-01-01] Old info");
 	});
 });
 
@@ -915,7 +769,6 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 			title: "v2",
 			content: "conteúdo consolidado novo",
 			scope: "project",
-			mode: "consolidate",
 			confidence: 0.8,
 		});
 
@@ -953,7 +806,6 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 			title: "t",
 			content: "c",
 			scope: "project",
-			mode: "consolidate",
 		});
 		expect(result.action).toBe("created");
 	});
@@ -965,7 +817,6 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 			title: "t",
 			content: "c",
 			scope: "project",
-			mode: "consolidate",
 		});
 		expect(result.action).toBe("error");
 	});
@@ -1036,7 +887,6 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 			title: "C2",
 			content: "versão 2",
 			scope: "project",
-			mode: "consolidate",
 		});
 
 		expect(r.action).toBe("consolidated");
@@ -1060,7 +910,6 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 			title: "V2",
 			content: "versão 2",
 			scope: "project",
-			mode: "consolidate",
 		});
 		expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0);
 	});
@@ -1083,7 +932,6 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 					title: "V2",
 					content: "versão 2",
 					scope: "project",
-					mode: "consolidate",
 				}),
 			).toThrow();
 		} finally {
@@ -1291,7 +1139,6 @@ describe("saveMemory summary", () => {
 			title: "v2",
 			content: "novo",
 			scope: "project",
-			mode: "consolidate",
 			summary: "resumo consolidado",
 		});
 		expect(result.action).toBe("consolidated");
@@ -1417,47 +1264,6 @@ describe("formatMemoryIndexText", () => {
 		const text = formatMemoryIndexText(entries);
 		expect(text).not.toContain("not shown");
 		expect(text).toContain("Counts by scope (all):");
-	});
-});
-
-describe("summarizeExistingMemories", () => {
-	let testProjectId: string;
-
-	beforeAll(() => {
-		testProjectId = `__test_summarize_${Date.now()}`;
-		// com summary
-		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "com-summary.md"));
-		writeFileSync(
-			join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "com-summary.md"),
-			"---\ncontext: com-summary\ntype: gotchas\nconfidence: 0.8\nupdated: 2026-08-05\nsummary: \"Resumo curado pelo LLM\"\n---\n\n## [2026-08-05 10:00:00] Título\n\nconteúdo\n",
-		);
-		// sem summary → fallback título + trecho
-		ensureFileDir(join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "sem-summary.md"));
-		writeFileSync(
-			join(MEMORIES_ROOT, "projects", testProjectId, "lessons", "sem-summary.md"),
-			"---\ncontext: sem-summary\ntype: lessons\nconfidence: 0.6\nupdated: 2026-08-01\n---\n\n## [2026-08-01 10:00:00] Lição sem resumo\n\n" + "conteúdo extenso ".repeat(30) + "\n",
-		);
-	});
-
-	afterAll(() => {
-		rmSync(join(MEMORIES_ROOT, "projects", testProjectId), { recursive: true, force: true });
-	});
-
-	it("uses persisted summary when available", () => {
-		const text = summarizeExistingMemories(testProjectId);
-		expect(text).toContain('com-summary (0.8, updated 2026-08-05): "Resumo curado pelo LLM"');
-	});
-
-	it("falls back to title + excerpt without summary", () => {
-		const text = summarizeExistingMemories(testProjectId);
-		expect(text).toContain("sem-summary");
-		expect(text).toContain("Lição sem resumo");
-		expect(text).toContain("conteúdo extenso"); // excerpt
-	});
-
-	it("includes updated metadata in entries", () => {
-		const text = summarizeExistingMemories(testProjectId);
-		expect(text).toContain("sem-summary (0.6, updated 2026-08-01)");
 	});
 });
 

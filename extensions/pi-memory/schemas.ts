@@ -22,9 +22,6 @@ export type Scope = "global" | "project";
 export const SearchScopeEnum = StringEnum(["global", "project", "all"] as const);
 export type SearchScope = "global" | "project" | "all";
 
-export const SaveModeEnum = StringEnum(["append", "consolidate"] as const);
-export type SaveMode = "append" | "consolidate";
-
 export const SaveSchema = Type.Object({
 	type: MemoryTypeEnum,
 	context: Type.String({ description: "Grouping key — same context = same file" }),
@@ -46,19 +43,8 @@ export const SaveSchema = Type.Object({
 		Type.String({
 			description:
 				"Resumo de 1-2 frases em PT-BR do estado ATUAL da memória. " +
-				"Sobrescreve o anterior no append/consolidate; usado pelo memory_extract para dedup.",
+				"Sobrescreve o anterior; usado pelo memory_extract para dedup.",
 		}),
-	),
-	mode: Type.Optional(
-		Type.Union(
-			[Type.Literal("append"), Type.Literal("consolidate")],
-			{
-				description:
-					"Fase 5: 'append' (legado) e 'consolidate' são equivalentes — toda " +
-					"escrita reescreve o snapshot atual; a versão anterior vai para .history/. " +
-					"Para substituir memória de OUTRA chave, use supersedes.",
-			},
-		),
 	),
 });
 

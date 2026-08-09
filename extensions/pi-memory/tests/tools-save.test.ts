@@ -137,7 +137,6 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 				title: "Versão 2",
 				content: "token_cons_novo_xyz",
 				scope: "project",
-				mode: "consolidate",
 			},
 			undefined,
 			undefined,

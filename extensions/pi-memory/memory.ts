@@ -319,29 +319,6 @@ export function formatMemoryIndexText(entries: MemoryIndexEntry[]): string {
 }
 
 /**
- * Monta o bloco 'Existing memories' do prompt de extração.
- * Usa o summary persistido quando disponível; senão cai para título + trecho.
- */
-export function summarizeExistingMemories(projectId: string): string {
-	const entries = listMemoryIndex(projectId);
-	const lines: string[] = [
-		"Existing memories (reuse context keys; 'mode: consolidate' if new info updates/contradicts the SAME key; 'supersedes' if it replaces a DIFFERENT key):",
-		"",
-	];
-	if (entries.length === 0) {
-		lines.push("  (none)");
-		return lines.join("\n");
-	}
-	for (const e of entries) {
-		const text = e.summary ? e.summary : `${e.title} — ${e.excerpt}`;
-		lines.push(
-			`  ${e.scope}/${e.type}/${e.context} (${e.confidence}, updated ${e.updated}): "${text}"`,
-		);
-	}
-	return lines.join("\n");
-}
-
-/**
  * Aplica um delta de decay a um valor de confiança, limitado a 0.
  * O delta é tratado como redução independentemente do sinal.
  */
@@ -428,56 +405,6 @@ export function formatFrontmatter(meta: Record<string, unknown>): string {
 }
 
 /**
- * Formata uma entrada de memória como markdown.
- */
-export function formatMemoryEntry(
-	date: string,
-	title: string,
-	content: string,
-	confidence?: number,
-): string {
-	const lines: string[] = [];
-	if (confidence !== undefined) {
-		lines.push(`## [${date}] ${title}`);
-		lines.push(`confidence: ${confidence}`);
-	} else {
-		lines.push(`## [${date}] ${title}`);
-	}
-	lines.push("");
-	lines.push(content.trim());
-	lines.push("");
-	return lines.join("\n");
-}
-
-/**
- * Extrai valores de confiança de todas as entradas do corpo do arquivo.
- */
-export function extractEntryConfidences(body: string): number[] {
-	const confidences: number[] = [];
-	const regex = /^confidence:\s*([\d.]+)$/gm;
-	let match;
-	while ((match = regex.exec(body)) !== null) {
-		const val = parseFloat(match[1]);
-		if (!isNaN(val)) confidences.push(val);
-	}
-	return confidences;
-}
-
-/**
- * Recalcula a confiança geral como média das confianças das entradas,
- * caindo para o default se nenhuma tiver confiança explícita.
- */
-export function recalcOverallConfidence(
-	existingConfidences: number[],
-	newConfidence: number,
-): number {
-	const all = [...existingConfidences, newConfidence];
-	if (all.length === 0) return 0.5;
-	const sum = all.reduce((a, b) => a + b, 0);
-	return Math.round((sum / all.length) * 100) / 100;
-}
-
-/**
  * Parâmetros de entrada do saveMemory (Fase 5 — snapshot consolidado).
  */
 export interface SaveMemoryParams {
@@ -497,12 +424,6 @@ export interface SaveMemoryParams {
 	summary?: string;
 	/** Ids de evidência do pipeline que embasam esta versão (frontmatter). */
 	evidence?: string[];
-	/**
-	 * Compatibilidade: "append" (legado) e "consolidate" são tratados da
-	 * mesma forma — toda escrita reescreve o snapshot atual; a versão
-	 * anterior vai para .history/ (Fase 5).
-	 */
-	mode?: "append" | "consolidate";
 }
 
 /**
@@ -513,7 +434,7 @@ export interface SaveMemoryParams {
  * - Contexto novo → cria arquivo com frontmatter v2 (revision: 1, created,
  *   updated, confidence, scope, tags, summary, evidence).
  * - Contexto existente → a versão atual vai para .history/{context}/v{N}.md
- *   e a nova substitui o ativo (revision N+1). "append" legado = consolidate.
+ *   e a nova substitui o ativo (revision N+1).
  * - supersedes → move a memória da OUTRA chave para .supersedes/ primeiro.
  *
  * Retorna revision atual e os paths arquivados (o índice SQLite precisa
