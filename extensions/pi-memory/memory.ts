@@ -606,3 +606,86 @@ export function saveMemory(
 		archived,
 	};
 }
+
+/* ------------------------------------------------------------------ */
+/* Migração de memórias legadas (v1 append → snapshot v2)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Converte UMA memória do formato legado v1 (append com entradas
+ * `## [data] Título`) para o snapshot v2. Idempotente: arquivo já v2
+ * (frontmatter com revision) ou sem entradas datadas → no-op (false).
+ *
+ * O arquivo v1 INTEIRO é arquivado em .history/{...}/v0.md (revisão
+ * baseline) e o path ativo é reescrito como snapshot v2 com a ÚLTIMA
+ * entrada como estado atual. Retorna true quando migrou.
+ */
+export function migrateMemoryToSnapshot(filePath: string): boolean {
+	const content = readFileSync(filePath, "utf-8");
+	const { meta, body } = parseFrontmatter(content);
+	if (typeof meta.revision === "number") return false; // já v2
+
+	const headerRe = /^## \[[^\]]+\]\s+.+$/gm;
+	const matches = [...body.matchAll(headerRe)];
+	if (matches.length === 0) return false; // sem entradas datadas — não é v1
+
+	const last = matches[matches.length - 1];
+	const lastTitle = last[0].replace(/^## \[[^\]]+\]\s+/, "").trim();
+	const lastDate = last[0].match(/^## \[([^\]]+)\]/)?.[1]?.trim() ?? "";
+	const lastContent = body
+		.slice((last.index ?? 0) + last[0].length)
+		.replace(/^confidence:.*$/gm, "")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+	if (!lastTitle || !lastContent) return false;
+
+	// Arquiva o v1 inteiro como revisão baseline e recria o snapshot.
+	archiveFile(filePath, getHistoryPath(filePath, 0), {
+		superseded_by: typeof meta.context === "string" ? meta.context : "",
+		superseded_reason: "migrated_to_snapshot_v2",
+	});
+
+	const today = new Date().toISOString().slice(0, 10);
+	const metaOut: Record<string, unknown> = {
+		context: typeof meta.context === "string" ? meta.context : basename(filePath, ".md"),
+		type: typeof meta.type === "string" ? meta.type : "",
+		scope: filePath.includes("/_global/") ? "global" : "project",
+		revision: 1,
+		created: typeof meta.created === "string" ? meta.created : lastDate || today,
+		updated: today,
+		confidence: typeof meta.confidence === "number" ? meta.confidence : 0.5,
+	};
+	if (Array.isArray(meta.tags)) metaOut.tags = meta.tags;
+	if (typeof meta.summary === "string") metaOut.summary = meta.summary;
+
+	writeFileSync(filePath, formatFrontmatter(metaOut) + `# ${lastTitle}\n\n${lastContent}\n`);
+	return true;
+}
+
+/**
+ * Varre global + projeto atual e migra memórias v1 → snapshot v2.
+ * Idempotente (v2 pulado) e tolerante a arquivos corrompidos (pula e
+ * segue). Retorna quantas migrou. Chamada no session_start antes do sync
+ * do índice — o FTS já lê o formato v2.
+ */
+export function migrateLegacyMemories(projectId: string): number {
+	let migrated = 0;
+	for (const scope of ["global", "project"] as const) {
+		for (const type of MEMORY_TYPES) {
+			const dir =
+				scope === "global"
+					? join(MEMORIES_ROOT, "_global", type)
+					: join(MEMORIES_ROOT, "projects", projectId, type);
+			if (!existsSync(dir)) continue;
+			for (const f of readdirSync(dir)) {
+				if (!f.endsWith(".md")) continue;
+				try {
+					if (migrateMemoryToSnapshot(join(dir, f))) migrated++;
+				} catch {
+					// arquivo corrompido — não bloqueia a migração do restante
+				}
+			}
+		}
+	}
+	return migrated;
+}

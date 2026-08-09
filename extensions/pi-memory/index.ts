@@ -40,6 +40,7 @@ import {
 	formatMemoryIndexText,
 	findMemoryFile,
 	listMemoryIndex,
+	migrateLegacyMemories,
 	parseFrontmatter,
 	saveMemory,
 } from "./memory.ts";
@@ -211,6 +212,18 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		state.projectId = identifyProject(ctx.cwd);
 		ensureDirectories(state.projectId);
+
+		// Migração única de memórias legadas (v1 append → snapshot v2).
+		// Idempotente: arquivos v2 (meta.revision) são pulados. Roda ANTES do
+		// sync do índice — o FTS já lê o formato v2.
+		try {
+			const migrated = migrateLegacyMemories(state.projectId);
+			if (migrated > 0) {
+				console.warn(`[pi-memory] migradas ${migrated} memória(s) para snapshot v2`);
+			}
+		} catch (err) {
+			console.warn(`[pi-memory] migração falhou: ${(err as Error).message}`);
+		}
 
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		state.currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();

@@ -35,6 +35,8 @@ import {
 	getSupersedesPath,
 	listMemoryContexts,
 	listMemoryIndex,
+	migrateLegacyMemories,
+	migrateMemoryToSnapshot,
 	moveToSupersedes,
 	parseFrontmatter,
 	recalcOverallConfidence,
@@ -1099,6 +1101,61 @@ describe("saveMemory archived (supersedes/consolidate)", () => {
 		});
 		expect(err.action).toBe("error");
 		expect(err.archived).toEqual([]);
+	});
+});
+
+describe("migração v1 → snapshot v2", () => {
+	const proj = "test_project";
+	const legacyDir = join(MEMORIES_ROOT, "projects", proj, "gotchas");
+
+	function writeV1(context: string): string {
+		const fp = join(legacyDir, `${context}.md`);
+		const v1 =
+			'---\ncontext: "' + context + '"\ntype: "gotchas"\ncreated: "2026-01-01"\nconfidence: 0.7\n---\n' +
+			"## [2026-01-01] Bug antigo\nconfidence: 0.7\n\nO cache era invalidado depois da leitura.\n" +
+			"## [2026-02-01] Bug corrigido\nconfidence: 0.8\n\nA invalidação agora acontece antes da leitura.\n";
+		writeFileSync(fp, v1);
+		return fp;
+	}
+
+	it("converte v1 em snapshot v2 com a última entrada e arquiva em .history/v0", () => {
+		ensureDirectories(proj);
+		const fp = writeV1("legacy-mig");
+
+		expect(migrateMemoryToSnapshot(fp)).toBeTrue();
+
+		const raw = readFileSync(fp, "utf-8");
+		const { meta, body } = parseFrontmatter(raw);
+		expect(meta.revision).toBe(1);
+		expect(meta.scope).toBe("project");
+		expect(body.startsWith("# Bug corrigido")).toBeTrue();
+		expect(body).not.toContain("Bug antigo");
+
+		// Baseline arquivada em .history/projects/test_project/gotchas/legacy-mig/v0.md
+		const hist = join(
+			MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "legacy-mig", "v0.md",
+		);
+		expect(existsSync(hist)).toBeTrue();
+		expect(readFileSync(hist, "utf-8")).toContain("Bug antigo");
+		expect(findMemoryFile(proj, "legacy-mig")).toBe(fp);
+	});
+
+	it("idempotente: v2 não é re-migrado", () => {
+		const fp = writeV1("legacy-mig2");
+		expect(migrateMemoryToSnapshot(fp)).toBeTrue();
+		expect(migrateMemoryToSnapshot(fp)).toBeFalse(); // já v2
+	});
+
+	it("migrateLegacyMemories varre global + projeto e é idempotente", () => {
+		ensureDirectories(proj);
+		// Arquivo v1 novo + outros já v2 não devem ser recontados.
+		const fp = writeV1("legacy-scan");
+		const n = migrateLegacyMemories(proj);
+		expect(n).toBeGreaterThanOrEqual(1);
+		expect(migrateLegacyMemories(proj)).toBe(0); // tudo já v2
+		expect(existsSync(fp)).toBeTrue();
+		const { meta } = parseFrontmatter(readFileSync(fp, "utf-8"));
+		expect(meta.revision).toBe(1);
 	});
 });
 
