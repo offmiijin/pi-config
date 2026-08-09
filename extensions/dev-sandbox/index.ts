@@ -55,7 +55,9 @@ import {
 } from "./portability";
 import type { SandboxConfig } from "./types";
 import { createBashOps } from "./tools/bash-ops";
-import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath } from "./bwrap-executor";
+import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
+import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
+import { Type } from "typebox";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
 import { createEditOps } from "./tools/edit-ops";
@@ -199,13 +201,19 @@ export default function (pi: ExtensionAPI) {
 
       enabled = true;
 
+      // Diretórios de quarentena (fetch/runs) — criados com 0o700.
+      const qdirs = resolveQuarantineDirs(config, localCwd);
+      ensureQuarantineDir(qdirs.fetch);
+      ensureQuarantineDir(qdirs.runs);
+
       if (ctx.hasUI) {
         ctx.ui.setStatus(
           "sandbox",
           `[🔒 Sandbox ativo] ${localCwd}`,
         );
         ctx.ui.notify(
-          `Sandbox inicializado.\nWorkspace: ${localCwd}\nRede: ${config.internet.enabled ? "compartilhada" : "isolada"}`,
+          `Sandbox inicializado.\nWorkspace: ${localCwd}\nRede: ${config.internet.enabled ? "compartilhada" : "isolada"}\n` +
+          `Quarentena: fetch=${qdirs.fetch}\nruns=${qdirs.runs}`,
           "info",
         );
       }
@@ -297,6 +305,104 @@ export default function (pi: ExtensionAPI) {
     (config, cwd) => createGrepTool(cwd, config),
   ));
 
+  // ── Tools de quarentena ──────────────────────
+  // Exigem sandbox ativo: sem isolamento não há como baixar/executar
+  // código externo com segurança (fail-closed, mesmo com --no-sandbox).
+  function quarantineBlockedError(toolName: string): Error {
+    return new Error(
+      `[dev-sandbox] Tool '${toolName}' exige sandbox ativo. ` +
+      "Sem isolamento, download/execução de código externo não é permitido.",
+    );
+  }
+
+  pi.registerTool({
+    name: "sandbox_fetch",
+    label: "Sandbox Fetch",
+    description:
+      "Downloads external content (http/https) into an isolated quarantine directory " +
+      "with NO access to the project workspace. Use before executing downloaded code. " +
+      "Returns the absolute path of the downloaded file.",
+    parameters: Type.Object({
+      url: Type.String({ description: "http/https URL to download" }),
+      output: Type.Optional(Type.String({
+        description: "File name or relative path inside the fetch directory (default: URL basename)",
+      })),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      if (!enabled || !config) throw quarantineBlockedError("sandbox_fetch");
+      const cwd = ctx.cwd ?? localCwd;
+      const { file, result } = await fetchUrl(config, cwd, params.url, params.output, signal);
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `[dev-sandbox] sandbox_fetch falhou (exit ${result.exitCode}).\n${result.stderr || "sem stderr"}`,
+        );
+      }
+      return {
+        content: [{ type: "text", text: `Downloaded: ${file}` }],
+        details: { file, exitCode: result.exitCode },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "sandbox_quarantine_exec",
+    label: "Sandbox Quarantine Exec",
+    description:
+      "Runs a shell command in full isolation: NO network and NO access to the project workspace. " +
+      "Works in .sandbox-cache/runs/<workDir> (persists between calls). Optionally copies artifacts " +
+      "from the fetch directory (sandbox_fetch) into the work dir before running. " +
+      "Use to install (npm/pip), run tests, or execute downloaded code safely. " +
+      "The exit code is returned in details; non-zero exit does not throw — inspect the output.",
+    parameters: Type.Object({
+      command: Type.String({ description: "Shell command to run (bash -lc)" }),
+      workDir: Type.Optional(Type.String({
+        description: "Work subdirectory under .sandbox-cache/runs (default: 'default')",
+      })),
+      artifacts: Type.Optional(Type.Array(Type.String({
+        description: "Relative paths in the fetch directory to copy into the work dir before executing",
+      }))),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      if (!enabled || !config) throw quarantineBlockedError("sandbox_quarantine_exec");
+      const cwd = ctx.cwd ?? localCwd;
+      const result = await execQuarantine(
+        config, cwd, params.command, params.workDir ?? "default", params.artifacts ?? [], signal,
+      );
+      const out = result.stdout.toString();
+      const err = result.stderr;
+      const text = [out, err, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
+      return {
+        content: [{ type: "text", text: text || "(no output)" }],
+        details: { exitCode: result.exitCode, timedOut: result.timedOut, aborted: result.aborted },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "sandbox_promote",
+    label: "Sandbox Promote",
+    description:
+      "Copies an artifact produced in quarantine (.sandbox-cache/runs) back into the project workspace. " +
+      "Explicit action — the only way out of quarantine into the project.",
+    parameters: Type.Object({
+      source: Type.String({
+        description: "Path inside the runs directory (e.g. 'default/dist/app.js')",
+      }),
+      target: Type.String({
+        description: "Relative workspace path to copy to (e.g. 'dist/app.js')",
+      }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!enabled || !config) throw quarantineBlockedError("sandbox_promote");
+      const cwd = ctx.cwd ?? localCwd;
+      const target = await promoteArtifact(config, cwd, params.source, params.target);
+      return {
+        content: [{ type: "text", text: `Promoted: ${target}` }],
+        details: { target },
+      };
+    },
+  });
+
   // ── user_bash (!comando e !!comando) ──────────
   pi.on("user_bash", (_event, ctx) => {
     const cwd = ctx?.cwd ?? localCwd;
@@ -330,7 +436,11 @@ export default function (pi: ExtensionAPI) {
     const landlockNote = config.landlock.enabled
       ? "\nLandlock filesystem allowlist active."
       : "";
-    return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}${landlockNote}` };
+    const quarantineNote =
+      "\nInstalling or executing external code (npm install, pip install, curl|bash) is BLOCKED in bash. " +
+      "Use sandbox_fetch to download (no workspace access), sandbox_quarantine_exec to run it " +
+      "offline (no network, no workspace), and sandbox_promote to copy artifacts back to the project.";
+    return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}${landlockNote}${quarantineNote}` };
   });
 
   // ── /sandbox command ──────────────────────────
@@ -346,6 +456,8 @@ export default function (pi: ExtensionAPI) {
       }
 
       const caches = resolveCacheDirs(config, localCwd);
+      const qdirs = resolveQuarantineDirs(config, localCwd);
+      const prof = config.profiles;
       const lines = [
         `🔒 Sandbox de Desenvolvimento`,
         ``,
@@ -356,6 +468,8 @@ export default function (pi: ExtensionAPI) {
         `Landlock: ${config.landlock.enabled ? "ativo (ABI min: " + config.landlock.minAbi + ")" : "desabilitado"}`,
         `Seccomp: ${config.seccomp.enabled ? "ativo (" + config.seccomp.bpfPath + ")" : "desabilitado"}`,
         `Capabilities: ${config.capabilities.drop.length} droppadas`,
+        `Perfis: normal=${prof.normal.enabled ? "ok" : "off"} | fetch=${prof.fetch.enabled ? "ok" : "off"} | quarantine=${prof.quarantine.enabled ? "ok" : "off"}`,
+        `Quarentena: fetch=${qdirs.fetch} | runs=${qdirs.runs}`,
         `Caches: npm=${caches.npm} | pip=${caches.pip}`,
         `Clones: ${caches.clones}`,
       ];
