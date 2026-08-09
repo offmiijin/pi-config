@@ -9,14 +9,14 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readMemoryDocFromFile, relFromMemoriesRoot } from "../memory-index.ts";
+import { readMemoryDocFromFile, relFromMemoriesRoot } from "../memory/memory-index.ts";
 import {
 	applyDecay,
 	findMemoryFile,
 	formatFrontmatter,
 	moveToSupersedes,
 	parseFrontmatter,
-} from "../memory.ts";
+} from "../memory/memory.ts";
 import { DecaySchema } from "../schemas.ts";
 import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 

@@ -6,48 +6,71 @@
  * ricos agrupados por contexto, buscáveis via índice SQLite FTS5/BM25
  * (fallback ripgrep).
  *
- * O LLM conduz todas as operações de memória via tools. A extensão só anexa
- * observações cruas ao arquivo de sessão automaticamente no turn_end.
+ * Arquitetura (Fases 0-6):
+ *   sessão JSONL do Pi → episódios (agent_settled) → evidências →
+ *   jobs de extração (gatilhos automáticos ou memory_extract) → worker em
+ *   background (prompt + modelo → validação → revisor → commit snapshot).
  *
  * Layout:
  *   index.ts            — estado da extensão + event handlers (wiring)
  *   constants.ts        — constantes compartilhadas + setup de projeto
- *   session.ts          — ciclo de vida das observações de sessão
- *   memory.ts           — CRUD de arquivos de memória + índice + save
- *   memory-search.ts    — fallback de busca via ripgrep (índice indisponível)
- *   memory-extract.ts   — helpers de extração assistida por LLM
+ *   db.ts               — driver SQLite compartilhado (node/bun)
+ *   pipeline.ts         — pipeline operacional (episódios, evidências, jobs)
+ *   evidence.ts         — normalização de evidências (Fase 1)
+ *   worker.ts           — fila de jobs + consumer assíncrono (Fase 2)
+ *   config.ts           — modelo de extração (Fase 3)
+ *   extractor.ts        — prompt de extração + parsing (Fase 3)
+ *   processor.ts        — extração → validação → commit (Fases 3-4)
+ *   validator.ts        — validação/política/revisor (Fase 4)
+ *   memory.ts           — CRUD de memórias snapshot v2 + save
+ *   memory-index.ts     — índice FTS5 derivado
+ *   memory-search.ts    — fallback de busca via ripgrep
+ *   session.ts          — helpers legados (estimativa de tokens)
  *   schemas.ts          — schemas de parâmetros das tools
  *   tools/*.ts          — um arquivo por tool (status, save, search, decay, extract)
  */
 
-import { appendFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-	OBSERVATION_THRESHOLD,
 	ensureDirectories,
 	identifyProject,
 } from "./constants.ts";
 import {
-	buildTurnFingerprint,
-	countObservations,
-	createTurnDedupState,
-	ensureFileDir,
-	extractTextContent,
-	extractToolCallNames,
-	extractToolCalls,
-	formatObservation,
-	formatSessionHeader,
-	generateSessionHash,
-	getSessionFilePath,
-	hashSessionFile,
-	nextTurnDedup,
-	SAVE_REMINDER_COOLDOWN,
-	shouldPromptExtraction,
-	shouldRemindSave,
-	type ToolObservation,
-} from "./session.ts";
-import { formatMemoryIndexText, listMemoryIndex } from "./memory.ts";
-import { INDEX_DB_PATH, MemoryIndex } from "./memory-index.ts";
+	formatMemoryIndexText,
+	findMemoryFile,
+	listMemoryIndex,
+	migrateLegacyMemories,
+	parseFrontmatter,
+	saveMemory,
+} from "./memory/memory.ts";
+import {
+	INDEX_DB_PATH,
+	MemoryIndex,
+	readMemoryDocFromFile,
+	relFromMemoriesRoot,
+} from "./memory/memory-index.ts";
+import {
+	PIPELINE_DB_PATH,
+	PipelineDB,
+	buildEpisodeFingerprint,
+	estimateEpisodeTokens,
+} from "./pipeline/pipeline.ts";
+import { normalizePendingEpisodes } from "./pipeline/evidence.ts";
+import { generateSessionHash, hashSessionFile } from "./session.ts";
+import { PipelineWorker, maybeCreateJob } from "./pipeline/worker.ts";
+import {
+	EXTRACTION_MODEL_ID,
+	EXTRACTION_MODEL_PROVIDER,
+} from "./config.ts";
+import { formatExistingMemories } from "./pipeline/extractor.ts";
+import {
+	createExtractionProcessor,
+	type CompletionResponse,
+	type ExtractionModelRef,
+	type ModelRegistryLike,
+} from "./pipeline/processor.ts";
+import type { MemoryFileRef } from "./pipeline/validator.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -60,46 +83,155 @@ export default function (pi: ExtensionAPI) {
 	const state: ToolState = {
 		projectId: "",
 		currentSessionHash: "",
-		lastPromptedBucket: -1,
 		consecutiveEmptySearches: 0,
 		cachedIndexText: null,
 		index: null,
+		pipeline: null,
+		worker: null,
 	};
 
-	// Estado do gatilho de extração automática (usado só pelos event handlers)
-	let extractionDueCount = 0;
-	// Estado do lembrete de save (turns que mudam código)
-	let saveReminderDue = false;
-	let lastSaveReminderObs = 0;
-	// Flag: lembrete enviado neste user turn (máx 1x por turn —
-	// turn_end pode disparar várias vezes no mesmo turn com edits)
-	let saveReminderSent = false;
-	// Dedup de turn (o harness pode disparar turn_end duas vezes para o mesmo turn)
-	let turnDedupState = createTurnDedupState();
-	// Buffer de resultados de tools do turn atual (toolCallId → observation)
-	const toolResultsBuffer = new Map<string, ToolObservation>();
+	// Pipeline operacional (episódios → worker). Null se indisponível —
+	// captura de episódio vira no-op com log.
+	let pipeline: PipelineDB | null = null;
+	// Worker assíncrono: consome jobs do projeto atual. Null se o pipeline
+	// não abriu — a fila espera a próxima sessão.
+	let worker: PipelineWorker | null = null;
+	// Registry de modelos capturado dos event handlers — o processor de
+	// extração resolve o modelo FIXO de config.ts em runtime (não herda o
+	// modelo interativo da sessão).
+	let extractionModelRegistry: ModelRegistryLike | null = null;
 
-	pi.on("tool_result", async (event) => {
-		const e = event as unknown as {
-			toolCallId?: string;
-			toolName?: string;
-			content?: unknown;
-			isError?: boolean;
+	// Resolução do modelo de extração + contexto de memórias relacionadas
+	// (FTS5). Melhor-esforço — falha degrada o prompt, não o job.
+	const getModel = async (): Promise<ExtractionModelRef | null> => {
+		const registry = extractionModelRegistry;
+		if (!registry) return null;
+		const model = registry.find(EXTRACTION_MODEL_PROVIDER, EXTRACTION_MODEL_ID);
+		if (!model) return null;
+		if (!registry.hasConfiguredAuth(model)) return null;
+		return {
+			provider: EXTRACTION_MODEL_PROVIDER,
+			id: EXTRACTION_MODEL_ID,
+			complete: (messages, opts) =>
+				registry.complete(model, { messages }, opts) as unknown as Promise<CompletionResponse>,
 		};
-		if (!e.toolCallId) return;
-		toolResultsBuffer.set(e.toolCallId, {
-			name: e.toolName ?? "unknown",
-			result: extractTextContent(e.content),
-			isError: !!e.isError,
-		});
-	});
+	};
+
+	const getRelatedMemories = async (projectId: string, terms: string[]): Promise<string> => {
+		const index = state.index;
+		if (!index?.isOpen || index.needsRebuild || terms.length === 0) return "";
+		try {
+			const results = index.search({ terms, scope: "all", projectId, limit: 8 });
+			return formatExistingMemories(
+				results.map((r) => ({
+					scope: r.scope,
+					type: r.type,
+					context: r.context,
+					confidence: r.confidence,
+					title: r.title,
+					summary: r.summary,
+					snippet: r.snippet,
+				})),
+			);
+		} catch {
+			return "";
+		}
+	};
+
+	// Localiza memória existente pelo context key (dedup/contradição e
+	// validação de supersede). Best-effort — falha vira "sem memória".
+	// projectId vem do JOB (não do state.projectId global): troca de projeto
+	// durante a extração não consulta o projeto errado (P1).
+	const findExistingMemory = async (projectId: string, context: string): Promise<MemoryFileRef | null> => {
+		try {
+			const fp = findMemoryFile(projectId, context);
+			if (!fp) return null;
+			const { meta, body } = parseFrontmatter(readFileSync(fp, "utf-8"));
+			return {
+				context,
+				scope: fp.includes("_global") ? "global" : "project",
+				type: typeof meta.type === "string" ? meta.type : "",
+				confidence: typeof meta.confidence === "number" ? meta.confidence : 0.5,
+				summary: typeof meta.summary === "string" ? meta.summary : null,
+				content: body.trim(),
+			};
+		} catch {
+			return null;
+		}
+	};
+
+	// Grava a memória no markdown (canônico) e sincroniza o índice FTS5.
+	// Falha de índice degrada e segue (próximo syncIncremental reconcilia).
+	// projectId vem do JOB — commit nunca vai para o projeto errado (P1).
+	const commitMemory = async (
+		projectId: string,
+		candidate: {
+		context: string;
+		action: string;
+		type: string | null;
+		scope: string | null;
+		title: string | null;
+		summary: string | null;
+		content: string | null;
+		confidence: number | null;
+		supersedes: string | null;
+		evidenceIds: string[];
+	}): Promise<{ ok: boolean; error?: string }> => {
+		try {
+			if (!candidate.type || !candidate.scope || !candidate.title || !candidate.content) {
+				return { ok: false, error: "candidato incompleto para commit" };
+			}
+			const result = saveMemory(projectId, {
+				type: candidate.type,
+				context: candidate.context,
+				title: candidate.title,
+				content: candidate.content,
+				scope: candidate.scope as "global" | "project",
+				confidence: candidate.confidence ?? 0.5,
+				summary: candidate.summary ?? undefined,
+				tags: [],
+				evidence: candidate.evidenceIds,
+				supersedes:
+					candidate.action === "supersede" ? candidate.supersedes ?? undefined : undefined,
+			});
+			if (result.action === "error") return { ok: false, error: result.error };
+
+			if (state.index?.isOpen && result.file) {
+				try {
+					state.index.syncMutationSafe({
+						upsert: [readMemoryDocFromFile(result.file, relFromMemoriesRoot(result.file))],
+						remove: (result.archived ?? []).map((p) => relFromMemoriesRoot(p)),
+					});
+				} catch {
+					// degrada — próximo syncIncremental reconcilia
+				}
+			}
+			state.cachedIndexText = null; // invalida o índice do system prompt
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: (err as Error).message ?? String(err) };
+		}
+	};
 
 	pi.on("session_start", async (_event, ctx) => {
 		state.projectId = identifyProject(ctx.cwd);
 		ensureDirectories(state.projectId);
 
+		// Migração única de memórias legadas (v1 append → snapshot v2).
+		// Idempotente: arquivos v2 (meta.revision) são pulados. Roda ANTES do
+		// sync do índice — o FTS já lê o formato v2.
+		try {
+			const migrated = migrateLegacyMemories(state.projectId);
+			if (migrated > 0) {
+				console.warn(`[pi-memory] migradas ${migrated} memória(s) para snapshot v2`);
+			}
+		} catch (err) {
+			console.warn(`[pi-memory] migração falhou: ${(err as Error).message}`);
+		}
+
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		state.currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
+		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
 
 		// Índice SQLite/FTS5: abre + sync incremental (rebuild automático se
 		// banco novo/schema antigo). Falha de índice não derruba a sessão —
@@ -119,26 +251,75 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] índice indisponível: ${(err as Error).message} — busca via rg`);
 		}
 
-		state.lastPromptedBucket = -1;
-		extractionDueCount = 0;
+		// Pipeline operacional (episódios/evidências/jobs). Falha não derruba a
+		// sessão — a captura de episódio vira no-op com log.
+		try {
+			pipeline = new PipelineDB(PIPELINE_DB_PATH);
+			pipeline.open();
+		} catch (err) {
+			try {
+				pipeline?.close();
+			} catch {
+				// close best-effort — estado já degradado
+			}
+			pipeline = null;
+			console.warn(`[pi-memory] pipeline indisponível: ${(err as Error).message}`);
+		}
+
+		// Worker assíncrono com o processor de extração real. Recupera jobs
+		// presos (crash/reload) e inicia o consumer do projeto atual. Falha
+		// não derruba a sessão.
+		try {
+			if (pipeline) {
+				// Retry automático de episódios 'pending' (Bloqueador 1): o JSONL
+				// pode não estar persistido quando agent_settled disparou. Neste
+				// ponto a sessão já foi carregada — os pendings de sessões
+				// anteriores transitam para normalized/ignored.
+				normalizePendingEpisodes(pipeline, state.projectId);
+				pipeline.recoverStuckJobs();
+				// Jobs 'done' com candidatos pending (estado órfão) voltam para a
+				// fila — o worker refaz a extração até resolver (Bloqueador 2).
+				pipeline.recoverJobsWithPendingCandidates();
+				worker = new PipelineWorker(pipeline, {
+					processor: createExtractionProcessor({
+						getModel,
+						getRelatedMemories,
+						findExistingMemory,
+						commitMemory,
+					}),
+					includeClaimed: true,
+				});
+				worker.setProject(state.projectId);
+				worker.start();
+				// Reavalia os gatilhos com o backlog normalizado — sessões
+				// anteriores podem ter acumulado tokens/episódios suficientes.
+				const trigger = maybeCreateJob(pipeline, state.projectId);
+				if (trigger.jobId) worker.wake();
+			}
+		} catch (err) {
+			worker = null;
+			console.warn(`[pi-memory] worker indisponível: ${(err as Error).message}`);
+		}
+
+		// Tools (Fase 6) consomem pipeline/worker via state
+		state.pipeline = pipeline;
+		state.worker = worker;
+
 		state.consecutiveEmptySearches = 0;
-		saveReminderDue = false;
-		lastSaveReminderObs = 0;
-		saveReminderSent = false;
 		// Reseta o cache do índice de memória da sessão
 		state.cachedIndexText = null;
-		turnDedupState = createTurnDedupState();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		const nextProjectId = identifyProject(ctx.cwd);
 		if (nextProjectId === state.projectId) {
-			// Mesmo projeto: NÃO reseta o estado do gatilho. Resetar lastPromptedBucket
-			// aqui, com um followUp de extração pendente (nextTurn), faria o gatilho
-			// re-disparar o mesmo bucket → mensagem duplicada no próximo user prompt.
+			// Mesmo projeto — nada a trocar (worker/pipeline continuam).
 			return;
 		}
 		state.projectId = nextProjectId;
+		// Worker segue aberto entre projetos; passa a consumir o novo.
+		worker?.setProject(nextProjectId);
+		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
 
 		// Sincroniza o índice para o novo projeto (global + projeto novo).
 		// Falha no sync não derruba a sessão: fecha o índice (estado
@@ -160,209 +341,90 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		state.lastPromptedBucket = -1;
-		extractionDueCount = 0;
 		state.consecutiveEmptySearches = 0;
-		saveReminderDue = false;
-		lastSaveReminderObs = 0;
-		saveReminderSent = false;
 		// Reseta o cache do índice de memória da sessão
 		state.cachedIndexText = null;
-		turnDedupState = createTurnDedupState();
 	});
 
-	pi.on("turn_end", async (event, ctx) => {
-		if (!state.projectId || !state.currentSessionHash) return;
-
-		const assistantMsg = event.message;
-		if (!assistantMsg) return;
-
-		const agentResponse = extractTextContent(assistantMsg.content);
-
-		// O harness pode disparar turn_end mais de uma vez para o MESMO turn
-		// (observado em sessões com followUps: obs duplicadas, contagem inflada,
-		// lembretes/gatilhos re-disparados). Dedup por event.turnIndex (índice
-		// único por turn); fallback para a impressão digital do conteúdo quando
-		// turnIndex não existe.
-		const fingerprint = buildTurnFingerprint(assistantMsg.content);
-		const turnIndex = (event as { turnIndex?: number }).turnIndex;
-		const { skip, state: nextState } = nextTurnDedup(turnIndex, fingerprint, turnDedupState);
-		turnDedupState = nextState;
-		if (skip) return;
-
-		const branch = ctx.sessionManager.getBranch();
-
-		// Encontra o último user prompt e coleta os resultados de tools do turn
-		// atual (mensagens role="toolResult" após o último prompt)
-		let userPrompt = "";
-		let lastUserIdx = -1;
-		for (let i = branch.length - 1; i >= 0; i--) {
-			const entry = branch[i];
-			if (entry.type === "message" && entry.message?.role === "user") {
-				lastUserIdx = i;
-				userPrompt = extractTextContent(entry.message.content);
-				break;
-			}
+	pi.on("before_agent_start", async (event) => {
+		// Índice de memórias no SYSTEM PROMPT. Cache por sessão, invalidado em
+		// escritas (memory_save/extract/decay).
+		if (!state.projectId) return { systemPrompt: event.systemPrompt };
+		if (state.cachedIndexText === null) {
+			state.cachedIndexText = formatMemoryIndexText(listMemoryIndex(state.projectId));
 		}
+		return { systemPrompt: `${event.systemPrompt}\n\n${state.cachedIndexText}` };
+	});
 
-		// Tool calls do conteúdo do assistente (ordem de origem)
-		const toolCalls = extractToolCalls(assistantMsg.content);
+	pi.on("agent_settled", async (_event, ctx) => {
+		// agent_settled = fim real do prompt (após retries/compaction/followUps).
+		// Captura o episódio no pipeline operacional — unidade semântica de
+		// extração. Metadados apenas; nenhuma leitura de conteúdo aqui. Falha
+		// nunca derruba o turno (best-effort).
+		if (!state.projectId || !state.currentSessionHash) return;
+		if (!pipeline?.isOpen) return;
+		try {
+			const sm = ctx.sessionManager;
+			const branch = sm.getBranch();
 
-		// Resultados deste turn vindos do branch (mensagens role="toolResult" após
-		// o último user — também em ordem de origem, como documentado)
-		const branchResults: ToolObservation[] = [];
-		if (lastUserIdx >= 0) {
-			for (let i = lastUserIdx + 1; i < branch.length; i++) {
+			// Range do episódio: do último user prompt até a folha atual
+			// (followUps e retries do mesmo prompt ficam dentro do episódio).
+			let lastUserIdx = -1;
+			for (let i = branch.length - 1; i >= 0; i--) {
 				const entry = branch[i];
-				if (entry.type === "message" && entry.message?.role === "toolResult") {
-					branchResults.push({
-						name: entry.message.toolName ?? "unknown",
-						result: extractTextContent(entry.message.content),
-						isError: !!entry.message.isError,
-					});
+				if (entry.type === "message" && entry.message?.role === "user") {
+					lastUserIdx = i;
+					break;
 				}
 			}
-		}
+			if (lastUserIdx < 0) return; // sem prompt de usuário — nada a capturar
 
-		// Alinha toolCalls[i] ↔ branchResults[i]; o buffer enriquece por id
-		let toolResults: ToolObservation[];
-		if (toolCalls.length > 0) {
-			toolResults = toolCalls.map((tc, i) => {
-				const buffered = toolResultsBuffer.get(tc.id);
-				if (buffered && buffered.result) return buffered;
-				return branchResults[i] ?? { name: tc.name };
+			const range = branch.slice(lastUserIdx);
+			const leaf = branch[branch.length - 1];
+			const fingerprint = buildEpisodeFingerprint(range.map((e) => e.id));
+
+			// Dedup: agent_settled pode disparar mais de uma vez para o mesmo
+			// episódio (harness) — a impressão digital cobre o range inteiro.
+			if (pipeline.findEpisodeByFingerprint(state.currentSessionHash, fingerprint)) return;
+
+			const episodeId = pipeline.insertEpisode({
+				projectId: state.projectId,
+				sessionId: state.currentSessionHash,
+				sessionFile: sm.getSessionFile() ?? "",
+				startEntryId: branch[lastUserIdx].id,
+				endEntryId: leaf.id,
+				leafId: sm.getLeafId() ?? leaf.id,
+				fingerprint,
+				tokenEstimate: estimateEpisodeTokens(range),
 			});
-		} else {
-			// Sem blocos toolCall no conteúdo: usa branchResults direto
-			toolResults =
-				branchResults.length > 0
-					? branchResults
-					: extractToolCallNames(assistantMsg.content).map((n) => ({ name: n }));
-		}
-		toolResultsBuffer.clear();
 
-		const sessionFile = getSessionFilePath(state.projectId, state.currentSessionHash);
-		ensureFileDir(sessionFile);
+			// Retry automático (Bloqueador 1): pendings de turns anteriores da
+			// MESMA sessão (JSONL ainda não persistido no settle anterior) + o
+			// episódio recém-inserido transitam para normalized/ignored quando
+			// o arquivo já está no disco. Determinístico e sem LLM — falha
+			// mantém pending para o próximo settle/session_start.
+			normalizePendingEpisodes(pipeline, state.projectId);
 
-		if (!existsSync(sessionFile)) {
-			const header = formatSessionHeader(state.currentSessionHash);
-			appendFileSync(sessionFile, header + "\n");
-		}
-
-		const obsNumber = countObservations(sessionFile) + 1;
-		const obs = formatObservation(obsNumber, userPrompt, toolResults, agentResponse);
-		appendFileSync(sessionFile, obs + "\n");
-
-		// Envia mensagem ao LLM em cada cruzamento de threshold (50, 100, ...).
-		// Entregue via "nextTurn" (não followUp): sem atraso intra-turn, sem
-		// ciclo extra. lastPromptedBucket (monotônico) já garante 1x/threshold;
-		// não é resetado em before_agent_start nem em session_tree para o mesmo
-		// projeto (evita re-disparar o mesmo bucket com mensagem pendente).
-		const count = countObservations(sessionFile);
-		const { prompt, bucket } = shouldPromptExtraction(count, state.lastPromptedBucket);
-		if (prompt) {
-			state.lastPromptedBucket = bucket;
-			try {
-				pi.sendUserMessage(
-					`[pi-memory] Session reached ${count} observations (threshold ${OBSERVATION_THRESHOLD}). ` +
-						"Call memory_extract to process observations into memories.",
-					{ deliverAs: "nextTurn" },
-				);
-			} catch {
-				// Fallback: injeta no próximo before_agent_start
-				extractionDueCount = count;
+			// Gatilho de job (tokens/episódios/sinal forte) + acorda o worker.
+			// Assíncrono — o turno não espera o processamento.
+			const trigger = maybeCreateJob(pipeline, state.projectId, { signalEpisodeId: episodeId });
+			if (trigger.jobId) {
+				worker?.wake();
 			}
+		} catch (err) {
+			console.warn(`[pi-memory] captura de episódio falhou: ${(err as Error).message}`);
 		}
-
-		// Turn mudou código e passou o cooldown → lembra o LLM de salvar
-		// aprendizado durável direto via memory_save (sem esperar o extract).
-		// Máx 1x por USER turn: a guarda saveReminderSent é resetada em
-		// agent_settled (fim real do prompt) — NÃO em before_agent_start, que
-		// também dispara para ciclos gerados pela extensão e resetaria a guarda
-		// no meio do turn (lembretes duplicados).
-		// Entregue via "nextTurn": não interrompe nem adiciona ciclo extra — a
-		// mensagem chega no próximo user prompt, sem atraso dentro do turn e
-		// sem re-disparo pelo followUp.
-		if (
-			!saveReminderSent &&
-			shouldRemindSave(
-				toolResults.map((t) => t.name),
-				obsNumber,
-				lastSaveReminderObs,
-				SAVE_REMINDER_COOLDOWN,
-			)
-		) {
-			saveReminderSent = true;
-			lastSaveReminderObs = obsNumber;
-			try {
-				pi.sendUserMessage(
-					"[pi-memory] This turn changed code. If it involved a durable learning (bug cause, decision, gotcha, pattern), call memory_save now. Otherwise ignore.",
-				{ deliverAs: "nextTurn" },
-				);
-			} catch {
-				saveReminderDue = true;
-			}
-		}
-	});
-
-	pi.on("before_agent_start", async (event, ctx) => {
-		// NOTA: NÃO resete saveReminderSent aqui. before_agent_start também
-		// dispara para ciclos gerados pela extensão (sendUserMessage), que
-		// resetavam a guarda no meio do turn e permitiam lembretes duplicados.
-		// O reset acontece em agent_settled (fim real do user prompt).
-
-		// Índice de memórias no SYSTEM PROMPT (reconstruído por turn — não polui
-		// o histórico como a mensagem customType fazia). Cache por sessão,
-		// invalidado em escritas (memory_save/extract/decay).
-		const withIndex = (prompt: string): string => {
-			if (!state.projectId) return prompt;
-			if (state.cachedIndexText === null) {
-				state.cachedIndexText = formatMemoryIndexText(listMemoryIndex(state.projectId));
-			}
-			return `${prompt}\n\n${state.cachedIndexText}`;
-		};
-
-		if (extractionDueCount > 0) {
-			const count = extractionDueCount;
-			extractionDueCount = 0;
-			return {
-				systemPrompt: withIndex(event.systemPrompt),
-				message: {
-					customType: "pi-memory",
-					content:
-						`[pi-memory] Session reached ${count} observations ` +
-						`(threshold ${OBSERVATION_THRESHOLD}). ` +
-						"Call memory_extract to process observations into memories.",
-					display: true,
-				},
-			};
-		}
-		if (saveReminderDue) {
-			saveReminderDue = false;
-			return {
-				systemPrompt: withIndex(event.systemPrompt),
-				message: {
-					customType: "pi-memory",
-					content:
-						"[pi-memory] A recent turn changed code. If it involved a durable learning (bug cause, decision, gotcha, pattern), call memory_save now. Otherwise ignore.",
-					display: true,
-				},
-			};
-		}
-
-		return { systemPrompt: withIndex(event.systemPrompt) };
-	});
-
-	pi.on("agent_settled", async (_event, _ctx) => {
-		// agent_settled = fim real do prompt (após retries/compaction/followUps).
-		// Resetar a guarda aqui (não em before_agent_start) garante no máximo 1
-		// lembrete por USER turn, mesmo com turns longos de tools.
-		saveReminderSent = false;
 	});
 
 	pi.on("session_shutdown", async () => {
 		state.index?.close();
 		state.index = null;
+		state.pipeline = null;
+		state.worker = null;
+		await worker?.stop();
+		worker = null;
+		pipeline?.close();
+		pipeline = null;
 	});
 
 	registerMemoryStatus(pi, state);

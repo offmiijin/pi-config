@@ -3,23 +3,27 @@
  * tools.
  *
  * Só os campos que as tools leem/escrevem vivem aqui. O resto do estado da
- * extensão (extractionDueCount, saveReminderDue, turnDedupState,
- * toolResultsBuffer…) fica como variáveis locais do index.ts.
+ * extensão (pipeline/worker são criados no session_start e injetados aqui
+ * para as tools de Fase 6 consumirem).
  */
 
-import type { IndexDocument, MemoryIndex } from "../memory-index.ts";
+import type { IndexDocument, MemoryIndex } from "../memory/memory-index.ts";
+import type { PipelineDB } from "../pipeline/pipeline.ts";
+import type { PipelineWorker } from "../pipeline/worker.ts";
 
 export interface ToolState {
 	projectId: string;
 	currentSessionHash: string;
-	/** Monotônico — último bucket de extração que já disparou um aviso (evita re-disparo). */
-	lastPromptedBucket: number;
 	/** Buscas consecutivas sem resultado (política: abandonar após MAX_MEMORY_SEARCH_ATTEMPTS). */
 	consecutiveEmptySearches: number;
 	/** Cache do índice de memórias no system prompt (invalidado em escritas). */
 	cachedIndexText: string | null;
 	/** Índice SQLite/FTS5 aberto na sessão (null se indisponível → fallback rg). */
 	index: MemoryIndex | null;
+	/** Pipeline operacional (Fase 6) — null se indisponível. */
+	pipeline: PipelineDB | null;
+	/** Worker assíncrono (Fase 6) — null se indisponível. */
+	worker: PipelineWorker | null;
 }
 
 /**

@@ -9,7 +9,7 @@
 import { describe, it } from "node:test";
 import { expect } from "./expect-shim.ts";
 import { formatIndexResults } from "../tools/search.ts";
-import type { IndexSearchResult } from "../memory-index.ts";
+import type { IndexSearchResult } from "../memory/memory-index.ts";
 
 function result(overrides: Partial<IndexSearchResult> = {}): IndexSearchResult {
 	return {
@@ -69,7 +69,7 @@ import {
 	formatRgResults,
 	hasMeaningfulTerm,
 } from "../tools/search.ts";
-import type { SearchResult } from "../memory-search.ts";
+import type { SearchResult } from "../memory/memory-search.ts";
 
 function rgResult(overrides: Partial<SearchResult> = {}): SearchResult {
 	return {

@@ -14,11 +14,10 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 /** Raiz das memórias — diretório do agente real (env/rebranding-aware). */
 export const MEMORIES_ROOT = join(getAgentDir(), "memories");
-export const OBSERVATION_THRESHOLD = 50;
 
 /**
- * Orçamentos de tokens para campos de observação (aprox., ~4 chars/token).
- * Equivalente a ~4000 chars de prompt, ~8000 de resposta, ~2000 por tool result.
+ * Orçamentos de tokens para evidências (evidence.ts) — prompt/response/tool
+ * result em chars aproximados (~4 chars/token).
  */
 export const OBSERVATION_TOKEN_BUDGETS = {
 	prompt: 1000,
@@ -28,14 +27,6 @@ export const OBSERVATION_TOKEN_BUDGETS = {
 
 /** Approximate chars per token for size estimation (English-centric heuristic). */
 export const CHARS_PER_TOKEN = 4;
-
-/**
- * Orçamento de tokens de observações por chamada do memory_extract (lote
- * incremental). ~7-8 observações típicas (~4K tokens cada); o prompt total
- * fica ~40K com overhead, seguro para modelos com >= 64K de contexto.
- */
-export const EXTRACT_BATCH_TOKEN_BUDGET = 30_000;
-
 /** Max consecutive memory_search calls with no results before the model abandons. */
 export const MAX_MEMORY_SEARCH_ATTEMPTS = 3;
 
@@ -97,15 +88,24 @@ export function identifyProject(
 export function getMemoryDirectories(projectId: string): string[] {
 	const globalDirs = MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "_global", t));
 	const supersedesGlobal = MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, ".supersedes", "_global", t));
-	const projectDirs = [
-		...MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "projects", projectId, t)),
-		join(MEMORIES_ROOT, "projects", projectId, "sessions"),
-	];
+	const historyGlobal = MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, ".history", "_global", t));
+	const projectDirs = [...MEMORY_TYPES.map((t) => join(MEMORIES_ROOT, "projects", projectId, t))];
 	const supersedesProject = MEMORY_TYPES.map((t) =>
 		join(MEMORIES_ROOT, ".supersedes", "projects", projectId, t),
 	);
+	const historyProject = MEMORY_TYPES.map((t) =>
+		join(MEMORIES_ROOT, ".history", "projects", projectId, t),
+	);
 
-	return [MEMORIES_ROOT, ...globalDirs, ...supersedesGlobal, ...projectDirs, ...supersedesProject];
+	return [
+		MEMORIES_ROOT,
+		...globalDirs,
+		...supersedesGlobal,
+		...historyGlobal,
+		...projectDirs,
+		...supersedesProject,
+		...historyProject,
+	];
 }
 
 /**

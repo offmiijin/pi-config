@@ -21,7 +21,7 @@ import {
 	buildSearchPattern,
 	readFileConfidence,
 	searchMemories
-} from "../memory-search.ts";
+} from "../memory/memory-search.ts";
 
 describe("readFileConfidence", () => {
 	let tmpDir: string;

@@ -13,16 +13,14 @@ function StringEnum<T extends readonly string[]>(values: T) {
 }
 
 export const MemoryTypeEnum = StringEnum(["_rules", "decisions", "gotchas", "lessons", "patterns"] as const);
-export type MemoryType = (typeof MemoryTypeEnum.static)[number];
+/** Tipos derivados manualmente — TypeBox não expõe `.static` em runtime. */
+export type MemoryType = "_rules" | "decisions" | "gotchas" | "lessons" | "patterns";
 
 export const ScopeEnum = StringEnum(["global", "project"] as const);
-export type Scope = (typeof ScopeEnum.static)[number];
+export type Scope = "global" | "project";
 
 export const SearchScopeEnum = StringEnum(["global", "project", "all"] as const);
-export type SearchScope = (typeof SearchScopeEnum.static)[number];
-
-export const SaveModeEnum = StringEnum(["append", "consolidate"] as const);
-export type SaveMode = (typeof SaveModeEnum.static)[number];
+export type SearchScope = "global" | "project" | "all";
 
 export const SaveSchema = Type.Object({
 	type: MemoryTypeEnum,
@@ -33,8 +31,8 @@ export const SaveSchema = Type.Object({
 	tags: Type.Optional(Type.Array(Type.String(), { description: "Tags for search (PT-BR)" })),
 	confidence: Type.Optional(
 		Type.Number({
-			description: "0.1-0.9 (default 0.5, minimum 0.5)",
-			minimum: 0.1,
+			description: "0.5-0.9 (default 0.5)",
+			minimum: 0.5,
 			maximum: 0.9,
 		}),
 	),
@@ -45,19 +43,8 @@ export const SaveSchema = Type.Object({
 		Type.String({
 			description:
 				"Resumo de 1-2 frases em PT-BR do estado ATUAL da memória. " +
-				"Sobrescreve o anterior no append/consolidate; usado pelo memory_extract para dedup.",
+				"Sobrescreve o anterior; usado pelo memory_extract para dedup.",
 		}),
-	),
-	mode: Type.Optional(
-		Type.Union(
-			[Type.Literal("append"), Type.Literal("consolidate")],
-			{
-				description:
-					"append (default): adiciona entrada datada ao arquivo. " +
-					"consolidate: reescreve a memória — arquiva a versão atual do MESMO context em .supersedes/ e cria arquivo novo " +
-					"(use quando a informação nova atualiza/contradiz a existente; para substituir memória de OUTRO context use supersedes).",
-			},
-		),
 	),
 });
 
@@ -92,8 +79,58 @@ export const DecaySchema = Type.Object({
 	),
 });
 
-export const ExtractSchema = Type.Object({
-	session_file: Type.Optional(
-		Type.String({ description: "Session file path (default: current session)" }),
+// memory_extract não recebe parâmetros: a sessão atual é resolvida pelo
+// próprio pipeline (sessionManager.getSessionFile no agent_settled) — o
+// antigo parâmetro session_file era aceito e ignorado.
+export const ExtractSchema = Type.Object({});
+
+/* ------------------------------------------------------------------ */
+/* Extração (Fase 3) — schema da resposta do modelo                    */
+/* ------------------------------------------------------------------ */
+
+export const ExtractionCandidateSchema = Type.Object({
+	action: Type.Union([
+		Type.Literal("create"),
+		Type.Literal("update"),
+		Type.Literal("supersede"),
+		Type.Literal("ignore"),
+	]),
+	context: Type.String({ minLength: 1 }),
+	type: Type.Optional(
+		Type.Union([
+			Type.Literal("_rules"),
+			Type.Literal("decisions"),
+			Type.Literal("gotchas"),
+			Type.Literal("lessons"),
+			Type.Literal("patterns"),
+		]),
 	),
+	scope: Type.Optional(Type.Union([Type.Literal("global"), Type.Literal("project")])),
+	title: Type.Optional(Type.String()),
+	summary: Type.Optional(Type.String()),
+	content: Type.Optional(Type.String()),
+	confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+	evidence_ids: Type.Optional(Type.Array(Type.String())),
+	supersedes: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	reason: Type.Optional(Type.String()),
 });
+
+export const ExtractionResponseSchema = Type.Object({
+	memories: Type.Array(ExtractionCandidateSchema),
+});
+
+export type ExtractionCandidate = {
+	action: "create" | "update" | "supersede" | "ignore";
+	context: string;
+	type?: "_rules" | "decisions" | "gotchas" | "lessons" | "patterns";
+	scope?: "global" | "project";
+	title?: string;
+	summary?: string;
+	content?: string;
+	confidence?: number;
+	evidence_ids?: string[];
+	supersedes?: string | null;
+	reason?: string;
+};
+
+export type ExtractionResponse = { memories: ExtractionCandidate[] };

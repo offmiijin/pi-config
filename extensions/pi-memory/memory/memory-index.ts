@@ -23,42 +23,9 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
-import { extractLastEntryTitle, parseFrontmatter } from "./memory.ts";
-
-/** Superfície mínima de statement usada pelo índice (comum aos dois drivers). */
-interface StatementLike {
-	get(...params: unknown[]): Record<string, unknown> | undefined;
-	all(...params: unknown[]): Record<string, unknown>[];
-	run(...params: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint };
-}
-
-/** Superfície mínima de conexão usada pelo índice (comum aos dois drivers). */
-export interface DatabaseLike {
-	exec(sql: string): unknown;
-	prepare(sql: string): StatementLike;
-	close(): void;
-}
-
-type DatabaseCtor = new (path: string) => DatabaseLike;
-
-/**
- * Resolve o construtor de banco por runtime.
- * - Node → `node:sqlite` (DatabaseSync) — suíte de testes roda aqui.
- * - Bun → `bun:sqlite` (Database) — pi binário roda aqui; Bun não tem node:sqlite.
- * Falha nos dois ⇒ erro claro em vez de módulo quebrado.
- */
-async function resolveDatabaseCtor(): Promise<DatabaseCtor> {
-	try {
-		const mod = await import("node:sqlite");
-		return mod.DatabaseSync as unknown as DatabaseCtor;
-	} catch {
-		const mod = await import("bun:sqlite");
-		return mod.Database as unknown as DatabaseCtor;
-	}
-}
-
-const DatabaseCtor = await resolveDatabaseCtor();
+import { MEMORIES_ROOT, MEMORY_TYPES } from "../constants.ts";
+import { extractLastEntryTitle, extractTitle, parseFrontmatter } from "./memory.ts";
+import { DatabaseCtor, type DatabaseLike, type StatementLike } from "../db.ts";
 
 export const INDEX_DB_FILENAME = ".index.sqlite";
 export const INDEX_DB_PATH = join(MEMORIES_ROOT, INDEX_DB_FILENAME);
@@ -150,6 +117,7 @@ export function inferFromRelPath(relPath: string): {
 /** Corpo limpo para indexação FTS (mesma limpeza do excerpt, sem truncar). */
 export function cleanBody(body: string): string {
 	return body
+		.replace(/^#\s+.*$/m, "") // título v2 (snapshot)
 		.replace(/^## \[[^\]]+\][^\n]*\n/gm, "")
 		.replace(/^confidence:.*$/gm, "")
 		.replace(/\n{3,}/g, "\n\n")
@@ -266,7 +234,7 @@ export function readMemoryDocFromFile(absPath: string, relPath: string): IndexDo
 		projectId,
 		type,
 		context,
-		title: extractLastEntryTitle(body) ?? context,
+		title: extractTitle(body) ?? extractLastEntryTitle(body) ?? context,
 		summary: typeof meta.summary === "string" ? meta.summary : null,
 		tags,
 		confidence: typeof meta.confidence === "number" ? meta.confidence : 0.5,

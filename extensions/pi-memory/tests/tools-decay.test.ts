@@ -13,11 +13,12 @@ import { expect } from "./expect-shim.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
+
+import { DatabaseCtor } from "../db.ts";
 
 import { MEMORIES_ROOT } from "../constants.ts";
 import { ensureFileDir } from "../session.ts";
-import { MemoryIndex, relFromMemoriesRoot } from "../memory-index.ts";
+import { MemoryIndex, relFromMemoriesRoot } from "../memory/memory-index.ts";
 import { registerMemoryDecay } from "../tools/decay.ts";
 import type { ToolState } from "../tools/state.ts";
 
@@ -26,7 +27,7 @@ interface ToolDef {
 }
 
 function captureTool(
-	register: (pi: unknown, state: ToolState) => void,
+	register: (pi: any, state: ToolState) => void,
 	state: ToolState,
 ): ToolDef {
 	let def: ToolDef | null = null;
@@ -41,7 +42,7 @@ function captureTool(
 }
 
 function memoryRow(dbPath: string, relPath: string): { confidence: number; content_hash: string } | undefined {
-	const probe = new DatabaseSync(dbPath, { readOnly: true });
+	const probe = new DatabaseCtor(dbPath);
 	try {
 		const row = probe
 			.prepare("SELECT confidence, content_hash FROM memory_documents WHERE path = ?")
@@ -99,9 +100,10 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 		const state: ToolState = {
 			projectId: proj,
 			currentSessionHash: "",
-			lastPromptedBucket: -1,
 			consecutiveEmptySearches: 0,
 			cachedIndexText: null,
+			pipeline: null,
+			worker: null,
 			index: idx,
 		};
 		const tool = captureTool(registerMemoryDecay, state);
@@ -133,9 +135,10 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 		const state: ToolState = {
 			projectId: proj,
 			currentSessionHash: "",
-			lastPromptedBucket: -1,
 			consecutiveEmptySearches: 0,
 			cachedIndexText: null,
+			pipeline: null,
+			worker: null,
 			index: failingIndex,
 		};
 		const tool = captureTool(registerMemoryDecay, state);
@@ -157,9 +160,10 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 		const state: ToolState = {
 			projectId: proj,
 			currentSessionHash: "",
-			lastPromptedBucket: -1,
 			consecutiveEmptySearches: 0,
 			cachedIndexText: null,
+			pipeline: null,
+			worker: null,
 			index: failingIndex,
 		};
 		const tool = captureTool(registerMemoryDecay, state);
@@ -185,9 +189,10 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 		const state: ToolState = {
 			projectId: proj,
 			currentSessionHash: "",
-			lastPromptedBucket: -1,
 			consecutiveEmptySearches: 0,
 			cachedIndexText: null,
+			pipeline: null,
+			worker: null,
 			index: null,
 		};
 		const tool = captureTool(registerMemoryDecay, state);

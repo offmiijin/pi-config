@@ -15,6 +15,8 @@
  * de `partial-json` ausente no ambiente de teste; e pi-coding-agent, usado só
  * por getAgentDir (constants.ts). module.registerHooks redireciona ambos para
  * módulos mínimos (getAgentDir espelha o comportamento real do env).
+ *
+ * Só executa sob Node (registerHooks é API Node 22+; Bun não suporta).
  */
 
 import { after as afterAll, before as beforeAll, describe, it } from "node:test";
@@ -22,46 +24,52 @@ import { expect } from "./expect-shim.ts";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { registerHooks } from "node:module";
 
-// ── Stubs (precisam ser registrados antes de qualquer import da extensão) ──
+const isNode = typeof ((globalThis as Record<string, unknown>).Bun) === "undefined";
 
-const dataUrl = (body: string) => "data:text/javascript," + encodeURIComponent(body);
+// registerHooks só existe em Node 22+ — skip em Bun (import condicional
+// no top-level via top-level await). Em Bun os stubs são desnecessários
+// porque o runtime resolve os imports reais.
+if (isNode) {
+	const { registerHooks } = await import("node:module");
 
-registerHooks({
-	resolve(specifier, _context, nextResolve) {
-		if (specifier === "@earendil-works/pi-ai") {
-			return {
-				url: dataUrl(`export const uuidv7 = () => "00000000-0000-0000-0000-000000000000";`),
-				shortCircuit: true,
-			};
-		}
-		if (specifier === "@earendil-works/pi-ai/compat") {
-			return {
-				url: dataUrl(
-					`export const complete = async () => ({ content: [{ type: "text", text: "" }] });`,
-				),
-				shortCircuit: true,
-			};
-		}
-		if (specifier === "@earendil-works/pi-coding-agent") {
-			return {
-				url: dataUrl(
-					`import { homedir } from "node:os";
-					import { join } from "node:path";
-					export const CONFIG_DIR_NAME = ".pi";
-					export function getAgentDir() {
-						const envDir = process.env.PI_CODING_AGENT_DIR;
-						return envDir || join(homedir(), CONFIG_DIR_NAME, "agent");
-					}
-					export const ExtensionAPI = {};`,
-				),
-				shortCircuit: true,
-			};
-		}
-		return nextResolve(specifier, _context);
-	},
-});
+	const dataUrl = (body: string) => "data:text/javascript," + encodeURIComponent(body);
+
+	registerHooks({
+		resolve(specifier, _context, nextResolve) {
+			if (specifier === "@earendil-works/pi-ai") {
+				return {
+					url: dataUrl(`export const uuidv7 = () => "00000000-0000-0000-0000-000000000000";`),
+					shortCircuit: true,
+				};
+			}
+			if (specifier === "@earendil-works/pi-ai/compat") {
+				return {
+					url: dataUrl(
+						`export const complete = async () => ({ content: [{ type: "text", text: "" }] });`,
+					),
+					shortCircuit: true,
+				};
+			}
+			if (specifier === "@earendil-works/pi-coding-agent") {
+				return {
+					url: dataUrl(
+						`import { homedir } from "node:os";
+						import { join } from "node:path";
+						export const CONFIG_DIR_NAME = ".pi";
+						export function getAgentDir() {
+							const envDir = process.env.PI_CODING_AGENT_DIR;
+							return envDir || join(homedir(), CONFIG_DIR_NAME, "agent");
+						}
+						export const ExtensionAPI = {};`,
+					),
+					shortCircuit: true,
+				};
+			}
+			return nextResolve(specifier, _context);
+		},
+	});
+}
 
 interface MockPi {
 	pi: {
@@ -108,8 +116,8 @@ function makeMemory(abs: string, fm: string, body: string): void {
 }
 
 let agentDir: string;
-let cwdA: string;
-let cwdB: string;
+let cwdA!: string;
+let cwdB!: string;
 let projA: string;
 let projB: string;
 let mock: MockPi;
@@ -157,13 +165,12 @@ const ctxA = { cwd: cwdA, sessionManager: { getSessionFile: () => null } };
 const ctxB = { cwd: cwdB, sessionManager: { getSessionFile: () => null } };
 
 // Os testes abaixo são ORDENADOS (estado da extensão é compartilhado entre eles).
-
-describe("index.ts lifecycle", () => {
-	it("registra os 6 handlers e as 5 tools", () => {
+// Só executa em Node (registerHooks é Node 22+; Bun não suporta).
+if (isNode) describe("index.ts lifecycle", () => {
+	it("registra os 5 handlers e as 5 tools", () => {
 		for (const ev of [
 			"session_start",
 			"session_tree",
-			"turn_end",
 			"before_agent_start",
 			"agent_settled",
 			"session_shutdown",
