@@ -2,11 +2,12 @@
  * Hooks — Extensões de segurança e comportamento para o agente.
  *
  * Carrega todos os hooks que monitoram e/ou bloqueiam operações
- * perigosas em tool calls (bash, write, edit, read).
+ * perigosas em tool calls (bash).
  *
  * Hooks carregados:
  *   - block-force-push.ts → bloqueia git push --force para main/master
- *   - security-guard.ts   → bloqueia comandos destrutivos e acesso a paths sensíveis
+ *   - security-guard.ts   → bloqueia o que o dev-sandbox não cobre
+ *     (fork bomb, download+pipe a bash, eval dinâmico)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

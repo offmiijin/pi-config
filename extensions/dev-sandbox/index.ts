@@ -8,9 +8,10 @@
  *   - HOME isolado (sem acesso ao home real)
  *   - SSH via ssh-agent socket (chaves privadas nunca entram)
  *
- * Complementa security-guard.ts:
- *   - security-guard = soft boundary (pattern matching, confirmação)
- *   - dev-sandbox    = hard boundary (kernel namespaces)
+ * Complementa hooks/security-guard.ts:
+ *   - dev-sandbox    = hard boundary (kernel namespaces, capabilities, seccomp)
+ *   - security-guard = soft boundary MÍNIMO — só o que o sandbox não isola
+ *     (fork bomb, download+pipe a bash, eval dinâmico)
  *
  * Política (fail-closed):
  *   - Se o sandbox não puder ser ativado (bwrap ausente, erro de
