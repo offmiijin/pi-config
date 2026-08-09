@@ -93,11 +93,10 @@ export const DecaySchema = Type.Object({
 	),
 });
 
-export const ExtractSchema = Type.Object({
-	session_file: Type.Optional(
-		Type.String({ description: "Session file path (default: current session)" }),
-	),
-});
+// memory_extract não recebe parâmetros: a sessão atual é resolvida pelo
+// próprio pipeline (sessionManager.getSessionFile no agent_settled) — o
+// antigo parâmetro session_file era aceito e ignorado.
+export const ExtractSchema = Type.Object({});
 
 /* ------------------------------------------------------------------ */
 /* Extração (Fase 3) — schema da resposta do modelo                    */

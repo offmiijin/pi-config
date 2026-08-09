@@ -151,9 +151,8 @@ describe("memory_extract schema", () => {
 		expect(schemaIsObject(ExtractSchema)).toBeTrue();
 	});
 
-	it("has optional session_file", () => {
-		expect(schemaHasProperty(ExtractSchema, "session_file")).toBeTrue();
-		expect(propIsOptional(ExtractSchema, "session_file")).toBeTrue();
+	it("não tem session_file (parâmetro órfão removido)", () => {
+		expect(schemaHasProperty(ExtractSchema, "session_file")).toBeFalse();
 	});
 });
 
