@@ -650,3 +650,31 @@ export function normalizeEpisode(
 	);
 	return { episodeId: episode.id, status, inserted: extracted.length };
 }
+
+/**
+ * Retry automático de episódios 'pending' de um projeto (Bloqueador 1).
+ *
+ * Episódios pendem quando o session JSONL ainda não estava persistido no
+ * disco no momento do agent_settled. Esta função re-tenta a normalização de
+ * todos os pendings — quando o arquivo já existe, eles transitam para
+ * normalized/ignored; caso contrário permanecem pending (próximo retry).
+ * Idempotente: episódios já em outro status não são tocados.
+ */
+export function normalizePendingEpisodes(
+	pipeline: PipelineDB,
+	projectId: string,
+): { normalized: number; stillPending: number } {
+	let normalized = 0;
+	let stillPending = 0;
+	for (const ep of pipeline.listEpisodesByStatus(projectId, EPISODE_STATUS.PENDING)) {
+		const full = pipeline.getEpisode(ep.id);
+		if (!full) continue;
+		const r = normalizeEpisode(pipeline, full);
+		if (r.status === EPISODE_STATUS.NORMALIZED || r.status === EPISODE_STATUS.IGNORED) {
+			normalized++;
+		} else {
+			stillPending++;
+		}
+	}
+	return { normalized, stillPending };
+}

@@ -55,7 +55,7 @@ import {
 	buildEpisodeFingerprint,
 	estimateEpisodeTokens,
 } from "./pipeline.ts";
-import { normalizeEpisode } from "./evidence.ts";
+import { normalizePendingEpisodes } from "./evidence.ts";
 import { generateSessionHash, hashSessionFile } from "./session.ts";
 import { PipelineWorker, maybeCreateJob } from "./worker.ts";
 import {
@@ -254,6 +254,11 @@ export default function (pi: ExtensionAPI) {
 		// não derruba a sessão.
 		try {
 			if (pipeline) {
+				// Retry automático de episódios 'pending' (Bloqueador 1): o JSONL
+				// pode não estar persistido quando agent_settled disparou. Neste
+				// ponto a sessão já foi carregada — os pendings de sessões
+				// anteriores transitam para normalized/ignored.
+				normalizePendingEpisodes(pipeline, state.projectId);
 				pipeline.recoverStuckJobs();
 				worker = new PipelineWorker(pipeline, {
 					processor: createExtractionProcessor({
@@ -266,6 +271,10 @@ export default function (pi: ExtensionAPI) {
 				});
 				worker.setProject(state.projectId);
 				worker.start();
+				// Reavalia os gatilhos com o backlog normalizado — sessões
+				// anteriores podem ter acumulado tokens/episódios suficientes.
+				const trigger = maybeCreateJob(pipeline, state.projectId);
+				if (trigger.jobId) worker.wake();
 			}
 		} catch (err) {
 			worker = null;
@@ -369,13 +378,12 @@ export default function (pi: ExtensionAPI) {
 				tokenEstimate: estimateEpisodeTokens(range),
 			});
 
-			// Normaliza o episódio recém-capturado (determinístico, sem LLM —
-			// só leitura do JSONL + classificação). Se a sessão ainda não foi
-			// persistida no disco, normalizeEpisode mantém pending (retry).
-			const captured = pipeline.getEpisode(episodeId);
-			if (captured) {
-				normalizeEpisode(pipeline, captured);
-			}
+			// Retry automático (Bloqueador 1): pendings de turns anteriores da
+			// MESMA sessão (JSONL ainda não persistido no settle anterior) + o
+			// episódio recém-inserido transitam para normalized/ignored quando
+			// o arquivo já está no disco. Determinístico e sem LLM — falha
+			// mantém pending para o próximo settle/session_start.
+			normalizePendingEpisodes(pipeline, state.projectId);
 
 			// Gatilho de job (tokens/episódios/sinal forte) + acorda o worker.
 			// Assíncrono — o turno não espera o processamento.

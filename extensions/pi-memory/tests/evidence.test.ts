@@ -22,6 +22,7 @@ import {
 	extractEpisodeEvidence,
 	extractText,
 	normalizeEpisode,
+	normalizePendingEpisodes,
 	readSessionEntries,
 	sanitizeEvidenceText,
 	truncateText,
@@ -385,6 +386,38 @@ describe("normalizeEpisode → PipelineDB", () => {
 		expect(result.status).toBe("ignored");
 		expect(p.getEpisode(episodeId)!.status).toBe("ignored");
 		expect(p.countEvidence(episodeId)).toBe(0);
+		p.close();
+	});
+
+	it("normalizePendingEpisodes: retry automático — normalizável transita, sem arquivo permanece pending", () => {
+		const p = new PipelineDB(dbPath);
+		p.open();
+		// Projeto isolado — não depende de pendings de outros testes.
+		const proj = "proj-pending-retry";
+		const ok = p.insertEpisode(
+			makeEpisode({ projectId: proj, fingerprint: "fp-batch-ok" }),
+		);
+		const missing = p.insertEpisode(
+			makeEpisode({
+				projectId: proj,
+				sessionFile: join(tmpDir, "missing-batch.jsonl"),
+				fingerprint: "fp-batch-missing",
+			}),
+		);
+		// Sem retry ainda: ambos pending
+		expect(p.getEpisode(ok)!.status).toBe("pending");
+		expect(p.getEpisode(missing)!.status).toBe("pending");
+
+		const result = normalizePendingEpisodes(p, proj);
+		expect(result.normalized).toBe(1);
+		expect(result.stillPending).toBe(1);
+		expect(p.getEpisode(ok)!.status).toBe("normalized");
+		expect(p.getEpisode(missing)!.status).toBe("pending");
+
+		// Idempotente: segunda passada não re-normaliza nem conta de novo
+		const again = normalizePendingEpisodes(p, proj);
+		expect(again.normalized).toBe(0);
+		expect(again.stillPending).toBe(1);
 		p.close();
 	});
 });

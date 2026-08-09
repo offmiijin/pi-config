@@ -15,7 +15,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { EPISODE_STATUS } from "../pipeline.ts";
 import { maybeCreateJob } from "../worker.ts";
-import { normalizeEpisode } from "../evidence.ts";
+import { normalizePendingEpisodes } from "../evidence.ts";
 import { ExtractSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 
@@ -51,16 +51,10 @@ export function registerMemoryExtract(pi: ExtensionAPI, state: ToolState): void 
 
 			// 1. Fecha episódios pendentes (a sessão pode não ter sido
 			//    persistida quando agent_settled disparou).
-			let closed = 0;
-			for (const ep of state.pipeline.listEpisodesByStatus(
+			const { normalized: closed } = normalizePendingEpisodes(
+				state.pipeline,
 				state.projectId,
-				EPISODE_STATUS.PENDING,
-			)) {
-				const full = state.pipeline.getEpisode(ep.id);
-				if (!full) continue;
-				const r = normalizeEpisode(state.pipeline, full);
-				if (r.status === "normalized" || r.status === "ignored") closed++;
-			}
+			);
 
 			// 2. Job forçado + acorda o worker (assíncrono — não aguardado).
 			const trigger = maybeCreateJob(state.pipeline, state.projectId, { force: true });
