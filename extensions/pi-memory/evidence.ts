@@ -196,7 +196,10 @@ export function sanitizeEvidenceText(text: string): { text: string; redacted: bo
 
 /** True se o texto contém algum padrão de segredo. */
 export function hasSecret(text: string): boolean {
-	return SECRET_PATTERNS.some((re) => re.test(text));
+	// Não reusar SECRET_PATTERNS.some(re => re.test(text)): regex com flag `g`
+	// é stateful (lastIndex avança entre chamadas) — o mesmo segredo alternaria
+	// true/false. Delegar à sanitização (idempotente) evita o bug.
+	return sanitizeEvidenceText(text).redacted;
 }
 
 function budgetChars(tokens: number): number {
@@ -301,50 +304,50 @@ export function classifyToolCall(input: {
 
 	switch (name) {
 		case "edit": {
-			const path = str(args.path);
+			const path = sanitizeEvidenceText(str(args.path)).text;
 			const edits = Array.isArray(args.edits) ? args.edits : [];
 			const first = edits[0] as Record<string, unknown> | undefined;
-			const oldText = first ? snippet(str(first.oldText), 80) : "";
-			const newText = first ? snippet(str(first.newText), 80) : "";
-			const text = [
-				`edit ${path}`,
-				oldText ? `old: ${oldText}` : "",
-				newText ? `new: ${newText}` : "",
-			]
-				.filter(Boolean)
-				.join("\n");
+			const oldText = first ? snippet(sanitizeEvidenceText(str(first.oldText)).text, 80) : "";
+			const newText = first ? snippet(sanitizeEvidenceText(str(first.newText)).text, 80) : "";
+			const { text, redacted } = sanitizeEvidenceText(
+				[`edit ${path}`, oldText ? `old: ${oldText}` : "", newText ? `new: ${newText}` : ""]
+					.filter(Boolean)
+					.join("\n"),
+			);
 			return {
 				kind: "code-change",
 				toolName: "edit",
 				payload: { text, path: path || undefined },
 				isError,
 				priority: 2,
-				redactionFlags: 0,
-				dedupKey: `edit\0${path}`,
+				redactionFlags: redacted ? 1 : 0,
+				dedupKey: `edit\0${str(args.path)}`,
 			};
 		}
 		case "write": {
-			const path = str(args.path);
-			const head = str(args.content).split("\n").slice(0, 10).join("\n");
+			const path = sanitizeEvidenceText(str(args.path)).text;
+			const head = sanitizeEvidenceText(str(args.content)).text.split("\n").slice(0, 10).join("\n");
+			const { text, redacted } = sanitizeEvidenceText(`write ${path}\n${head}`);
 			return {
 				kind: "code-change",
 				toolName: "write",
-				payload: { text: `write ${path}\n${head}`, path: path || undefined },
+				payload: { text, path: path || undefined },
 				isError,
 				priority: 2,
-				redactionFlags: 0,
-				dedupKey: `write\0${path}`,
+				redactionFlags: redacted ? 1 : 0,
+				dedupKey: `write\0${str(args.path)}`,
 			};
 		}
 		case "apply_patch": {
 			const patch = str(args.patch) || str(args.content) || JSON.stringify(args);
+			const { text, redacted } = sanitizeEvidenceText(snippet(patch, 300));
 			return {
 				kind: "code-change",
 				toolName: "apply_patch",
-				payload: { text: snippet(patch, 300) },
+				payload: { text },
 				isError,
 				priority: 2,
-				redactionFlags: 0,
+				redactionFlags: redacted ? 1 : 0,
 			};
 		}
 		case "bash": {
@@ -356,7 +359,9 @@ export function classifyToolCall(input: {
 			return {
 				kind: "command",
 				toolName: "bash",
-				payload: { text, command, exitCode: isError ? 1 : undefined },
+				// O campo `command` cru (com credenciais) NÃO pode ser persistido —
+				// sanitiza separadamente do texto combinado.
+				payload: { text, command: sanitizeEvidenceText(command).text, exitCode: isError ? 1 : undefined },
 				isError,
 				priority: isError ? 2 : 1,
 				redactionFlags: redacted ? 1 : 0,
@@ -372,71 +377,78 @@ export function classifyToolCall(input: {
 			return null;
 		case "web_search": {
 			const titles = snippet(extractTitles(resultText), 500);
-			const text = `query: ${snippet(str(args.query), 200)}\n${titles}`;
+			const { text, redacted } = sanitizeEvidenceText(
+				`query: ${snippet(str(args.query), 200)}\n${titles}`,
+			);
 			return {
 				kind: "research",
 				toolName: "web_search",
 				payload: { text },
 				isError,
 				priority: 1,
-				redactionFlags: 0,
+				redactionFlags: redacted ? 1 : 0,
 			};
 		}
 		case "memory_save": {
-			const text = `type: ${str(args.type)} context: ${str(args.context)} title: ${str(args.title)} summary: ${str(args.summary)}`;
+			const raw = `type: ${str(args.type)} context: ${str(args.context)} title: ${str(args.title)} summary: ${str(args.summary)}`;
+			const { text, redacted } = sanitizeEvidenceText(truncateText(raw, 500));
 			return {
 				kind: "memory-op",
 				toolName: "memory_save",
-				payload: { text: truncateText(text, 500) },
+				payload: { text },
 				isError,
 				priority: 1,
-				redactionFlags: 0,
+				redactionFlags: redacted ? 1 : 0,
 			};
 		}
 		case "memory_search": {
+			const { text, redacted } = sanitizeEvidenceText(`query: ${str(args.query)}`);
 			return {
 				kind: "memory-op",
 				toolName: "memory_search",
-				payload: { text: `query: ${str(args.query)}` },
+				payload: { text },
 				isError,
 				priority: 0,
-				redactionFlags: 0,
+				redactionFlags: redacted ? 1 : 0,
 			};
 		}
 		case "memory_decay": {
-			const text = `context: ${str(args.context)} delta: ${str(args.delta)} reason: ${str(args.reason)}`;
+			const raw = `context: ${str(args.context)} delta: ${str(args.delta)} reason: ${str(args.reason)}`;
+			const { text, redacted } = sanitizeEvidenceText(raw);
 			return {
 				kind: "memory-op",
 				toolName: "memory_decay",
 				payload: { text },
 				isError,
 				priority: 1,
-				redactionFlags: 0,
+				redactionFlags: redacted ? 1 : 0,
 			};
 		}
 		case "memory_extract": {
+			const { text, redacted } = sanitizeEvidenceText(truncateText(resultText, 300));
 			return {
 				kind: "memory-op",
 				toolName: "memory_extract",
-				payload: { text: truncateText(resultText, 300) },
+				payload: { text },
 				isError,
 				priority: 0,
-				redactionFlags: 0,
+				redactionFlags: redacted ? 1 : 0,
 			};
 		}
 		default: {
 			// Tool desconhecida (extensões etc.) — metadados + trecho pequeno.
 			const argsText = truncateText(JSON.stringify(args), 300);
-			const text = isError
+			const raw = isError
 				? `${argsText}\n[error] ${truncateText(resultText, 200)}`
 				: argsText;
+			const { text, redacted } = sanitizeEvidenceText(raw);
 			return {
 				kind: "tool",
 				toolName: name,
 				payload: { text },
 				isError,
 				priority: isError ? 2 : 0,
-				redactionFlags: 0,
+				redactionFlags: redacted ? 1 : 0,
 			};
 		}
 	}

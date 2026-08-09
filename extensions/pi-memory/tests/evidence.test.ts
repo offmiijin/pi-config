@@ -21,6 +21,7 @@ import {
 	classifyToolCall,
 	extractEpisodeEvidence,
 	extractText,
+	hasSecret,
 	normalizeEpisode,
 	normalizePendingEpisodes,
 	readSessionEntries,
@@ -141,6 +142,18 @@ describe("buildBranch", () => {
 		];
 		const branch = buildBranch(entries, "b");
 		expect(branch.length).toBe(2);
+	});
+});
+
+describe("hasSecret (determinístico)", () => {
+	it("detecta segredo consistentemente em chamadas repetidas", () => {
+		const s = "api_key=abcdefghijk";
+		// Bug antigo: regex com flag g alternava true/false (lastIndex).
+		expect([hasSecret(s), hasSecret(s), hasSecret(s), hasSecret(s)]).toEqual([true, true, true, true]);
+	});
+
+	it("retorna false para texto comum", () => {
+		expect(hasSecret("o código quebrava com undefined")).toBeFalse();
 	});
 });
 
