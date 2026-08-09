@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { MEMORIES_ROOT, MEMORY_TYPES } from "./constants.ts";
+import { MEMORIES_ROOT, MEMORY_TYPES, type MemoryType } from "./constants.ts";
 import { ensureFileDir } from "./session.ts";
 
 /**

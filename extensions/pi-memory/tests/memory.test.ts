@@ -38,6 +38,7 @@ import {
 	migrateLegacyMemories,
 	migrateMemoryToSnapshot,
 	moveToSupersedes,
+	type MemoryIndexEntry,
 	parseFrontmatter,
 	recalcOverallConfidence,
 	sanitizeFilename,

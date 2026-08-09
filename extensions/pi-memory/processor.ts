@@ -122,7 +122,7 @@ function toEvidenceBlock(ev: EvidenceRecord): EvidenceBlock {
 		id: ev.id,
 		episodeId: ev.episodeId,
 		kind: ev.kind,
-		toolName: ev.toolName,
+		toolName: ev.toolName ?? null,
 		text,
 	};
 }
@@ -185,7 +185,11 @@ export function toNewCandidate(jobId: string, c: {
  */
 export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobProcessor {
 	const findExistingMemory = deps.findExistingMemory ?? (async () => null);
-	const commitMemory = deps.commitMemory ?? (async () => ({ ok: true }));
+	// Tipagem explícita do default: `{ ok: true }` só criaria união com o tipo
+	// da interface e `.error` deixaria de existir no branch default.
+	const commitMemory: NonNullable<ExtractionProcessorDeps["commitMemory"]> =
+		deps.commitMemory ??
+		(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }));
 
 	return async (pipeline, job, selection, signal): Promise<JobExecutionResult> => {
 		const model = await deps.getModel();

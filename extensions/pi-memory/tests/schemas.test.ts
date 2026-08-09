@@ -47,7 +47,7 @@ function schemaHasProperty(schema: object, prop: string): boolean {
 describe("memory_status schema", () => {
 	it("is an object schema with no properties", () => {
 		expect(schemaIsObject(StatusSchema)).toBeTrue();
-		const props = (StatusSchema as Record<string, unknown>).properties as Record<string, unknown>;
+		const props = (StatusSchema as unknown as Record<string, unknown>).properties as Record<string, unknown>;
 		expect(Object.keys(props)).toHaveLength(0);
 	});
 });
@@ -73,7 +73,7 @@ describe("memory_save schema", () => {
 
 	it("has optional mode field (append|consolidate)", () => {
 		expect(propIsOptional(SaveSchema, "mode")).toBeTrue();
-		const s = SaveSchema as Record<string, unknown>;
+		const s = SaveSchema as unknown as Record<string, unknown>;
 		const props = s.properties as Record<string, unknown>;
 		const mode = props.mode as Record<string, unknown>;
 		const variants = (mode.anyOf ?? mode.oneOf ?? []) as Array<Record<string, unknown>>;
@@ -84,7 +84,7 @@ describe("memory_save schema", () => {
 
 	it("type field is a union of literal strings", () => {
 		expect(schemaHasProperty(SaveSchema, "type")).toBeTrue();
-		const s = SaveSchema as Record<string, unknown>;
+		const s = SaveSchema as unknown as Record<string, unknown>;
 		const props = s.properties as Record<string, unknown>;
 		const typeProp = props.type as Record<string, unknown>;
 		// StringEnum cria uma união (anyOf) de literais
@@ -114,7 +114,7 @@ describe("memory_search schema", () => {
 
 	it("query is an array of strings", () => {
 		expect(propHasType(SearchSchema, "query", "array")).toBeTrue();
-		const s = SearchSchema as Record<string, unknown>;
+		const s = SearchSchema as unknown as Record<string, unknown>;
 		const props = s.properties as Record<string, unknown>;
 		const q = props.query as Record<string, unknown>;
 		const items = q.items as Record<string, unknown>;
@@ -139,7 +139,7 @@ describe("memory_decay schema", () => {
 
 	it("delta is number type", () => {
 		// Number no typebox pode ser "number" ou "integer" no JSON Schema
-		const s = DecaySchema as Record<string, unknown>;
+		const s = DecaySchema as unknown as Record<string, unknown>;
 		const props = s.properties as Record<string, unknown>;
 		const delta = props.delta as Record<string, unknown>;
 		expect(["number", "integer"]).toContain(delta.type);
@@ -159,12 +159,12 @@ describe("memory_extract schema", () => {
 
 describe("MemoryTypeEnum values", () => {
 	it("is a union of literal strings", () => {
-		const e = MemoryTypeEnum as Record<string, unknown>;
+		const e = MemoryTypeEnum as unknown as Record<string, unknown>;
 		expect(e.anyOf ?? e.oneOf ?? e.enum).toBeDefined();
 	});
 
 	it("contains all 5 memory types", () => {
-		const e = MemoryTypeEnum as Record<string, unknown>;
+		const e = MemoryTypeEnum as unknown as Record<string, unknown>;
 		const variants = (e.anyOf ?? e.oneOf ?? []) as Array<Record<string, unknown>>;
 		if (variants.length > 0) {
 			// União de literais: cada um é { type: "string", const: "..." }
@@ -181,7 +181,7 @@ describe("MemoryTypeEnum values", () => {
 describe("ScopeEnum values", () => {
 	it("contains global and project", async () => {
 		const { ScopeEnum } = await import("../schemas.ts");
-		const s = ScopeEnum as Record<string, unknown>;
+		const s = ScopeEnum as unknown as Record<string, unknown>;
 		const variants = (s.anyOf ?? s.oneOf ?? []) as Array<Record<string, unknown>>;
 		const values = variants.map((v) => v.const);
 		expect(values).toContain("global");

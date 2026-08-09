@@ -45,9 +45,10 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 		return {
 			projectId: proj,
 			currentSessionHash: "",
-			lastPromptedBucket: -1,
 			consecutiveEmptySearches: 0,
 			cachedIndexText: null,
+			pipeline: null,
+			worker: null,
 			index: idx,
 		};
 	}

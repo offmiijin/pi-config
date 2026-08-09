@@ -120,7 +120,7 @@ describe("memory_status (Fase 6)", () => {
 		const tool = captureTool(state);
 		const res = await tool.execute("s1", {}, undefined, undefined, {});
 
-		const details = res.details!;
+		const details = res.details as Record<string, any>;
 		expect(details.episodes.total).toBe(3);
 		expect(details.episodes.pending).toBe(1);
 		expect(details.episodes.normalized).toBe(1);

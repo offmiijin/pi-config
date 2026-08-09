@@ -116,8 +116,8 @@ function makeMemory(abs: string, fm: string, body: string): void {
 }
 
 let agentDir: string;
-let cwdA: string;
-let cwdB: string;
+let cwdA!: string;
+let cwdB!: string;
 let projA: string;
 let projB: string;
 let mock: MockPi;

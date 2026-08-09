@@ -23,6 +23,7 @@ import {
 	EPISODE_STATUS,
 	JOB_STATUS,
 	type EpisodeRecord,
+	type EpisodeStatus,
 	type JobRecord,
 	type PipelineDB,
 } from "./pipeline.ts";

@@ -217,12 +217,14 @@ describe("createExtractionProcessor", () => {
 		makeEpisodeWithEvidence(proj);
 		const jobId = pipeline.createJob(proj, "tokens");
 
-		let captured: CompletionOptions | null = null;
+		// Array em vez de `let x = null` capturado por closure — TS 5.9 com
+		// strictNullChecks estreita a variável capturada para never.
+		const captured: CompletionOptions[] = [];
 		const model: ExtractionModelRef = {
 			provider: "fake",
 			id: "fake",
 			complete: async (_msgs, opts) => {
-				captured = opts;
+				captured.push(opts);
 				return { content: [{ type: "text", text: JSON.stringify({ memories: [] }) }] };
 			},
 		};
@@ -234,9 +236,9 @@ describe("createExtractionProcessor", () => {
 		const selection = selectEpisodesForJob(pipeline, proj, { includeClaimed: true });
 		await processor(pipeline, job, selection);
 
-		expect(captured?.reasoningEffort).toBe("medium");
-		expect(captured?.cacheRetention).toBe("default");
-		expect(captured?.sessionId.length).toBeGreaterThan(0);
+		expect(captured[0]?.reasoningEffort).toBe("medium");
+		expect(captured[0]?.cacheRetention).toBe("default");
+		expect(captured[0]?.sessionId.length).toBeGreaterThan(0);
 	});
 });
 

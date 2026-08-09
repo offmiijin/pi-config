@@ -13,16 +13,17 @@ function StringEnum<T extends readonly string[]>(values: T) {
 }
 
 export const MemoryTypeEnum = StringEnum(["_rules", "decisions", "gotchas", "lessons", "patterns"] as const);
-export type MemoryType = (typeof MemoryTypeEnum.static)[number];
+/** Tipos derivados manualmente — TypeBox não expõe `.static` em runtime. */
+export type MemoryType = "_rules" | "decisions" | "gotchas" | "lessons" | "patterns";
 
 export const ScopeEnum = StringEnum(["global", "project"] as const);
-export type Scope = (typeof ScopeEnum.static)[number];
+export type Scope = "global" | "project";
 
 export const SearchScopeEnum = StringEnum(["global", "project", "all"] as const);
-export type SearchScope = (typeof SearchScopeEnum.static)[number];
+export type SearchScope = "global" | "project" | "all";
 
 export const SaveModeEnum = StringEnum(["append", "consolidate"] as const);
-export type SaveMode = (typeof SaveModeEnum.static)[number];
+export type SaveMode = "append" | "consolidate";
 
 export const SaveSchema = Type.Object({
 	type: MemoryTypeEnum,
@@ -133,5 +134,18 @@ export const ExtractionResponseSchema = Type.Object({
 	memories: Type.Array(ExtractionCandidateSchema),
 });
 
-export type ExtractionCandidate = (typeof ExtractionCandidateSchema)["static"];
-export type ExtractionResponse = (typeof ExtractionResponseSchema)["static"];
+export type ExtractionCandidate = {
+	action: "create" | "update" | "supersede" | "ignore";
+	context: string;
+	type?: "_rules" | "decisions" | "gotchas" | "lessons" | "patterns";
+	scope?: "global" | "project";
+	title?: string;
+	summary?: string;
+	content?: string;
+	confidence?: number;
+	evidence_ids?: string[];
+	supersedes?: string | null;
+	reason?: string;
+};
+
+export type ExtractionResponse = { memories: ExtractionCandidate[] };
