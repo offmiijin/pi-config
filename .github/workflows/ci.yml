@@ -1,0 +1,112 @@
+# CI — portabilidade das extensões do pi
+#
+# Jobs:
+#   1. unit-tests     — todas as suítes (vitest + node) + typecheck + doctor smoke
+#   2. install-clean  — instalação limpa via install.sh (deps, landlock, pi)
+#   3. distro-matrix  — install.sh dentro de Ubuntu/Fedora/Arch (pm nativo),
+#                       cobrindo os mapeamentos de pacote por distro
+
+name: CI
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: Testes unitários (Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Instala dependências (npm ci)
+        run: npm ci --no-audit --no-fund
+      - name: Instala bubblewrap/ripgrep (p/ teste memory + doctor smoke)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
+      - name: dev-sandbox (vitest)
+        run: npm run test:sandbox
+      - name: pi-github (vitest)
+        run: npm run test:github
+      - name: pi-web-search (vitest)
+        run: npm run test:websearch
+      - name: pi-memory (node --test)
+        run: npm run test:memory
+      - name: doctor (vitest)
+        run: npm run test:doctor
+      - name: Typecheck dev-sandbox
+        run: npm run typecheck
+      - name: Doctor smoke — ambiente completo sem pendências
+        run: npm run doctor:check
+
+  install-clean:
+    name: Instalação limpa (install.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Rust estável (p/ landlock-exec)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Roda install.sh --yes (bubblewrap, rg, git, npm ci, landlock)
+        run: ./install.sh --yes
+      - name: Verifica artefatos gerados
+        run: |
+          test -d node_modules/@earendil-works/pi-coding-agent
+          test -d node_modules/typebox
+          test -x extensions/dev-sandbox/landlock-exec-x86_64
+          test -s extensions/dev-sandbox/seccomp.bpf
+          echo "artefatos OK"
+      - name: Doctor smoke — sem pendências
+        run: npm run doctor:check
+      - name: Instala pi (mise) e valida binário
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+      - name: pi --version
+        run: mise install pi@0.84.0 && mise exec pi@0.84.0 -- pi --version
+
+  distro-matrix:
+    name: Portabilidade (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04
+            image: ubuntu:24.04
+            update: apt-get update && apt-get install -y curl
+            node_setup: curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs
+          - name: Fedora 41
+            image: fedora:41
+            update: dnf makecache
+            node_setup: 'true'
+          - name: Arch Linux
+            image: archlinux:latest
+            update: pacman -Sy --noconfirm
+            node_setup: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh --yes no container (${{ matrix.name }} — pm nativo)
+        run: |
+          set -e
+          rm -rf /tmp/ci-copy && cp -r . /tmp/ci-copy
+          docker run --rm -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
+            bash -c '${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
+              test -d node_modules/@earendil-works/pi-coding-agent && \
+              test -d node_modules/typebox && \
+              test -s extensions/dev-sandbox/seccomp.bpf && \
+              echo "OK: ${{ matrix.name }} — deps instaladas via pm nativo"'

@@ -21,6 +21,33 @@ export interface SandboxFilesystemConfig {
    * Ignora .git, node_modules durante scan.
    */
   denyFilePatterns: string[];
+  /**
+   * Diretórios de cache persistentes dentro do sandbox.
+   * Valor vazio "" = padrão: <workspace>/.sandbox-cache/<nome>.
+   * Caminho relativo é resolvido contra o workspace.
+   * Caminho absoluto fora do workspace: bind-montado read-write se
+   * existir no host; caso contrário usa --dir (efêmero no comando).
+   */
+  cacheDirs: SandboxCacheDirsConfig;
+  /**
+   * Diretórios de quarentena (fetch/runs) — criados com 0o700.
+   * Valor vazio "" = padrão: <workspace>/.sandbox-cache/<nome>.
+   * Caminho relativo é resolvido contra o workspace.
+   */
+  quarantineDirs: SandboxQuarantineDirsConfig;
+}
+
+/** Diretórios de cache persistentes (npm, pip, clones de repositórios). */
+export interface SandboxCacheDirsConfig {
+  /** Cache do npm (env NPM_CONFIG_CACHE). Vazio = .sandbox-cache/npm. */
+  npm: string;
+  /** Cache do pip (env PIP_CACHE_DIR). Vazio = .sandbox-cache/pip. */
+  pip: string;
+  /**
+   * Diretório para clonar repositórios remotos (env SANDBOX_CLONE_DIR).
+   * Persiste entre comandos — /tmp NÃO persiste. Vazio = .sandbox-cache/clones.
+   */
+  clones: string;
 }
 
 export interface SandboxInternetConfig {
@@ -45,6 +72,50 @@ export interface SandboxSshConfig {
   mode: SshMode;
 }
 
+// ── Perfis de isolamento ──────────────────────────────────────
+
+/** Nome de um perfil de isolamento do sandbox. */
+export type SandboxProfileName = "normal" | "fetch" | "quarantine";
+
+/** Modo de acesso do perfil ao workspace do projeto. */
+export type SandboxWorkspaceMode = "rw" | "ro" | "none";
+
+/** Perfis reconhecidos — ordem fixa (usada na sanitização). */
+export const PROFILE_NAMES: SandboxProfileName[] = ["normal", "fetch", "quarantine"];
+
+/**
+ * Configuração de um perfil de isolamento.
+ *
+ * - "normal": comportamento atual — workspace rw, rede do host,
+ *   SSH conforme config.ssh. `workspace` é declarativo (sempre rw).
+ * - "fetch": baixa dados com rede, SEM acesso ao workspace
+ *   (escrita só em .sandbox-cache/fetch). `workspace` é SEMPRE "none"
+ *   (invariante de quarentena — sanitização força o valor).
+ * - "quarantine": executa código externo SEM rede e SEM acesso ao
+ *   workspace (escrita só em .sandbox-cache/runs).
+ */
+export interface SandboxProfileConfig {
+  /** Habilita/desabilita o perfil — tools recusam uso se desabilitado. */
+  enabled: boolean;
+  /** Acesso ao workspace: "rw" | "ro" | "none". */
+  workspace: SandboxWorkspaceMode;
+  /** true → compartilha rede do host; false → sem rede. */
+  network: boolean;
+  /** Modo SSH dentro do perfil. */
+  ssh: SshMode;
+}
+
+/** Mapa de perfis configurados. */
+export type SandboxProfilesConfig = Record<SandboxProfileName, SandboxProfileConfig>;
+
+/** Diretórios de quarentena (fetch/runs). */
+export interface SandboxQuarantineDirsConfig {
+  /** Downloads do perfil fetch. Vazio = <workspace>/.sandbox-cache/fetch. */
+  fetch: string;
+  /** Execução do perfil quarantine. Vazio = <workspace>/.sandbox-cache/runs. */
+  runs: string;
+}
+
 export interface SandboxCapabilitiesConfig {
   /**
    * Linux capabilities removidas do sandbox.
@@ -67,6 +138,21 @@ export interface SandboxSeccompConfig {
   bpfPath: string;
 }
 
+export interface SandboxLandlockConfig {
+  /** Habilita/desabilita o Landlock (filesystem only). */
+  enabled: boolean;
+  /**
+   * Se true, falha na ativação do Landlock bloqueia a execução.
+   * Se false, opera em modo degradado com warning.
+   */
+  required: boolean;
+  /**
+   * ABI mínima exigida (1-5).
+   * ABI 3 (Linux 6.2) recomendada — inclui suporte a TRUNCATE.
+   */
+  minAbi: number;
+}
+
 export interface SandboxConfig {
   /** Habilita/desabilita todo o sandbox. */
   enabled: boolean;
@@ -80,6 +166,10 @@ export interface SandboxConfig {
   capabilities: SandboxCapabilitiesConfig;
   /** Configuração do filtro seccomp. */
   seccomp: SandboxSeccompConfig;
+  /** Configuração do Landlock (filesystem allowlist). */
+  landlock: SandboxLandlockConfig;
+  /** Perfis de isolamento (normal, fetch, quarantine). */
+  profiles: SandboxProfilesConfig;
 }
 
 /** Opções para uma chamada bwrap. */
@@ -98,7 +188,9 @@ export interface BwrapCall {
 
 /** Resultado de uma execução bwrap. */
 export interface BwrapResult {
-  stdout: string;
+  /** Stdout como bytes brutos (preserva binário — ex: imagens). */
+  stdout: Buffer;
+  /** Stderr como texto (diagnóstico). */
   stderr: string;
   exitCode: number | null;
   timedOut: boolean;
@@ -116,6 +208,8 @@ export const DEFAULT_CONFIG: SandboxConfig = {
     extraReadonly: [],
     denyPaths: ["/sbin", "/usr/sbin", "/root"],
     denyFilePatterns: [".env", "*.pem", "*.key"],
+    cacheDirs: { npm: "", pip: "", clones: "" },
+    quarantineDirs: { fetch: "", runs: "" },
   },
   ssh: {
     mode: "agent",
@@ -151,5 +245,15 @@ export const DEFAULT_CONFIG: SandboxConfig = {
     enabled: true,
     // Resolvido em runtime para <extension-dir>/seccomp.bpf
     bpfPath: "",
+  },
+  landlock: {
+    enabled: true,
+    required: true,
+    minAbi: 3,
+  },
+  profiles: {
+    normal: { enabled: true, workspace: "rw", network: true, ssh: "agent" },
+    fetch: { enabled: true, workspace: "none", network: true, ssh: "none" },
+    quarantine: { enabled: true, workspace: "none", network: false, ssh: "none" },
   },
 };

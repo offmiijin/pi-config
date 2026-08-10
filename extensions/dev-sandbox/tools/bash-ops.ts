@@ -9,7 +9,43 @@ import { spawn } from "node:child_process";
 import { existsSync, openSync, closeSync } from "node:fs";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
-import { buildBwrapArgs, killGroup } from "../bwrap-executor";
+import { buildBwrapArgs, killGroup, wrapWithLandlock } from "../bwrap-executor";
+
+// ─── Bloqueio de instalação/execução externa ────────────────────
+
+/**
+ * Mensagem exibida quando um comando de instalação é bloqueado no bash.
+ */
+const BLOCKED_INSTALL_MSG =
+  "[dev-sandbox] Instalação/execução de código externo bloqueada no bash. " +
+  "Use as tools de quarentena (sandbox_fetch + sandbox_quarantine_exec) para " +
+  "baixar e executar pacotes sem expor o workspace.";
+
+/**
+ * Comandos que instalam ou executam código externo DENTRO do workspace.
+ * `npm install` roda lifecycle scripts; `pip install` roda backend PEP 517;
+ * `curl | bash` executa script arbitrário. Todos devem rodar nos perfis
+ * fetch/quarantine, nunca no bash normal (workspace montado read-write).
+ */
+const BLOCKED_INSTALL_PATTERNS: RegExp[] = [
+  // Gerenciadores de pacote — instalação
+  /\bnpm\s+(install|i|ci|add)\b/,
+  /\byarn\s+(add|install)\b/,
+  /\bpnpm\s+(add|install)\b/,
+  /\bpip[0-9]*\s+install\b/,
+  /\bpython[0-9.]*\s+-m\s+pip\s+install\b/,
+  // Download + pipe direto para shell
+  /\bcurl\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/,
+  /\bwget\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/,
+  // Bash/sh/source de subshell com download
+  /\b(ba)?sh\s+<\(\s*(curl|wget)\b/,
+  /(?<![\w.])(source|\.)\s+<\(\s*(curl|wget)\b/,
+];
+
+/** Detecta comando de instalação/execução externa bloqueado. Exportado para testes. */
+export function isBlockedInstall(command: string): boolean {
+  return BLOCKED_INSTALL_PATTERNS.some((re) => re.test(command));
+}
 
 /**
  * Abre o arquivo BPF se seccomp estiver habilitado.
@@ -22,7 +58,8 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
   }
   try {
     return openSync(cfg.bpfPath, "r");
-  } catch {
+  } catch (err) {
+    console.warn("[dev-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
     return undefined;
   }
 }
@@ -30,7 +67,18 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
 export function createBashOps(config: SandboxConfig, cwd: string): BashOperations {
   return {
     async exec(command, cmdCwd, { onData, signal, timeout, env }) {
-      const args = buildBwrapArgs(config, cwd);
+      // Sinal já abortado antes do spawn → nem cria o processo
+      if (signal?.aborted) {
+        throw new Error("aborted");
+      }
+
+      // Instalação/execução de código externo é redirecionada para os
+      // perfis de quarentena — nunca roda no bash com workspace rw.
+      if (isBlockedInstall(command)) {
+        throw new Error(BLOCKED_INSTALL_MSG);
+      }
+
+      let args = buildBwrapArgs(config, cwd);
 
       // ── Seccomp BPF ────────────────────────
       const bpfFd = openSeccompFd(config);
@@ -47,8 +95,9 @@ export function createBashOps(config: SandboxConfig, cwd: string): BashOperation
         }
       }
 
-      // Comando — usa bash -lc para carregar profile e ter job control
-      args.push("bash", "-lc", command);
+      // ── Landlock + comando ────────────────
+      // bash -lc carrega profile e tem job control
+      args = wrapWithLandlock(args, ["bash", "-lc", command], config, cwd);
 
       return new Promise((resolve, reject) => {
         // stdio: stdin, stdout, stderr + opcionalmente FD 3 (BPF)

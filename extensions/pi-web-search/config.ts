@@ -108,8 +108,19 @@ export function getConfiguredProviders(): string[] {
 	if (getSerperKey()) providers.push("serper.dev");
 	if (getExaKey()) providers.push("exa");
 	if (getTavilyKey()) providers.push("tavily");
-	if (getSearxngKey()) providers.push("searxng");
+	// SearXNG local não precisa de chave — URL configurada já conta
+	if (getSearxngKey() || getSearxngUrl()) providers.push("searxng");
 	return providers;
+}
+
+/** URL efetiva do SearXNG (configurada ou default localhost:4000). */
+export function getSearxngTargetUrl(): string {
+	return (getSearxngUrl() || "http://localhost:4000").replace(/\/+$/, "");
+}
+
+/** Socket do Docker acessível? (SearXNG local roda via container). */
+export function isDockerSocketAvailable(): boolean {
+	return existsSync("/var/run/docker.sock");
 }
 
 export function getConfigSummary(): string {
@@ -122,8 +133,8 @@ export function getConfigSummary(): string {
 	add("Tavily", getTavilyKey());
 	add("SearXNG", getSearxngKey());
 	lines.push("");
-	const searxngUrl = getSearxngUrl() ?? "http://localhost:4000";
-	lines.push(`  SearXNG URL: ${searxngUrl}`);
+	lines.push(`  SearXNG URL: ${getSearxngTargetUrl()}`);
+	lines.push(`  Docker socket: ${isDockerSocketAvailable() ? "acessível" : "não acessível (no sandbox é esperado — roda no host)"}`);
 	lines.push("");
 	lines.push("Set keys via:");
 	lines.push("  /web_search config <provider> <key>");

@@ -32,7 +32,7 @@ export function createFindOps(config: SandboxConfig, cwd: string): FindOperation
         ],
         cwd,
       });
-      return stdout.trim().split("\n").filter(Boolean);
+      return stdout.toString().trim().split("\n").filter(Boolean);
     },
   };
 }

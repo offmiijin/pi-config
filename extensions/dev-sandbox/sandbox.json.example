@@ -14,7 +14,16 @@
       "/usr/sbin",
       "/root"
     ],
-    "denyFilePatterns": [".env", "*.pem", "*.key"]
+    "denyFilePatterns": [".env", "*.pem", "*.key"],
+    "cacheDirs": {
+      "npm": "",
+      "pip": "",
+      "clones": ""
+    },
+    "quarantineDirs": {
+      "fetch": "",
+      "runs": ""
+    }
   },
   "ssh": {
     "mode": "agent"
@@ -48,5 +57,25 @@
     "_doc": "Filtro seccomp: bloqueia syscalls perigosas no kernel. Use gen-seccomp (Rust) para gerar o .bpf.",
     "enabled": true,
     "bpfPath": ""
+  },
+  "landlock": {
+    "_doc": "Landlock: allowlist de filesystem dentro do sandbox. Habilite apenas em kernels >= 5.13 (ABI >= 1). ABI 3 recomendada (>= 6.2) — inclui suporte a TRUNCATE.",
+    "_fail_closed": "Se required:true e o kernel não suportar a ABI mínima, a execução é bloqueada.",
+    "enabled": true,
+    "required": true,
+    "minAbi": 3
+  },
+  "profiles": {
+    "_doc": "Perfis de isolamento. workspace de fetch/quarantine é SEMPRE 'none' (invariante — não há como liberar acesso ao projeto nesses perfis). Perfil normal não deve ser alterado.",
+    "fetch": {
+      "enabled": true,
+      "network": true,
+      "ssh": "none"
+    },
+    "quarantine": {
+      "enabled": true,
+      "network": false,
+      "ssh": "none"
+    }
   }
 }

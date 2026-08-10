@@ -11,3 +11,7 @@ libc = "0.2"
 [[bin]]
 name = "gen-seccomp"
 path = "src/main.rs"
+
+[[bin]]
+name = "landlock-exec"
+path = "src/landlock_exec.rs"

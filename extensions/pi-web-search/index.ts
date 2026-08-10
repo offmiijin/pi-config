@@ -10,12 +10,43 @@
 
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { search } from "./search";
+import { search, isSearxngReachable, validateProvider } from "./search";
 import { fetchPages } from "./fetch";
 import { registerWebAgent } from "./agent";
-import { getConfigSummary, setKey, getConfiguredProviders } from "./config";
+import { getConfigSummary, setKey, getConfiguredProviders, getSearxngUrl, getSearxngKey } from "./config";
 
 export default function (pi: ExtensionAPI) {
+	// Aviso de startup — 1x por processo, só quando nada está funcionando
+	let startupNotified = false;
+	pi.on("session_start", async (_event, ctx) => {
+		if (startupNotified) return;
+		startupNotified = true;
+
+		const configured = getConfiguredProviders();
+		if (configured.length > 0) {
+			// Algo configurado — só alerta se SearXNG configurado mas offline
+			const searxngConfigured = getSearxngUrl() !== null || getSearxngKey() !== null;
+			if (searxngConfigured && !(await isSearxngReachable()) && ctx.hasUI) {
+				ctx.ui.notify(
+					"⚠️ SearXNG configurado mas não responde (Docker parado?). A cascata usará Tavily/Exa/Serper.",
+					"warning",
+				);
+			}
+			return;
+		}
+
+		// Nada configurado — SearXNG local responde? então está tudo bem
+		if (await isSearxngReachable()) return;
+		if (ctx.hasUI) {
+			ctx.ui.notify(
+				"🌐 Nenhum provedor de busca configurado.\n" +
+					"  • API gratuita: /web_search config <tavily|exa|serper> <key>\n" +
+					"  • SearXNG local: docker compose up -d em extensions/pi-web-search (ou ./install.sh --searxng)",
+				"warning",
+			);
+		}
+	});
+
 	// ── Command: /web_search ───────────────────────────────────────────
 	pi.registerCommand("web_search", {
 		description:
@@ -44,11 +75,14 @@ export default function (pi: ExtensionAPI) {
 					const [, provider, ...rest] = parts;
 					const key = rest.join(" ");
 					try {
-						setKey(provider, key);
+						setKey(provider, key.trim());
+						const validation = await validateProvider(provider);
 						const configured = getConfiguredProviders();
 						ctx.ui.notify(
-							`✅ ${provider} API key saved.\nConfigured: ${configured.join(", ") || "none"}`,
-							"info",
+							validation.ok
+								? `✅ ${provider} key salva e validada (${validation.detail}).\nConfigured: ${configured.join(", ") || "none"}`
+								: `⚠️ ${provider} key salva, mas validação falhou: ${validation.detail}\nConfigured: ${configured.join(", ") || "none"}`,
+							validation.ok ? "info" : "warning",
 						);
 					} catch (err) {
 						const msg = err instanceof Error ? err.message : String(err);
@@ -86,10 +120,13 @@ export default function (pi: ExtensionAPI) {
 
 				try {
 					setKey(providerName, key.trim());
+					const validation = await validateProvider(providerName);
 					const configured = getConfiguredProviders();
 					ctx.ui.notify(
-						`✅ ${providerName} API key saved.\nConfigured: ${configured.join(", ") || "none"}`,
-						"info",
+						validation.ok
+							? `✅ ${providerName} key salva e validada (${validation.detail}).\nConfigured: ${configured.join(", ") || "none"}`
+							: `⚠️ ${providerName} key salva, mas validação falhou: ${validation.detail}\nConfigured: ${configured.join(", ") || "none"}`,
+						validation.ok ? "info" : "warning",
 					);
 				} catch (err) {
 					const msg = err instanceof Error ? err.message : String(err);

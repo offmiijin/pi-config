@@ -34,11 +34,11 @@ export function createLsOps(config: SandboxConfig, cwd: string): LsOperations {
         command: ["stat", "--format=%F|%s|%Y", filePath],
         cwd,
       });
-      if (exitCode !== 0 || !stdout.trim()) {
+      if (exitCode !== 0 || !stdout.toString().trim()) {
         throw new Error(`Falha ao stat ${filePath}`);
       }
 
-      const [type, sizeStr, mtimeStr] = stdout.trim().split("|");
+      const [type, sizeStr, mtimeStr] = stdout.toString().trim().split("|");
       const size = parseInt(sizeStr || "0", 10);
       const mtimeMs = parseFloat(mtimeStr || "0") * 1000;
 
@@ -66,7 +66,7 @@ export function createLsOps(config: SandboxConfig, cwd: string): LsOperations {
         throw new Error(`Falha ao listar ${dirPath}`);
       }
       // Split por null byte; último elemento pode ser vazio após trailing \0
-      return stdout.split("\0").filter(
+      return stdout.toString().split("\0").filter(
         (entry) => entry !== "" && entry !== "." && entry !== "..",
       );
     },

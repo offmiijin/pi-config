@@ -4,9 +4,10 @@
  * Refatorado de extensions/status-bar.ts para export nomeado.
  */
 
-import { CustomEditor, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, KeybindingsManager, SelectListTheme, TUI } from "@earendil-works/pi-tui";
+import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
+import type { EditorTheme, SelectListTheme, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 function formatTokenCount(n: number): string {
@@ -27,6 +28,8 @@ class ModelInfoEditor extends CustomEditor {
 	private lastOutput = 0;
 	private contextUsage = 0;
 	private contextWindow = 0;
+	private memoryTotal = 0;
+	private piVersion = "";
 
 	constructor(
 		tui: TUI,
@@ -64,6 +67,16 @@ class ModelInfoEditor extends CustomEditor {
 		this.invalidate();
 	}
 
+	setMemoryInfo(total: number) {
+		this.memoryTotal = total;
+		this.invalidate();
+	}
+
+	setPiVersion(version: string) {
+		this.piVersion = version;
+		this.invalidate();
+	}
+
 	render(width: number): string[] {
 		const lines = super.render(width);
 		if (width <= 4) return lines;
@@ -97,6 +110,21 @@ class ModelInfoEditor extends CustomEditor {
 
 		const topBorder = mutedFg("\u2500".repeat(width));
 
+		// Linha superior — versão do pi à esquerda, info de memória à direita
+		const versionInfo = this.piVersion && this.piVersion !== "unknown"
+			? this.uiTheme.fg("accent", "\u03c0") + " " + this.uiTheme.fg("muted", this.piVersion)
+			: "";
+		const memoryInfo = [
+			this.uiTheme.fg("muted", "\u{1f9e0}"), // 🧠
+			this.uiTheme.fg("accent", String(this.memoryTotal)),
+		].join(" ");
+		const memT = truncateToWidth(memoryInfo, innerW);
+		const memW = visibleWidth(memT);
+		const verT = truncateToWidth(versionInfo, Math.max(0, innerW - memW));
+		const verW = visibleWidth(verT);
+		const memoryLine =
+			rail + verT + " ".repeat(Math.max(0, innerW - verW - memW)) + memT;
+
 		const bottomBorder = mutedFg("\u2500".repeat(width));
 
 		const stripped = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "");
@@ -118,7 +146,7 @@ class ModelInfoEditor extends CustomEditor {
 		const rightPart = tokenInfo;
 		const rightW = visibleWidth(rightPart);
 
-		// Calcula espaço disponível para modelId dentro do innerW
+		// Calculates available space for modelId inside innerW
 		// Reserva: gap mínimo (1) + rightW + provider + thinking + badge
 		const providerStr = this.provider ? " " + this.uiTheme.fg("muted", this.provider) : "";
 		const thinkingStr = " " + this.uiTheme.fg("dim", this.thinking);
@@ -141,8 +169,32 @@ class ModelInfoEditor extends CustomEditor {
 		const gap = Math.max(1, innerW - leftW - rightW);
 		const metaLine = truncateToWidth(rail + leftPart + " ".repeat(gap) + rightPart, width);
 
-		return [topBorder, ...paddedContent, spacer, metaLine, bottomBorder, ...autoComplete];
+		return [topBorder, memoryLine, ...paddedContent, spacer, metaLine, bottomBorder, ...autoComplete];
 	}
+}
+
+/**
+ * Resolve a versão do pi em execução.
+ * 1) package.json ao lado do binário (instalações mise)
+ * 2) fallback: `pi --version`
+ */
+async function resolvePiVersion(pi: ExtensionAPI): Promise<string> {
+	try {
+		const pkgPath = path.join(path.dirname(process.execPath), "package.json");
+		if (existsSync(pkgPath)) {
+			const version = JSON.parse(readFileSync(pkgPath, "utf8")).version;
+			if (typeof version === "string" && version.trim()) {
+				return version.trim().replace(/^v/, "");
+			}
+		}
+	} catch {}
+	try {
+		const r = await pi.exec("pi", ["--version"], { timeout: 5000 });
+		if (r.code === 0 && r.stdout.trim()) {
+			return r.stdout.trim().replace(/^v/, "");
+		}
+	} catch {}
+	return "unknown";
 }
 
 export function registerStatusBar(pi: ExtensionAPI) {
@@ -151,12 +203,28 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	let sessionTokens = 0;
 	let sessionCost = 0;
 	let footerDataRef: any = null;
+	let piVersion = "unknown";
+
+	// Resolve a versão do pi em execução (uma vez por processo)
+	resolvePiVersion(pi).then((v) => {
+		piVersion = v;
+		editorRef?.setPiVersion(v);
+	});
 
 	// ── escuta agente-switcher ─────────────────────────────────
 	pi.events?.on("custom:agent-switch", ({ type }: { type: string }) => {
 		if (["coder", "writer", "planner"].includes(type)) {
 			editorRef?.setAgentType(type);
 		}
+	});
+
+	// ── escuta stats de memória (emitido pelo pi-memory) ──────
+	// Guarda o último valor: o editor só existe após session_start — se o
+	// evento chegar antes, aplica quando o editor for criado.
+	let lastMemoryTotal = 0;
+	pi.events?.on("custom:memory-stats", ({ total }: { total: number }) => {
+		lastMemoryTotal = total;
+		editorRef?.setMemoryInfo(total);
 	});
 
 	// ── helper: read agent type from session ──
@@ -193,13 +261,13 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		ctx.ui.setEditorComponent((tui: TUI, baseTheme: EditorTheme, keybindings: KeybindingsManager) => {
 			const uiTheme = ctx.ui.theme;
 
-			// Custom SelectListTheme com background highlight + prefixo visivel
+			// Custom SelectListTheme with background highlight + visible prefix
 			const selectList: SelectListTheme = {
-				// Ignora "> " padrao, substitui por "▶ " com bg highlight
+				// Ignore the default "> ", replace with "▶ " + bg highlight
 				selectedPrefix: () => uiTheme.fg("accent", uiTheme.bg("selectedBg", "▶ ")),
-				// Texto do item selecionado com bg highlight
+				// Selected item text with bg highlight
 				selectedText: (text) => uiTheme.fg("accent", uiTheme.bg("selectedBg", text)),
-				// Descricao mantida pra todos os items
+				// Description kept for all items
 				description: (text) => uiTheme.fg("muted", text),
 				scrollInfo: (text) => uiTheme.fg("muted", text),
 				noMatch: (text) => uiTheme.fg("muted", text),
@@ -209,10 +277,13 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			editorRef = editor;
 			editor.setModelInfo(modelId, provider, currentThinking);
 			editor.setAgentType(currentAgent);
+			editor.setPiVersion(piVersion);
 			const ctxW = ctx.model?.contextWindow || 0;
 			const ctxU = ctx.getContextUsage?.()?.tokens || 0;
 			editor.setContextInfo(ctxU, ctxW);
 			editor.setTokenInfo(0, 0, sessionTokens, sessionCost);
+			// Último stats recebido do pi-memory (pode ter chegado antes do editor existir)
+			editor.setMemoryInfo(lastMemoryTotal);
 			return editor;
 		});
 
@@ -282,7 +353,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 		// Refresh agent type badge (agent-switcher persists via appendEntry)
 		if (event.message.role === "assistant") {
 			editorRef?.setAgentType(readAgentTypeFromSession(ctx));
-			// Força refresh da branch após resposta do modelo
+			// Force branch refresh after the model responds
 			setTimeout(() => footerDataRef?.refreshGitBranchAsync?.(), 100);
 		}
 	});
