@@ -4,10 +4,16 @@
  * Roda com: vitest run
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+// Evita carregar undici do pi-coding-agent (quebra no node <23.6).
+// O display.ts (markdown TUI) é importado dinamicamente no cenário 7.
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+	getMarkdownTheme: () => ({}),
+}));
 
 import {
 	runChangelogCommand,
@@ -15,7 +21,8 @@ import {
 	resolveChangelogPath,
 	readChangelog,
 	expandTilde,
-} from "../changelog.js";
+	type ChangelogCtx,
+} from "../changelog.ts";
 
 /** Cria dir temporário (fingindo ser a pasta da extensão) e retorna path. */
 function makeExtDir(): string {
@@ -45,15 +52,21 @@ function makeUi() {
 	return { ui, notifications };
 }
 
+/** ctx com hasUI: false → sempre cai no fallback notify (sem TUI). */
+function makeCtx() {
+	const { ui, notifications } = makeUi();
+	return { ctx: { hasUI: false, ui }, notifications };
+}
+
 describe("runChangelogCommand", () => {
 	it("cenário 1: CHANGELOG.md existe → exibe conteúdo (info)", async () => {
 		const extDir = makeExtDir();
 		const changelogPath = join(extDir, "CHANGELOG.md");
 		writeFileSync(changelogPath, "# Changelog\n\n## [1.0.0]\n");
 		writeFileSync(join(extDir, "config.json"), JSON.stringify({ changelogPath }));
-		const { ui, notifications } = makeUi();
+		const { ctx, notifications } = makeCtx();
 
-		await runChangelogCommand(extDir, ui);
+		await runChangelogCommand(ctx, extDir);
 
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0].level).toBe("info");
@@ -65,9 +78,9 @@ describe("runChangelogCommand", () => {
 		const extDir = makeExtDir();
 		const changelogPath = join(extDir, "CHANGELOG.md"); // não cria
 		writeFileSync(join(extDir, "config.json"), JSON.stringify({ changelogPath }));
-		const { ui, notifications } = makeUi();
+		const { ctx, notifications } = makeCtx();
 
-		await runChangelogCommand(extDir, ui);
+		await runChangelogCommand(ctx, extDir);
 
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0].level).toBe("warning");
@@ -80,9 +93,9 @@ describe("runChangelogCommand", () => {
 		const changelogPath = join(extDir, "CHANGELOG.md");
 		writeFileSync(changelogPath, "   \n  ");
 		writeFileSync(join(extDir, "config.json"), JSON.stringify({ changelogPath }));
-		const { ui, notifications } = makeUi();
+		const { ctx, notifications } = makeCtx();
 
-		await runChangelogCommand(extDir, ui);
+		await runChangelogCommand(ctx, extDir);
 
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0].level).toBe("info");
@@ -95,9 +108,9 @@ describe("runChangelogCommand", () => {
 		const defaultPath = join(extDir, "default", "CHANGELOG.md");
 		mkdirSync(join(extDir, "default"));
 		writeFileSync(defaultPath, "# Default\n");
-		const { ui, notifications } = makeUi();
+		const { ctx, notifications } = makeCtx();
 
-		await runChangelogCommand(extDir, ui, defaultPath);
+		await runChangelogCommand(ctx, extDir, defaultPath);
 
 		expect(notifications).toHaveLength(1);
 		expect(notifications[0].level).toBe("info");
@@ -111,9 +124,9 @@ describe("runChangelogCommand", () => {
 		mkdirSync(join(extDir, "custom"));
 		writeFileSync(custom, "# Custom\n");
 		writeFileSync(join(extDir, "config.json"), JSON.stringify({ changelogPath: custom }));
-		const { ui, notifications } = makeUi();
+		const { ctx, notifications } = makeCtx();
 
-		await runChangelogCommand(extDir, ui);
+		await runChangelogCommand(ctx, extDir);
 
 		expect(notifications[0].level).toBe("info");
 		expect(notifications[0].msg).toContain("# Custom");
@@ -123,13 +136,49 @@ describe("runChangelogCommand", () => {
 	it("cenário 6: config.json inválido → avisa e usa default", async () => {
 		const extDir = makeExtDir();
 		writeFileSync(join(extDir, "config.json"), "{ quebrado");
-		const { ui, notifications } = makeUi();
+		const { ctx, notifications } = makeCtx();
 
-		await runChangelogCommand(extDir, ui);
+		await runChangelogCommand(ctx, extDir);
 
 		expect(notifications).toHaveLength(2);
 		expect(notifications[0].level).toBe("warning");
 		expect(notifications[0].msg).toContain("config.json inválido");
+		cleanup(extDir);
+	});
+
+	it("cenário 7: com TUI (hasUI true) usa exibição markdown via custom", async () => {
+		const extDir = makeExtDir();
+		const changelogPath = join(extDir, "CHANGELOG.md");
+		writeFileSync(changelogPath, "# Changelog\n\n## [1.0.0]\n");
+		writeFileSync(join(extDir, "config.json"), JSON.stringify({ changelogPath }));
+		const { ui, notifications } = makeUi();
+
+		let customCalled = false;
+		let doneCalled = false;
+		let component: { handleInput?: (data: string) => void } | undefined;
+
+		const ctx = {
+			hasUI: true,
+			ui: {
+				...ui,
+				custom: async (factory: (tui: unknown, theme: unknown, kb: unknown, done: () => void) => unknown) => {
+					customCalled = true;
+					component = factory({}, {}, {}, () => {
+						doneCalled = true;
+					}) as typeof component;
+					return undefined;
+				},
+			},
+		};
+
+		await runChangelogCommand(ctx as unknown as ChangelogCtx, extDir);
+
+		expect(customCalled).toBe(true);
+		expect(notifications).toHaveLength(0); // conteúdo não vai pro notify
+		expect(typeof component?.handleInput).toBe("function");
+		// Esc fecha o visualizador
+		component?.handleInput?.("\u001b");
+		expect(doneCalled).toBe(true);
 		cleanup(extDir);
 	});
 });

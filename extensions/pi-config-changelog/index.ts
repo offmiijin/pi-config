@@ -9,13 +9,17 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { runChangelogCommand, getExtensionDir } from "./changelog.js";
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("pi-config-changelog", {
 		description: "Mostra o changelog da versão atual do pi-config",
 		handler: async (_args, ctx) => {
-			await runChangelogCommand(getExtensionDir(), ctx.ui);
+			// Import dinâmico: o jiti embute imports estáticos no entry
+			// (data URI > limite → NameTooLong); dinâmicos ficam em runtime.
+			const { runChangelogCommand, getExtensionDir } = await import(
+				"./changelog.js"
+			);
+			await runChangelogCommand(ctx, getExtensionDir());
 		},
 	});
 }

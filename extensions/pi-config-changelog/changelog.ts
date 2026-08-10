@@ -1,12 +1,4 @@
-/**
- * Lógica do comando /pi-config-changelog.
- *
- * Separada do index.ts (entry point) para permitir exports nomeados:
- * o entry de extensão do pi NÃO pode ter exports nomeados (o jiti/bun
- * falha com NameTooLong ao resolver o data URI do módulo).
- */
-
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -29,17 +21,14 @@ export type ReadResult =
 	| { kind: "missing" }
 	| { kind: "error"; error: string };
 
-/**
- * Lógica do comando, isolada com UI e default path injetáveis para testes.
- */
 export async function runChangelogCommand(
+	ctx: ChangelogCtx,
 	extDir: string,
-	ui: Pick<ExtensionContext["ui"], "notify">,
 	defaultPath: string = DEFAULT_CHANGELOG_PATH,
 ): Promise<void> {
 	const { config, configError } = readConfig(extDir);
 	if (configError) {
-		ui.notify(`⚠️ ${configError} — usando caminho padrão.`, "warning");
+		ctx.ui.notify(`⚠️ ${configError} — usando caminho padrão.`, "warning");
 	}
 
 	const changelogPath = resolveChangelogPath(config?.changelogPath, defaultPath);
@@ -47,21 +36,38 @@ export async function runChangelogCommand(
 
 	switch (result.kind) {
 		case "missing":
-			ui.notify(`❌ CHANGELOG.md não encontrado em ${changelogPath}`, "warning");
+			ctx.ui.notify(`❌ CHANGELOG.md não encontrado em ${changelogPath}`, "warning");
 			return;
 		case "error":
-			ui.notify(`❌ Erro ao ler CHANGELOG.md: ${result.error}`, "error");
+			ctx.ui.notify(`❌ Erro ao ler CHANGELOG.md: ${result.error}`, "error");
 			return;
 	}
 
 	if (result.content.trim() === "") {
-		ui.notify("📭 CHANGELOG vazio.", "info");
+		ctx.ui.notify("📭 CHANGELOG vazio.", "info");
 		return;
 	}
-	ui.notify(result.content, "info");
+	await showChangelog(ctx, result.content);
 }
 
-// ── Caminhos ──────────────────────────────────────────────────────────
+export type ChangelogUI = Pick<ExtensionCommandContext["ui"], "notify"> & {
+	custom?: ExtensionCommandContext["ui"]["custom"];
+};
+
+export interface ChangelogCtx {
+	hasUI: boolean;
+	ui: ChangelogUI;
+}
+
+export async function showChangelog(ctx: ChangelogCtx, content: string): Promise<void> {
+	const custom = ctx.ui.custom;
+	if (!ctx.hasUI || !custom) {
+		ctx.ui.notify(content, "info");
+		return;
+	}
+	const { createMarkdownView } = await import("./display.js");
+	await custom((_tui, _theme, _keybindings, done) => createMarkdownView(content, done));
+}
 
 export function getExtensionDir(): string {
 	const dir = (import.meta as { dirname?: string }).dirname;
@@ -82,8 +88,6 @@ export function resolveChangelogPath(
 	return resolve(expandTilde(configured.trim()));
 }
 
-// ── Config ────────────────────────────────────────────────────────────
-
 export function readConfig(
 	extDir: string,
 ): { config: Config | null; configError: string | null } {
@@ -92,7 +96,6 @@ export function readConfig(
 	try {
 		raw = readFileSync(configPath, "utf-8");
 	} catch {
-		// Sem config.json → usa padrão, sem aviso
 		return { config: null, configError: null };
 	}
 	try {
@@ -109,8 +112,6 @@ export function readConfig(
 		return { config: null, configError: "config.json inválido" };
 	}
 }
-
-// ── Leitura ───────────────────────────────────────────────────────────
 
 export function readChangelog(path: string): ReadResult {
 	try {
