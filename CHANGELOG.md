@@ -19,3 +19,7 @@
 ### Changed
 
 - Exibição do `/pi-config-changelog` passa a renderizar markdown colorido (tema do pi) com scroll, em vez de texto plano
+
+### Fixed
+
+- `/pi-config-changelog` não trava mais o TUI — substituído `ctx.ui.custom()` por `appendEntry()` + `registerEntryRenderer()`, que renderiza markdown colorido dentro do chat sem risco de congelamento
