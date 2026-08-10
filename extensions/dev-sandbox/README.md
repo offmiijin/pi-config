@@ -24,14 +24,14 @@ sudo apt install bubblewrap
 
 ```
 ┌─────────────────────────────────┐
-│ security-guard.ts (EXISTENTE)   │ ← Soft boundary
-│  Pattern matching de comandos   │   Bloqueia padrões perigosos
-│  Verificação de paths sensíveis │   Pede confirmação ao usuário
+│ security-guard.ts (mínimo)      │ ← Soft boundary
+│  Fork bomb / curl\|bash / eval  │   Só o que o sandbox NÃO isola
 ├─────────────────────────────────┤
 │ dev-sandbox                     │ ← Hard boundary (kernel)
 │  Namespaces (bwrap)             │   Filesystem isolado
 │  Capabilities (--cap-drop ×18)  │   Poderes de root removidos
 │  Seccomp (BPF ×33 syscalls)     │   Syscalls perigosas bloqueadas
+│  Perfis fetch/quarantine        │   Download/execução sem workspace
 └─────────────────────────────────┘
 ```
 
@@ -176,7 +176,49 @@ e exposto como `$SANDBOX_CLONE_DIR` dentro do sandbox.
 |---|---|
 | Iniciar pi normalmente | Sandbox ativo por padrão |
 | `pi --no-sandbox` | Desabilita sandbox para esta sessão |
-| `/sandbox` | Mostra status e configuração atual |
+| `/sandbox` | Mostra status, perfis e configuração atual |
+
+## Perfis de isolamento (quarentena)
+
+Instalar ou executar código externo no bash normal é **bloqueado**
+(`npm install`, `pip install`, `curl | bash`, ...). Código baixado roda em
+perfis de isolamento dedicados:
+
+| Perfil | Rede | Workspace | Escrita em |
+|---|---|---|---|
+| `normal` | host | rw | projeto |
+| `fetch` | ✅ | ❌ | `.sandbox-cache/fetch` |
+| `quarantine` | ❌ | ❌ | `.sandbox-cache/runs/<work>` |
+
+Fluxo:
+
+1. `sandbox_fetch` — baixa arquivo (http/https) para `.sandbox-cache/fetch`,
+   SEM acesso ao projeto.
+2. `sandbox_quarantine_exec` — executa comando (bash) em
+   `.sandbox-cache/runs/<work>`: SEM rede e SEM acesso ao projeto. Copia
+   artefatos do fetch para o workdir antes de executar, se indicado.
+3. `sandbox_promote` — copia artefato produzido na quarentena de volta ao
+   workspace (ação explícita; único caminho de saída).
+
+Configuração de perfis (global ou `.pi/sandbox.json`):
+
+```json
+{
+  "profiles": {
+    "fetch":      { "enabled": true, "network": true,  "ssh": "none" },
+    "quarantine": { "enabled": true, "network": false, "ssh": "none" }
+  },
+  "filesystem": {
+    "quarantineDirs": { "fetch": "", "runs": "" }
+  }
+}
+```
+
+- `workspace` de fetch/quarantine é SEMPRE `"none"` — invariante de
+  quarentena: não há como liberar acesso ao projeto nesses perfis.
+- `network` do fetch respeita o kill-switch global `internet.enabled`.
+- Diretórios vazios (`""`) = `.sandbox-cache/fetch` e `.sandbox-cache/runs`
+  (criados com `0o700`).
 
 ## Cache de pacotes
 
@@ -250,6 +292,10 @@ Arch, openSUSE, Alpine/musl) sem configuração extra:
 - `/tmp` é efêmero entre comandos (use `.sandbox-cache/` para persistência)
 - `npm install` com scripts de lifecycle executa dentro do sandbox
   (seguro porque home real inacessível)
+- Perfis de quarentena usam PATH mínimo (`/usr/local/bin:/usr/bin:/bin`) e
+  HOME efêmero (`/tmp`): toolchains via mise NÃO são montados. Para usar
+  node/python/pip dentro de fetch/quarantine, instale no sistema
+  (ex: `/usr/bin/node`, `/bin/python3`).
 
 ## Capabilities
 

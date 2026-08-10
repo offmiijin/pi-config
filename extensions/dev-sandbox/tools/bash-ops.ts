@@ -11,6 +11,42 @@ import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
 import { buildBwrapArgs, killGroup, wrapWithLandlock } from "../bwrap-executor";
 
+// ─── Bloqueio de instalação/execução externa ────────────────────
+
+/**
+ * Mensagem exibida quando um comando de instalação é bloqueado no bash.
+ */
+const BLOCKED_INSTALL_MSG =
+  "[dev-sandbox] Instalação/execução de código externo bloqueada no bash. " +
+  "Use as tools de quarentena (sandbox_fetch + sandbox_quarantine_exec) para " +
+  "baixar e executar pacotes sem expor o workspace.";
+
+/**
+ * Comandos que instalam ou executam código externo DENTRO do workspace.
+ * `npm install` roda lifecycle scripts; `pip install` roda backend PEP 517;
+ * `curl | bash` executa script arbitrário. Todos devem rodar nos perfis
+ * fetch/quarantine, nunca no bash normal (workspace montado read-write).
+ */
+const BLOCKED_INSTALL_PATTERNS: RegExp[] = [
+  // Gerenciadores de pacote — instalação
+  /\bnpm\s+(install|i|ci|add)\b/,
+  /\byarn\s+(add|install)\b/,
+  /\bpnpm\s+(add|install)\b/,
+  /\bpip[0-9]*\s+install\b/,
+  /\bpython[0-9.]*\s+-m\s+pip\s+install\b/,
+  // Download + pipe direto para shell
+  /\bcurl\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/,
+  /\bwget\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/,
+  // Bash/sh/source de subshell com download
+  /\b(ba)?sh\s+<\(\s*(curl|wget)\b/,
+  /(?<![\w.])(source|\.)\s+<\(\s*(curl|wget)\b/,
+];
+
+/** Detecta comando de instalação/execução externa bloqueado. Exportado para testes. */
+export function isBlockedInstall(command: string): boolean {
+  return BLOCKED_INSTALL_PATTERNS.some((re) => re.test(command));
+}
+
 /**
  * Abre o arquivo BPF se seccomp estiver habilitado.
  * Retorna o fd ou undefined (degradação segura).
@@ -34,6 +70,12 @@ export function createBashOps(config: SandboxConfig, cwd: string): BashOperation
       // Sinal já abortado antes do spawn → nem cria o processo
       if (signal?.aborted) {
         throw new Error("aborted");
+      }
+
+      // Instalação/execução de código externo é redirecionada para os
+      // perfis de quarentena — nunca roda no bash com workspace rw.
+      if (isBlockedInstall(command)) {
+        throw new Error(BLOCKED_INSTALL_MSG);
       }
 
       let args = buildBwrapArgs(config, cwd);

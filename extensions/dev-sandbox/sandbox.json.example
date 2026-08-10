@@ -19,6 +19,10 @@
       "npm": "",
       "pip": "",
       "clones": ""
+    },
+    "quarantineDirs": {
+      "fetch": "",
+      "runs": ""
     }
   },
   "ssh": {
@@ -60,5 +64,18 @@
     "enabled": true,
     "required": true,
     "minAbi": 3
+  },
+  "profiles": {
+    "_doc": "Perfis de isolamento. workspace de fetch/quarantine é SEMPRE 'none' (invariante — não há como liberar acesso ao projeto nesses perfis). Perfil normal não deve ser alterado.",
+    "fetch": {
+      "enabled": true,
+      "network": true,
+      "ssh": "none"
+    },
+    "quarantine": {
+      "enabled": true,
+      "network": false,
+      "ssh": "none"
+    }
   }
 }
