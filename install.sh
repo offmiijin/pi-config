@@ -10,7 +10,7 @@
 #      (cria settings.json a partir de settings.example.json se ausente)
 #   4. Dependências npm das extensões (npm ci em <agent>/node_modules)
 #   5. landlock-exec (compila com Rust se disponível)
-#   6. Verificações: user namespaces, inotify, binário do pi
+#   6. Verificações: user namespaces, inotify, seccomp, landlock, binário do pi
 #   7. Opcional: Docker + SearXNG para busca local
 #
 # Se já existir configuração em <destino>, ela é renomeada para backup
@@ -378,6 +378,63 @@ check_kernel() {
   fi
 }
 
+# ── Seccomp / Landlock (kernel) ──────────────────────────────────────────
+kernel_version_ge() { # kernel_version_ge 5 13 → kernel >= 5.13
+  local kver major minor
+  kver="$(uname -r)"
+  major="${kver%%.*}"; minor="${kver#*.}"; minor="${minor%%.*}"
+  [ "${major:-0}" -gt "$1" ] && return 0
+  [ "${major:-0}" -lt "$1" ] && return 1
+  [ "${minor:-0}" -ge "$2" ]
+}
+
+kernel_config() { # conteúdo do config do kernel (vazio se indisponível)
+  local f
+  if [ -r /proc/config.gz ]; then
+    zcat /proc/config.gz 2>/dev/null || true
+  else
+    for f in "/boot/config-$(uname -r)" /boot/config; do
+      [ -r "$f" ] && cat "$f" 2>/dev/null && return
+    done
+  fi
+}
+
+check_seccomp() {
+  local cfg
+  cfg="$(kernel_config)"
+  if [ -n "$cfg" ]; then
+    if echo "$cfg" | grep '^CONFIG_SECCOMP_FILTER=y' >/dev/null; then
+      log "✓ Seccomp (BPF filter) habilitado no kernel"
+    elif echo "$cfg" | grep '^CONFIG_SECCOMP=y' >/dev/null; then
+      warn "⚠ CONFIG_SECCOMP_FILTER não habilitado — filtro seccomp (seccomp.bpf) falha no sandbox."
+    else
+      warn "⚠ Seccomp desabilitado no kernel — sandbox sem isolamento seccomp."
+    fi
+  else
+    log "✓ Seccomp: config do kernel indisponível — validado em runtime pelo sandbox"
+  fi
+}
+
+check_landlock() {
+  local lsm cfg
+  lsm="$(cat /sys/kernel/security/lsm 2>/dev/null || true)"
+  if [ -n "$lsm" ] && echo "$lsm" | grep landlock >/dev/null; then
+    log "✓ Landlock LSM ativo"
+    return
+  fi
+  cfg="$(kernel_config)"
+  if [ -n "$cfg" ] && echo "$cfg" | grep '^CONFIG_SECURITY_LANDLOCK=y' >/dev/null; then
+    log "✓ Landlock compilado no kernel (CONFIG_SECURITY_LANDLOCK=y)"
+    return
+  fi
+  if kernel_version_ge 5 13; then
+    warn "⚠ Landlock não detectado (sem CONFIG_SECURITY_LANDLOCK/LSM) — sandbox degradado."
+  else
+    warn "⚠ Kernel $(uname -r) < 5.13 — Landlock não suportado; sandbox degradado."
+  fi
+  warn "  Isolamento Landlock desativado; bwrap/seccomp continuam ativos."
+}
+
 # ── Docker + SearXNG (opcional) ──────────────────────────────────────────
 # O container SearXNG roda no HOST (não no sandbox do pi).
 # O pi acessa via HTTP em localhost:4000 (--share-net compartilha rede do host).
@@ -476,6 +533,8 @@ main() {
   ensure_npm_deps
   ensure_landlock
   check_kernel
+  check_seccomp
+  check_landlock
   setup_searxng
   check_pi
 
