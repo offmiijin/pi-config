@@ -73,7 +73,7 @@ async function handleThinking(args: string, pi: ExtensionAPI, ctx: ExtensionCont
     const level = args.trim().toLowerCase() as ThinkingLevel;
     if (supported.includes(level)) {
       pi.setThinkingLevel(level);
-      ctx.ui.notify(`Thinking level alterado para: ${level}`, "info");
+      ctx.ui.notify(`Thinking level alterado para: ${level} (${modelName})`, "info");
       return;
     }
     ctx.ui.notify(
@@ -108,7 +108,7 @@ async function handleThinking(args: string, pi: ExtensionAPI, ctx: ExtensionCont
   const selected = parseSelectedLevel(choice);
   if (selected && selected !== current) {
     pi.setThinkingLevel(selected);
-    ctx.ui.notify(`Thinking level alterado de "${current}" para "${selected}"`, "info");
+    ctx.ui.notify(`Thinking level alterado de "${current}" para "${selected}" (${modelName})`, "info");
   }
 }
 
