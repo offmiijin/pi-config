@@ -408,6 +408,7 @@ kernel_config() { # conteúdo do config do kernel (vazio se indisponível)
       [ -r "$f" ] && cat "$f" 2>/dev/null && return
     done
   fi
+  :  # status 0 garantido (set -e seguro)
 }
 
 check_seccomp() {
