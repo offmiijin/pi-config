@@ -15,7 +15,7 @@ import {
 	resolveChangelogPath,
 	readChangelog,
 	expandTilde,
-} from "../index";
+} from "../changelog.js";
 
 /** Cria dir temporário (fingindo ser a pasta da extensão) e retorna path. */
 function makeExtDir(): string {
@@ -33,9 +33,15 @@ interface Notify {
 	level: string;
 }
 
+type NotifyFn = (msg: string, level?: "info" | "warning" | "error") => void;
+
 function makeUi() {
 	const notifications: Notify[] = [];
-	const ui = { notify: (msg: string, level: string) => notifications.push({ msg, level }) };
+	const ui: { notify: NotifyFn } = {
+		notify: (msg, level) => {
+			notifications.push({ msg, level: level ?? "info" });
+		},
+	};
 	return { ui, notifications };
 }
 
