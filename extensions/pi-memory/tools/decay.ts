@@ -18,7 +18,7 @@ import {
 	parseFrontmatter,
 } from "../memory/memory.ts";
 import { DecaySchema } from "../schemas.ts";
-import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
+import { emitMemoryStats, syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 
 export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -69,6 +69,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 				// Sai do índice ativo (arquivo movido para .supersedes/). Falha
 				// de índice não reverte o movimento — o markdown já é canônico.
 				const index = syncIndex(state, { upsert: [], remove: [relFromMemoriesRoot(filePath)] });
+				emitMemoryStats(pi, state); // status-bar reflete a nova contagem
 				return {
 					content: [
 						{
@@ -88,6 +89,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 					superseded_reason: reason,
 				});
 				const index = syncIndex(state, { upsert: [], remove: [relFromMemoriesRoot(filePath)] });
+				emitMemoryStats(pi, state); // status-bar reflete a nova contagem
 				return {
 					content: [
 						{
@@ -123,6 +125,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 					);
 				}
 			}
+			emitMemoryStats(pi, state); // status-bar reflete a nova contagem
 
 			return {
 				content: [

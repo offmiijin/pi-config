@@ -7,7 +7,7 @@ import { MEMORY_LANGUAGE_RULE } from "../constants.ts";
 import { readMemoryDocFromFile, relFromMemoriesRoot, type IndexDocument } from "../memory/memory-index.ts";
 import { saveMemory } from "../memory/memory.ts";
 import { SaveSchema } from "../schemas.ts";
-import { syncIndex, type IndexStatus, type ToolState } from "./state.ts";
+import { emitMemoryStats, syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 
 export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -79,6 +79,8 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 				result.action === "created"
 					? `Created memory: ${params.scope}/${params.type}/${params.context}`
 					: `Consolidated memory (previous version archived to .history/): ${params.scope}/${params.type}/${params.context} (revision ${result.revision})`;
+
+			emitMemoryStats(pi, state); // status-bar reflete a nova contagem
 
 			return {
 				content: [{ type: "text", text }],
