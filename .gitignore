@@ -35,3 +35,13 @@ extensions/dev-sandbox/gen-seccomp/target/
 extensions/dev-sandbox/gen-seccomp-bin
 # Memory store (runtime data from pi-memory extension)
 memories/
+
+# Configuração pessoal (não distribuível — criada/gerenciada pelo pi)
+caveman.json
+mcp.json
+settings.json
+models-store.json
+
+# Pacotes npm gerenciados pelo pi (runtime, instalados em ~/.pi/agent/npm)
+npm/
+
