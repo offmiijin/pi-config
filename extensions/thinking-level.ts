@@ -52,6 +52,17 @@ export function parseSelectedLevel(choice: string): ThinkingLevel | undefined {
   return THINKING_LEVELS.some((l) => l.value === value) ? value : undefined;
 }
 
+// Nível sugerido quando o atual não é suportado: maior suportado ≤ atual;
+// se nenhum, o menor suportado (reduzir esforço é sempre seguro)
+export function clampLevel(current: ThinkingLevel, supported: ThinkingLevel[]): ThinkingLevel | undefined {
+  if (supported.includes(current)) return current;
+  if (supported.length === 0) return undefined;
+  const order = [...STANDARD_LEVELS, ...EXTENDED_LEVELS];
+  const idx = order.indexOf(current);
+  const below = supported.filter((l) => order.indexOf(l) <= idx);
+  return below.length > 0 ? below[below.length - 1] : supported[0];
+}
+
 async function handleThinking(args: string, pi: ExtensionAPI, ctx: ExtensionContext) {
   const model = ctx.model;
   const supported = getSupportedLevels(model);
@@ -78,8 +89,17 @@ async function handleThinking(args: string, pi: ExtensionAPI, ctx: ExtensionCont
     return `${prefix}${l.label} — ${l.description} [${l.value}]`;
   });
 
+  const unsupported = !supported.includes(current);
+  const suggested = unsupported ? clampLevel(current, supported) : undefined;
+  if (unsupported) {
+    ctx.ui.notify(
+      `Nível atual "${current}" não suportado por ${modelName}. Sugerido: ${suggested}`,
+      "warning",
+    );
+  }
+
   const choice = await ctx.ui.select(
-    `Modelo: ${modelName}\nNível atual: ${current}\nSuportados: ${supported.join(", ")}\nSelecione o nível de thinking:`,
+    `Modelo: ${modelName}\nNível atual: ${current}${unsupported ? ` (não suportado — sugerido: ${suggested})` : ""}\nSuportados: ${supported.join(", ")}\nSelecione o nível de thinking:`,
     options,
   );
 

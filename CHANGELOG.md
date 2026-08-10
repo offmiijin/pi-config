@@ -22,6 +22,7 @@
 - Extensão `commands-hub.ts` renomeada para `thinking-level.ts` (comando `/thinking` inalterado)
 - `/thinking` passa a derivar os níveis de thinking suportados do modelo ativo via `thinkingLevelMap` (inclui nível `max`; oculta e invalida níveis não suportados, ex.: deepseek v4 só high/max)
 - Seleção interativa do `/thinking` usa sufixo `[valor]` na opção e parsing por valor exato (regex), eliminando o parsing frágil por `startsWith`/`includes` de label
+- Nível atual não suportado pelo modelo gera aviso e sugere o nível mais próximo (maior suportado ≤ atual; senão o menor suportado)
 
 ### Fixed
 
