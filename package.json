@@ -8,11 +8,12 @@
     "@rolldown/binding-linux-x64-gnu": "^1.1.5"
   },
   "scripts": {
-    "test": "npm run test:sandbox && npm run test:github && npm run test:websearch && npm run test:memory && npm run test:doctor",
+    "test": "npm run test:sandbox && npm run test:github && npm run test:websearch && npm run test:memory && npm run test:doctor && npm run test:changelog",
     "test:sandbox": "cd extensions/dev-sandbox && vitest run",
     "test:github": "cd extensions/pi-github && vitest run",
     "test:websearch": "cd extensions/pi-web-search && vitest run",
     "test:memory": "cd extensions/pi-memory && node --test",
+    "test:changelog": "cd extensions/pi-config-changelog && vitest run",
     "test:doctor": "cd extensions && vitest run tests/doctor.test.ts",
     "typecheck": "cd extensions/dev-sandbox && tsc --noEmit",
     "doctor:check": "cd extensions && vitest run tests/doctor.smoke.test.ts"

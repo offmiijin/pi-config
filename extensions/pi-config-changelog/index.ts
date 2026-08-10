@@ -11,7 +11,7 @@
  *   - Na main (release): apenas [x.y.z], sem Unreleased
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -33,34 +33,41 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("pi-config-changelog", {
 		description: "Mostra o changelog da versão atual do pi-config",
 		handler: async (_args, ctx) => {
-			const extDir = getExtensionDir();
-			const { config, configError } = readConfig(extDir);
-			if (configError) {
-				ctx.ui.notify(`⚠️ ${configError} — usando caminho padrão.`, "warning");
-			}
-
-			const changelogPath = resolveChangelogPath(config?.changelogPath);
-			const result = readChangelog(changelogPath);
-
-			switch (result.kind) {
-				case "missing":
-					ctx.ui.notify(
-						`❌ CHANGELOG.md não encontrado em ${changelogPath}`,
-						"warning",
-					);
-					return;
-				case "error":
-					ctx.ui.notify(`❌ Erro ao ler CHANGELOG.md: ${result.error}`, "error");
-					return;
-			}
-
-			if (result.content.trim() === "") {
-				ctx.ui.notify("📭 CHANGELOG vazio.", "info");
-				return;
-			}
-			ctx.ui.notify(result.content, "info");
+			await runChangelogCommand(getExtensionDir(), ctx.ui);
 		},
 	});
+}
+
+/**
+ * Lógica do comando, isolada com UI e default path injetáveis para testes.
+ */
+export async function runChangelogCommand(
+	extDir: string,
+	ui: Pick<ExtensionContext["ui"], "notify">,
+	defaultPath: string = DEFAULT_CHANGELOG_PATH,
+): Promise<void> {
+	const { config, configError } = readConfig(extDir);
+	if (configError) {
+		ui.notify(`⚠️ ${configError} — usando caminho padrão.`, "warning");
+	}
+
+	const changelogPath = resolveChangelogPath(config?.changelogPath, defaultPath);
+	const result = readChangelog(changelogPath);
+
+	switch (result.kind) {
+		case "missing":
+			ui.notify(`❌ CHANGELOG.md não encontrado em ${changelogPath}`, "warning");
+			return;
+		case "error":
+			ui.notify(`❌ Erro ao ler CHANGELOG.md: ${result.error}`, "error");
+			return;
+	}
+
+	if (result.content.trim() === "") {
+		ui.notify("📭 CHANGELOG vazio.", "info");
+		return;
+	}
+	ui.notify(result.content, "info");
 }
 
 // ── Caminhos ──────────────────────────────────────────────────────────
@@ -76,8 +83,11 @@ export function expandTilde(p: string): string {
 	return p;
 }
 
-export function resolveChangelogPath(configured?: string): string {
-	if (!configured || configured.trim() === "") return DEFAULT_CHANGELOG_PATH;
+export function resolveChangelogPath(
+	configured?: string,
+	defaultPath: string = DEFAULT_CHANGELOG_PATH,
+): string {
+	if (!configured || configured.trim() === "") return defaultPath;
 	return resolve(expandTilde(configured.trim()));
 }
 
