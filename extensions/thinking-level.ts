@@ -20,14 +20,7 @@ const THINKING_LEVELS: { value: ThinkingLevel; label: string; description: strin
   { value: "max", label: "Max", description: "Esforço máximo de reasoning" },
 ];
 
-/**
- * Deriva os níveis de thinking suportados pelo modelo ativo, seguindo a
- * semântica tristate do `thinkingLevelMap` (docs/models.md):
- * - `null` → nível não suportado (escondido)
- * - string → nível suportado (valor enviado ao provider)
- * - omitido → `off`..`high` suportados via mapeamento default do provider;
- *   `xhigh`/`max` omitidos são NÃO suportados
- */
+// Tristate thinkingLevelMap: null=exclui, string=inclui, omitido=default off..high; xhigh/max omitidos=NÃO
 export function getSupportedLevels(model?: ThinkingLevelModel | null): ThinkingLevel[] {
   if (!model) return [...STANDARD_LEVELS];
   if (model.reasoning === false) return ["off"];
@@ -47,6 +40,16 @@ function getCurrentLevel(pi: ExtensionAPI): ThinkingLevel {
 
 function getModelName(model: { name?: string; id?: string } | undefined): string {
   return model?.name ?? model?.id ?? "desconhecido";
+}
+
+const LEVEL_SUFFIX_RE = /\[([a-z]+)\]\s*$/;
+
+// Extrai nível do sufixo [valor] — por valor exato, não por label
+export function parseSelectedLevel(choice: string): ThinkingLevel | undefined {
+  const match = choice.match(LEVEL_SUFFIX_RE);
+  if (!match) return undefined;
+  const value = match[1] as ThinkingLevel;
+  return THINKING_LEVELS.some((l) => l.value === value) ? value : undefined;
 }
 
 async function handleThinking(args: string, pi: ExtensionAPI, ctx: ExtensionContext) {
@@ -72,7 +75,7 @@ async function handleThinking(args: string, pi: ExtensionAPI, ctx: ExtensionCont
   const options = THINKING_LEVELS.filter((l) => supported.includes(l.value)).map((l) => {
     const isCurrent = l.value === current;
     const prefix = isCurrent ? "● " : "  ";
-    return `${prefix}${l.label} — ${l.description}`;
+    return `${prefix}${l.label} — ${l.description} [${l.value}]`;
   });
 
   const choice = await ctx.ui.select(
@@ -82,10 +85,10 @@ async function handleThinking(args: string, pi: ExtensionAPI, ctx: ExtensionCont
 
   if (!choice) return;
 
-  const selected = THINKING_LEVELS.find((l) => choice.startsWith("●") ? choice.includes(l.label) : choice.startsWith(`  ${l.label}`));
-  if (selected && selected.value !== current) {
-    pi.setThinkingLevel(selected.value);
-    ctx.ui.notify(`Thinking level alterado de "${current}" para "${selected.value}"`, "info");
+  const selected = parseSelectedLevel(choice);
+  if (selected && selected !== current) {
+    pi.setThinkingLevel(selected);
+    ctx.ui.notify(`Thinking level alterado de "${current}" para "${selected}"`, "info");
   }
 }
 
