@@ -354,27 +354,38 @@ ensure_landlock() {
 }
 
 # ── Verificações de kernel / ambiente ────────────────────────────────────
+# ── Verificações de kernel / ambiente ────────────────────────────────────
+in_container() {
+  [ -f /.dockerenv ] && return 0
+  grep -qE 'docker|containerd|kubepods' /proc/1/cgroup 2>/dev/null
+}
+
 check_kernel() {
   local uc apparmor watches
-  uc="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-  apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-  watches="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || true)"
 
-  if [ -n "$uc" ] && [ "$uc" != "1" ]; then
-    warn "⚠ kernel.unprivileged_userns_clone=$uc — bwrap vai falhar (sandbox fail-closed)."
-    warn "  Fix (root): sysctl kernel.unprivileged_userns_clone=1 (persistir em /etc/sysctl.d/)"
+  if in_container; then
+    log "✓ Container detectado — checagens de user namespaces do host puladas (validadas em runtime)"
+  else
+    uc="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+    apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
+
+    if [ -n "$uc" ] && [ "$uc" != "1" ]; then
+      warn "⚠ kernel.unprivileged_userns_clone=$uc — bwrap vai falhar (sandbox fail-closed)."
+      warn "  Fix (root): sysctl kernel.unprivileged_userns_clone=1 (persistir em /etc/sysctl.d/)"
+    fi
+    if [ -n "$apparmor" ] && [ "$apparmor" != "0" ]; then
+      warn "⚠ kernel.apparmor_restrict_unprivileged_userns=1 pode bloquear bwrap no Ubuntu 24.04+."
+      warn "  Se o pi falhar, use 'pi --no-sandbox' ou ajuste o AppArmor."
+    fi
+    if ! has_cmd unshare || ! unshare --user true 2>/dev/null; then
+      warn "⚠ user namespaces não funcionam neste ambiente — bwrap pode falhar."
+    fi
   fi
-  if [ -n "$apparmor" ] && [ "$apparmor" != "0" ]; then
-    warn "⚠ kernel.apparmor_restrict_unprivileged_userns=1 pode bloquear bwrap no Ubuntu 24.04+."
-    warn "  Se o pi falhar, use 'pi --no-sandbox' ou ajuste o AppArmor."
-  fi
+
+  watches="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || true)"
   if [ -n "$watches" ] && [ "$watches" -lt 100000 ]; then
     warn "⚠ fs.inotify.max_user_watches=$watches é baixo (watchers de arquivo)."
     warn "  Sugestão (root): sysctl fs.inotify.max_user_watches=524288"
-  fi
-
-  if ! has_cmd unshare || ! unshare --user true 2>/dev/null; then
-    warn "⚠ user namespaces não funcionam neste ambiente — bwrap pode falhar."
   fi
 }
 
