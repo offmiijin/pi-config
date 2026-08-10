@@ -1,0 +1,4 @@
+{
+  "theme": "miyake-catppuccin",
+  "packages": ["npm:pi-caveman", "npm:pi-mcp-adapter"]
+}
