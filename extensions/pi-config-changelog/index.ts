@@ -2,46 +2,128 @@
  * pi-config-changelog — Exibe o CHANGELOG.md da versão atual do pi-config.
  *
  * Comando: /pi-config-changelog
- *   Lê ~/.pi/agent/CHANGELOG.md (raiz do repositório) e exibe o conteúdo
- *   no chat. O arquivo segue a convenção:
- *     - Branch != main: seção [x.y.z] (última versão lançada) + ## Unreleased
- *     - Na main (release): apenas [x.y.z], sem Unreleased
- *   (Fase 2: parsing de config.json, expansão de ~, tratamento de erros)
+ *   Lê o CHANGELOG.md (raiz do repositório, default ~/.pi/agent/CHANGELOG.md)
+ *   e exibe o conteúdo no chat. Caminho pode ser sobrescrito em config.json
+ *   (changelogPath) na mesma pasta da extensão.
+ *
+ * Convenção do arquivo:
+ *   - Branch != main: seção [x.y.z] (última versão lançada) + ## Unreleased
+ *   - Na main (release): apenas [x.y.z], sem Unreleased
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_CHANGELOG_PATH = join(homedir(), ".pi", "agent", "CHANGELOG.md");
+const CONFIG_FILE = "config.json";
+
+interface Config {
+	changelogPath: string;
+}
+
+type ReadResult =
+	| { kind: "ok"; content: string }
+	| { kind: "missing" }
+	| { kind: "error"; error: string };
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("pi-config-changelog", {
 		description: "Mostra o changelog da versão atual do pi-config",
 		handler: async (_args, ctx) => {
-			const content = readChangelog(DEFAULT_CHANGELOG_PATH);
-			if (content === null) {
-				ctx.ui.notify(
-					`❌ CHANGELOG.md não encontrado em ${DEFAULT_CHANGELOG_PATH}`,
-					"warning",
-				);
-				return;
+			const extDir = getExtensionDir();
+			const { config, configError } = readConfig(extDir);
+			if (configError) {
+				ctx.ui.notify(`⚠️ ${configError} — usando caminho padrão.`, "warning");
 			}
-			if (content.trim() === "") {
+
+			const changelogPath = resolveChangelogPath(config?.changelogPath);
+			const result = readChangelog(changelogPath);
+
+			switch (result.kind) {
+				case "missing":
+					ctx.ui.notify(
+						`❌ CHANGELOG.md não encontrado em ${changelogPath}`,
+						"warning",
+					);
+					return;
+				case "error":
+					ctx.ui.notify(`❌ Erro ao ler CHANGELOG.md: ${result.error}`, "error");
+					return;
+			}
+
+			if (result.content.trim() === "") {
 				ctx.ui.notify("📭 CHANGELOG vazio.", "info");
 				return;
 			}
-			ctx.ui.notify(content, "info");
+			ctx.ui.notify(result.content, "info");
 		},
 	});
 }
 
-function readChangelog(path: string): string | null {
-	if (!existsSync(path)) return null;
+// ── Caminhos ──────────────────────────────────────────────────────────
+
+export function getExtensionDir(): string {
+	const dir = (import.meta as { dirname?: string }).dirname;
+	return dir ?? dirname(fileURLToPath(import.meta.url));
+}
+
+export function expandTilde(p: string): string {
+	if (p === "~") return homedir();
+	if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+	return p;
+}
+
+export function resolveChangelogPath(configured?: string): string {
+	if (!configured || configured.trim() === "") return DEFAULT_CHANGELOG_PATH;
+	return resolve(expandTilde(configured.trim()));
+}
+
+// ── Config ────────────────────────────────────────────────────────────
+
+export function readConfig(
+	extDir: string,
+): { config: Config | null; configError: string | null } {
+	const configPath = join(extDir, CONFIG_FILE);
+	let raw: string;
 	try {
-		return readFileSync(path, "utf-8");
+		raw = readFileSync(configPath, "utf-8");
 	} catch {
-		return null;
+		// Sem config.json → usa padrão, sem aviso
+		return { config: null, configError: null };
+	}
+	try {
+		const parsed = JSON.parse(raw) as Partial<Config>;
+		if (
+			parsed &&
+			typeof parsed.changelogPath === "string" &&
+			parsed.changelogPath.trim() !== ""
+		) {
+			return { config: { changelogPath: parsed.changelogPath }, configError: null };
+		}
+		return { config: null, configError: null };
+	} catch {
+		return { config: null, configError: "config.json inválido" };
+	}
+}
+
+// ── Leitura ───────────────────────────────────────────────────────────
+
+export function readChangelog(path: string): ReadResult {
+	try {
+		return { kind: "ok", content: readFileSync(path, "utf-8") };
+	} catch (err) {
+		if (
+			err &&
+			typeof err === "object" &&
+			"code" in err &&
+			(err as NodeJS.ErrnoException).code === "ENOENT"
+		) {
+			return { kind: "missing" };
+		}
+		const msg = err instanceof Error ? err.message : String(err);
+		return { kind: "error", error: msg };
 	}
 }
