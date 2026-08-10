@@ -38,7 +38,6 @@ memories/
 
 # Configuração pessoal (não distribuível — criada/gerenciada pelo pi)
 caveman.json
-mcp.json
 settings.json
 models-store.json
 

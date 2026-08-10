@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "codegraph",
+      "args": [
+        "serve",
+        "--mcp"
+      ],
+      "lifecycle": "keep-alive",
+      "directTools": true
+    }
+  },
+  "settings": {
+    "toolPrefix": "server"
+  }
+}
