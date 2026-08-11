@@ -425,7 +425,13 @@ describe("tool_result tracking", () => {
 			details: {
 				results: [
 					{ url: "https://a.com", file: "a.txt", size: 1024, status: 200 },
-					{ url: "https://b.com", file: "b.txt", size: 2048, status: 200 },
+					{
+						url: "https://b.com",
+						file: "b.pdf",
+						size: 2048,
+						status: 200,
+						binary: true,
+					},
 				],
 			},
 			isError: false,
@@ -435,11 +441,13 @@ describe("tool_result tracking", () => {
 		expect(r1.status).toBe("done");
 		expect(r1.file).toBe("a.txt");
 		expect(r1.size).toBe(1024);
+		expect(r1.binary).toBeUndefined();
 
 		const r2 = __getState().fetches.get("fetch-1:https://b.com")!;
 		expect(r2.status).toBe("done");
-		expect(r2.file).toBe("b.txt");
+		expect(r2.file).toBe("b.pdf");
 		expect(r2.size).toBe(2048);
+		expect(r2.binary).toBe(true);
 	});
 
 	it("updates web_fetch URLs to error", async () => {
@@ -601,6 +609,44 @@ describe("state query after events", () => {
 		const text = result.content[0].text;
 		expect(text).toContain("Pages Fetched (1)");
 		expect(text).toContain("https_a_com.txt");
+	});
+
+	it("renders binary downloads distinctly", async () => {
+		const { registerWebAgent } = await loadAgent();
+		const api = createFakeAPI();
+		registerWebAgent(api);
+
+		const tool = api.getTool("web_agent")!;
+		await tool.execute("id0", { goal: "research" }, undefined);
+
+		await api.emit("tool_call", {
+			toolName: "web_fetch",
+			toolCallId: "fetch-1",
+			input: { urls: ["https://example.com/doc.pdf"] },
+		});
+		await api.emit("tool_result", {
+			toolName: "web_fetch",
+			toolCallId: "fetch-1",
+			details: {
+				results: [
+					{
+						url: "https://example.com/doc.pdf",
+						file: "https_example_com_doc_pdf.pdf",
+						size: 5120,
+						status: 200,
+						binary: true,
+					},
+				],
+			},
+			isError: false,
+		});
+
+		const result = await tool.execute("id2", {}, undefined);
+
+		const text = result.content[0].text;
+		expect(text).toContain("⬇️");
+		expect(text).toContain("https_example_com_doc_pdf.pdf");
+		expect(text).toContain("binário");
 	});
 });
 

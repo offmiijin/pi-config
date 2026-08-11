@@ -30,6 +30,8 @@ export interface FetchRecord {
 	status: "pending" | "done" | "error";
 	file?: string;
 	size?: number;
+	/** conteúdo baixado como binário (PDF, imagem, arquivo, ...) */
+	binary?: boolean;
 	error?: string;
 }
 
@@ -199,10 +201,16 @@ function formatState(): string {
 	} else {
 		for (const f of fetches) {
 			const icon =
-				f.status === "done" ? "✅" : f.status === "error" ? "❌" : "⏳";
+				f.status === "done"
+					? f.binary
+						? "⬇️"
+						: "✅"
+					: f.status === "error"
+						? "❌"
+						: "⏳";
 			const detail =
 				f.status === "done"
-					? `${f.file} (${((f.size ?? 0) / 1024).toFixed(1)} KB)`
+					? `${f.file} (${((f.size ?? 0) / 1024).toFixed(1)} KB)${f.binary ? " — binário" : ""}`
 					: f.status === "error"
 						? f.error ?? "error"
 						: "pending";
@@ -375,6 +383,7 @@ function registerListeners(pi: ExtensionAPI): void {
 					url: string;
 					file?: string;
 					size?: number;
+					binary?: boolean;
 					error?: string;
 				}>;
 			};
@@ -392,6 +401,7 @@ function registerListeners(pi: ExtensionAPI): void {
 					record.status = "done";
 					record.file = r.file;
 					record.size = r.size;
+					record.binary = r.binary;
 				}
 			}
 		}
