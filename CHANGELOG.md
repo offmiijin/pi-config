@@ -15,3 +15,16 @@
 
 - Instalação automática da configuração do repositório em `~/.pi/agent` com backup automático (PR [#82](https://github.com/offmiijin/pi-config/pull/82))
 - Extensão `pi-config-changelog` com comando `/pi-config-changelog` para visualizar o CHANGELOG da versão atual
+
+### Changed
+
+- Exibição do `/pi-config-changelog` passa a renderizar markdown colorido (tema do pi) com scroll, em vez de texto plano
+- Extensão `commands-hub.ts` renomeada para `thinking-level.ts` (comando `/thinking` inalterado)
+- `/thinking` passa a derivar os níveis de thinking suportados do modelo ativo via `thinkingLevelMap` (inclui nível `max`; oculta e invalida níveis não suportados, ex.: deepseek v4 só high/max)
+- Seleção interativa do `/thinking` usa sufixo `[valor]` na opção e parsing por valor exato (regex), eliminando o parsing frágil por `startsWith`/`includes` de label
+- Nível atual não suportado pelo modelo gera aviso e sugere o nível mais próximo (maior suportado ≤ atual; senão o menor suportado)
+- Notificações do `/thinking` passam a exibir o modelo ativo; suíte de testes unitários `thinking-level.test.ts` (vitest) adicionada ao CI
+
+### Fixed
+
+- `/pi-config-changelog` não trava mais o TUI — substituído `ctx.ui.custom()` por `appendEntry()` + `registerEntryRenderer()`, que renderiza markdown colorido dentro do chat sem risco de congelamento

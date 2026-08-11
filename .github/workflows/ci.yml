@@ -41,6 +41,8 @@ jobs:
         run: npm run test:memory
       - name: doctor (vitest)
         run: npm run test:doctor
+      - name: thinking-level (vitest)
+        run: npm run test:thinking
       - name: Typecheck dev-sandbox
         run: npm run typecheck
       - name: Doctor smoke — ambiente completo sem pendências
