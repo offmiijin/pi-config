@@ -18,6 +18,7 @@
 
 ### Changed
 
+- Nota de quarentena no system prompt (dev-sandbox) passa a listar o critério de decisão dos perfis: `sandbox_fetch` para download (rede, sem acesso ao projeto), `sandbox_quarantine_exec` para instalar/executar código externo (sem rede, sem projeto, escrita só em `.sandbox-cache/runs/<work>`), `sandbox_promote` como única saída de artefatos para o projeto
 - Exibição do `/pi-config-changelog` passa a renderizar markdown colorido (tema do pi) com scroll, em vez de texto plano
 - Extensão `commands-hub.ts` renomeada para `thinking-level.ts` (comando `/thinking` inalterado)
 - `/thinking` passa a derivar os níveis de thinking suportados do modelo ativo via `thinkingLevelMap` (inclui nível `max`; oculta e invalida níveis não suportados, ex.: deepseek v4 só high/max)
