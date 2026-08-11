@@ -28,7 +28,14 @@ const BLOCK_TAGS = new Set([
 	"p", "div", "section", "article", "main", "center", "hgroup", "dialog",
 	"details", "summary", "blockquote", "pre", "figure", "figcaption",
 	"address", "hr", "ul", "ol", "menu", "dir", "dl", "dt", "dd",
+	"table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
 	"h1", "h2", "h3", "h4", "h5", "h6",
+]);
+
+/** Conteúdo de célula que impede tabela GFM (cai no fallback). */
+const COMPLEX_CELL_TAGS = new Set([
+	"ul", "ol", "menu", "dir", "pre", "blockquote", "table", "dl",
+	"figure", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
 ]);
 
 /** Tags removidas integralmente (com descendentes) — Fase 1.8. */
@@ -205,6 +212,25 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 		case "dl":
 			return renderDl($, node, opts);
 
+		case "table":
+			return renderTable($, node, opts);
+
+		case "caption": {
+			const t = renderChildren($, node, opts).trim();
+			return t ? `*${t}*` : null;
+		}
+
+		// Estrutura de tabela: tratada por renderTable
+		case "thead":
+		case "tbody":
+		case "tfoot":
+		case "tr":
+		case "th":
+		case "td":
+		case "colgroup":
+		case "col":
+			return null;
+
 		// ── Inline ──────────────────────────────────────────────────
 		case "strong":
 		case "b": {
@@ -349,12 +375,143 @@ function renderDl($: CheerioAPI, node: Element, opts: RenderOptions): string | n
 }
 
 // ---------------------------------------------------------------------------
+// Tabelas (Fase 3 — GFM com fallback seguro)
+// ---------------------------------------------------------------------------
+
+/** Coleta as <tr> diretas da tabela (ignora tabelas aninhadas em células). */
+function collectRows($: CheerioAPI, table: Element): Element[] {
+	const rows: Element[] = [];
+	for (const child of table.children ?? []) {
+		if (!isElement(child)) continue;
+		const tag = child.tagName.toLowerCase();
+		if (tag === "tr") {
+			rows.push(child);
+		} else if (tag === "thead" || tag === "tbody" || tag === "tfoot") {
+			for (const sub of child.children ?? []) {
+				if (isElement(sub) && sub.tagName.toLowerCase() === "tr") rows.push(sub);
+			}
+		}
+	}
+	return rows;
+}
+
+/** Células (th/td) diretas de uma linha. */
+function collectCells($: CheerioAPI, tr: Element): Element[] {
+	const cells: Element[] = [];
+	for (const child of tr.children ?? []) {
+		if (isElement(child)) {
+			const tag = child.tagName.toLowerCase();
+			if (tag === "th" || tag === "td") cells.push(child);
+		}
+	}
+	return cells;
+}
+
+/** Célula com blocos complexos (listas, código, tabela, ...) → não é GFM. */
+function hasComplexContent($: CheerioAPI, cell: Element): boolean {
+	let complex = false;
+	$(cell)
+		.find("*")
+		.each((_, el) => {
+			if (COMPLEX_CELL_TAGS.has(el.tagName.toLowerCase())) complex = true;
+		});
+	return complex;
+}
+
+/**
+ * Tabela GFM quando segura (colunas consistentes, sem rowspan/colspan>1,
+ * células simples, cabeçalho explícito ou primeira linha th); senão fallback
+ * `**Cabeçalho:** valor`. Nunca emite tabela parcialmente quebrada.
+ */
+function renderTable($: CheerioAPI, node: Element, opts: RenderOptions): string | null {
+	const rows = collectRows($, node);
+	if (rows.length === 0) return null;
+
+	const cellsOf = (tr: Element) => collectCells($, tr);
+	const isTh = (c: Element) => c.tagName.toLowerCase() === "th";
+
+	// Cabeçalho: <thead> (primeira tr) ou primeira linha toda de <th>
+	const isTheadRow = (tr: Element) =>
+		tr.parent?.type === "tag" &&
+		(tr.parent as Element).tagName.toLowerCase() === "thead";
+	let headerIdx = rows.findIndex(isTheadRow);
+	if (headerIdx === -1) {
+		const first = cellsOf(rows[0]);
+		if (first.length > 0 && first.every(isTh)) headerIdx = 0;
+	}
+
+	const headerRow = headerIdx >= 0 ? rows[headerIdx] : undefined;
+	const dataRows = headerRow ? rows.filter((r) => r !== headerRow) : rows;
+	const headerCells = headerRow ? cellsOf(headerRow) : [];
+
+	const allCells = [headerCells, ...dataRows.map(cellsOf)];
+	const colCount = headerCells.length || cellsOf(dataRows[0] ?? rows[0]).length;
+	if (colCount === 0) return null;
+
+	// Validações para GFM
+	const consistent = allCells.every((cells) => cells.length === colCount);
+	let spansOk = true;
+	let simple = true;
+	for (const cells of allCells) {
+		for (const c of cells) {
+			const rowspan = attr($, c, "rowspan");
+			const colspan = attr($, c, "colspan");
+			if ((rowspan && rowspan !== "1") || (colspan && colspan !== "1")) spansOk = false;
+			if (hasComplexContent($, c)) simple = false;
+		}
+	}
+
+	const captionEl = (node.children ?? []).find(
+		(c) => isElement(c) && c.tagName.toLowerCase() === "caption",
+	) as Element | undefined;
+	const caption = captionEl ? renderChildren($, captionEl, opts).trim() : "";
+	const prefix = caption ? `*${caption}*\n\n` : "";
+
+	if (headerCells.length > 0 && consistent && spansOk && simple) {
+		const head = headerCells.map((c) =>
+			renderChildren($, c, { ...opts, escapeCtx: "table-cell" }).trim(),
+		);
+		const body = dataRows.map((tr) =>
+			cellsOf(tr).map((c) =>
+				renderChildren($, c, { ...opts, escapeCtx: "table-cell" }).trim(),
+			),
+		);
+		const sep = `| ${head.map(() => "---").join(" | ")} |`;
+		const lines = [`| ${head.join(" | ")} |`, sep, ...body.map((r) => `| ${r.join(" | ")} |`)];
+		return prefix + lines.join("\n");
+	}
+
+	// Fallback: **Cabeçalho:** valor (rótulos genéricos sem cabeçalho)
+	const labels = headerCells.length
+		? headerCells.map((c) => renderChildren($, c, { ...opts, escapeCtx: "text" }).trim())
+		: [];
+	const groups = dataRows.map((tr) =>
+		cellsOf(tr)
+			.map((c) => renderChildren($, c, { ...opts, escapeCtx: "text" }).trim())
+			.map((v, i) => `**${labels[i] || `Coluna ${i + 1}`}:** ${v}`)
+			.join("\n"),
+	);
+	return prefix + groups.join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
 // Links, imagens e mídia
 // ---------------------------------------------------------------------------
 
+/**
+ * Contexto de escape para inline aninhado: dentro de célula de tabela o
+ * escape de tabela (pipe/br) precisa ser preservado pelo conteúdo aninhado.
+ */
+function inlineCtx(opts: RenderOptions, base: MarkdownEscapeContext): MarkdownEscapeContext {
+	return opts.escapeCtx === "table-cell" ? "table-cell" : base;
+}
+
 function renderLink($: CheerioAPI, node: Element, opts: RenderOptions): string {
 	const href = resolveUrl(attr($, node, "href"), opts.baseUrl, opts.allowedProtocols);
-	const text = renderChildren($, node, { ...opts, escapeCtx: "link-text" }).trim();
+	const text = renderChildren($, node, {
+		...opts,
+		escapeCtx: inlineCtx(opts, "link-text"),
+	}).trim();
 	if (!href) return text || "";
 	const label = text || escapeText(href, "link-text");
 	return `[${label}](${escapeUrl(href)})`;
@@ -369,7 +526,10 @@ function renderArea($: CheerioAPI, node: Element, opts: RenderOptions): string {
 
 function renderImage($: CheerioAPI, node: Element, opts: RenderOptions): string {
 	const src = resolveUrl(attr($, node, "src"), opts.baseUrl, opts.allowedProtocols);
-	const alt = escapeText((attr($, node, "alt") ?? "").replace(/\s+/g, " ").trim(), "image-alt");
+	const alt = escapeText(
+		(attr($, node, "alt") ?? "").replace(/\s+/g, " ").trim(),
+		inlineCtx(opts, "image-alt"),
+	);
 	if (!src) return alt;
 	return `![${alt}](${escapeUrl(src)})`;
 }

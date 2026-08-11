@@ -70,5 +70,6 @@ export function escapeUrl(url: string): string {
 	return clean
 		.replace(/\\/g, "\\\\")
 		.replace(/\(/g, "\\(")
-		.replace(/\)/g, "\\)");
+		.replace(/\)/g, "\\)")
+		.replace(/\|/g, "\\|"); // pipe quebraria célula GFM
 }

@@ -508,3 +508,79 @@ describe("escape por contexto (Fase 2)", () => {
 		expect(escapeText("[x]", "link-text")).toBe("\\[x\\]");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Fase 3 — tabelas GFM
+// ---------------------------------------------------------------------------
+describe("tabelas (Fase 3)", () => {
+	it("tabela simples com thead", () => {
+		const html =
+			"<table><thead><tr><th>Nome</th><th>Valor</th></tr></thead>" +
+			"<tbody><tr><td>A</td><td>1</td></tr><tr><td>B</td><td>2</td></tr></tbody></table>";
+		expect(md(html)).toBe(
+			"| Nome | Valor |\n| --- | --- |\n| A | 1 |\n| B | 2 |",
+		);
+	});
+
+	it("primeira linha toda de th vira cabeçalho sem thead", () => {
+		const html =
+			"<table><tr><th>X</th><th>Y</th></tr><tr><td>1</td><td>2</td></tr></table>";
+		expect(md(html)).toBe("| X | Y |\n| --- | --- |\n| 1 | 2 |");
+	});
+
+	it("célula escapa pipe", () => {
+		const html =
+			"<table><tr><th>A</th><th>B</th></tr><tr><td>x | y</td><td>z</td></tr></table>";
+		expect(md(html)).toContain("| x \\| y | z |");
+	});
+
+	it("caption antes da tabela", () => {
+		const html =
+			"<table><caption>Dados</caption><tr><th>A</th></tr><tr><td>1</td></tr></table>";
+		expect(md(html)).toBe("*Dados*\n\n| A |\n| --- |\n| 1 |");
+	});
+
+	it("colgroup/col ignorados", () => {
+		const html =
+			"<table><colgroup><col></colgroup>" +
+			"<tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>";
+		expect(md(html)).toBe("| A | B |\n| --- | --- |\n| 1 | 2 |");
+	});
+
+	it("colunas inconsistentes → fallback", () => {
+		const html =
+			"<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>";
+		expect(md(html)).toBe("**A:** 1\n**B:** 2\n**Coluna 3:** 3");
+	});
+
+	it("rowspan → fallback", () => {
+		const html =
+			"<table><tr><th>A</th><th>B</th></tr>" +
+			"<tr><td rowspan=\"2\">x</td><td>y</td></tr><tr><td>z</td></tr></table>";
+		expect(md(html)).toBe("**A:** x\n**B:** y\n\n**A:** z");
+	});
+
+	it("célula com lista → fallback", () => {
+		const html =
+			"<table><tr><th>A</th></tr><tr><td><ul><li>1</li><li>2</li></ul></td></tr></table>";
+		expect(md(html)).toBe("**A:** - 1\n- 2");
+	});
+
+	it("sem cabeçalho → fallback com Coluna N", () => {
+		const html =
+			"<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>";
+		expect(md(html)).toBe(
+			"**Coluna 1:** a\n**Coluna 2:** b\n\n**Coluna 1:** c\n**Coluna 2:** d",
+		);
+	});
+
+	it("tabela vazia → nada", () => {
+		expect(md("<table></table>")).toBe("");
+	});
+
+	it("link em célula GFM não quebra a tabela", () => {
+		const html =
+			"<table><tr><th>Site</th></tr><tr><td><a href=\"https://x.com\">link</a></td></tr></table>";
+		expect(md(html)).toBe("| Site |\n| --- |\n| [link](https://x.com) |");
+	});
+});
