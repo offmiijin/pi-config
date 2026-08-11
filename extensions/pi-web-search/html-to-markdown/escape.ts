@@ -12,15 +12,24 @@ import type { MarkdownEscapeContext } from "./types";
  * Escapa texto inline/bloco. Regras:
  *   - `\`, `` ` ``, `*`, `_`, `[`, `]`, `<` — especiais em qualquer lugar
  *   - `#`, `>`, `- `, `+ `, `1. ` — no início de linha
+ *
+ * Contextos (Fase 2.4):
+ *   - heading: prefixo `#` inicial (já coberto pela regra de início de linha)
+ *   - list: marcadores `-`/`*`/`+`/`1.` do texto (já cobertos)
+ *   - table-cell: além do base, escapa `|` e converte quebras em `<br>`
  */
-export function escapeText(text: string, _ctx?: MarkdownEscapeContext): string {
-	return text
+export function escapeText(text: string, ctx: MarkdownEscapeContext = "text"): string {
+	let out = text
 		.replace(/\\/g, "\\\\")
 		.replace(/[`*_\[\]<>]/g, (c) => `\\${c}`)
 		.replace(/^(\s*)#/gm, "$1\\#")
 		.replace(/^(\s*)>/gm, "$1\\>")
 		.replace(/^(\s*)([-+])(\s)/gm, "$1\\$2$3")
 		.replace(/^(\s*)(\d+)\.(\s)/gm, "$1$2\\.$3");
+	if (ctx === "table-cell") {
+		out = out.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+	}
+	return out;
 }
 
 /** Maior sequência de backticks no conteúdo. */

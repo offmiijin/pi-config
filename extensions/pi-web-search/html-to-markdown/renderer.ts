@@ -52,9 +52,9 @@ const FLATTEN_TAGS = new Set([
 	"ruby", "rb", "rtc", "rbc",
 ]);
 
-/** Ponto de entrada: renderiza o documento inteiro. */
-export function render($: CheerioAPI, opts: RenderOptions): string {
-	return renderChildren($, $.root()[0], opts);
+/** Ponto de entrada: renderiza o documento (ou um container selecionado). */
+export function render($: CheerioAPI, opts: RenderOptions, rootEl?: AnyNode): string {
+	return renderChildren($, rootEl ?? $.root()[0], opts);
 }
 
 function isElement(n: AnyNode): n is Element {

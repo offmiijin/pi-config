@@ -12,6 +12,8 @@ import {
 	ALLOWED_PROTOCOLS,
 	KEPT_ATTRIBUTES,
 } from "../html-to-markdown";
+import { escapeText } from "../html-to-markdown/escape";
+import { normalizeMarkdown } from "../html-to-markdown/normalizer";
 
 const opts = { baseUrl: "https://example.com/page" };
 const md = (html: string) => htmlToMarkdown(html, opts).markdown;
@@ -398,5 +400,111 @@ describe("escape e remoção", () => {
 
 	it("time usa datetime quando não há texto", () => {
 		expect(md("<time datetime=\"2026-01-01\">1 jan</time>")).toBe("1 jan");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fase 2 — sanitização DOM
+// ---------------------------------------------------------------------------
+describe("sanitização (Fase 2)", () => {
+	it("remove elementos hidden", () => {
+		expect(md("<div hidden><p>secreto</p></div><p>público</p>")).toBe("público");
+	});
+
+	it("remove nós vazios (pais esvaziam em cascata)", () => {
+		expect(md("<p>a</p><div><span></span></div><p>b</p>")).toBe("a\n\nb");
+	});
+
+	it("mantém br/img/hr (void)", () => {
+		expect(md("<p>a<br>b</p>")).toBe("a\nb");
+		expect(md("<p>x</p><hr><p>y</p>")).toBe("x\n\n---\n\ny");
+	});
+
+	it("remove atributos fora da whitelist (on*, style, id, data-*, aria-*)", () => {
+		expect(
+			md('<p style="color:red" id="a" data-x="1" aria-label="z" onclick="f()">texto</p>'),
+		).toBe("texto");
+	});
+
+	it("preserva class language-* apenas em code", () => {
+		expect(md('<pre><code class="language-ts pretty">x</code></pre>')).toBe(
+			"```ts\nx\n```",
+		);
+		expect(md('<pre><code class="pretty">x</code></pre>')).toBe("```\nx\n```");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fase 2 — escolha de conteúdo
+// ---------------------------------------------------------------------------
+describe("escolha de conteúdo (Fase 2)", () => {
+	it("prefere article sobre o resto do documento", () => {
+		expect(md("<div>ruído</div><article><p>conteúdo</p></article>")).toBe(
+			"conteúdo",
+		);
+	});
+
+	it("usa main quando não há article", () => {
+		const html =
+			"<header>h</header><main><p>conteúdo</p></main><aside>extra</aside>";
+		expect(md(html)).toBe("conteúdo");
+	});
+
+	it("usa [role=main]", () => {
+		expect(md('<div role="main"><p>x</p></div>')).toBe("x");
+	});
+
+	it("sem candidato → documento inteiro", () => {
+		expect(md("<div>a</div><div>b</div>")).toBe("a\n\nb");
+	});
+
+	it("article preferido dentro de main", () => {
+		expect(md("<main><p>m</p><article><p>a</p></article></main>")).toBe("a");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fase 2 — normalização de espaçamento
+// ---------------------------------------------------------------------------
+describe("normalização de espaçamento (Fase 2)", () => {
+	it("remove espaço antes de pontuação", () => {
+		expect(md("<p>olá , mundo .</p>")).toBe("olá, mundo.");
+	});
+
+	it("colapsa 3+ quebras para duas", () => {
+		expect(normalizeMarkdown("a\n\n\n\nb")).toBe("a\n\nb");
+	});
+
+	it("preserva blocos de código intactos (espaços/linhas em branco)", () => {
+		const html = "<pre><code>  a  \n\n\n  b</code></pre>";
+		expect(md(html)).toBe("```\n  a  \n\n\n  b\n```");
+	});
+
+	it("remove espaços finais em blockquote", () => {
+		expect(md("<blockquote><p>citação </p></blockquote>")).toBe("> citação");
+	});
+
+	it("não mexe em fence nem em linhas em branco internas", () => {
+		expect(normalizeMarkdown("```js\na \n\n\n  b\n```")).toBe(
+			"```js\na \n\n\n  b\n```",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fase 2 — escape por contexto
+// ---------------------------------------------------------------------------
+describe("escape por contexto (Fase 2)", () => {
+	it("table-cell escapa | e converte quebras em <br>", () => {
+		expect(escapeText("a | b\nc", "table-cell")).toBe("a \\| b<br>c");
+	});
+
+	it("texto padrão não escapa pipe", () => {
+		expect(escapeText("a | b")).toBe("a | b");
+	});
+
+	it("heading/link-text mantêm regras base", () => {
+		expect(escapeText("*x*", "heading")).toBe("\\*x\\*");
+		expect(escapeText("[x]", "link-text")).toBe("\\[x\\]");
 	});
 });
