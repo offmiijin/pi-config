@@ -18,6 +18,7 @@
 
 ### Changed
 
+- `doctor_check`/`/doctor` passam a validar `pdftotext` (poppler-utils) para extração de PDF do pi-web-search, com hints de instalação por distro
 - `web_fetch` passa a baixar conteúdo não-texto (PDF, imagens, arquivos, ...) como binário para `.sandbox-cache/fetch/`, com extensão derivada do Content-Type (fallback: extensão da URL ou `.bin`), em vez de falhar com `UNSUPPORTED`
 - `web_fetch` passa a salvar páginas (texto) em `.sandbox-cache/fetch/page_<id>/` — um único diretório por sessão do pi (mesmo dir dos downloads binários e da raiz de downloads do `sandbox_fetch`), substituindo o antigo `.sandbox-cache/web-fetch/page_*` (um dir por chamada)
 - `web_agent` passa a distinguir downloads binários no estado da pesquisa (ícone ⬇️ + rótulo "binário" nas Pages Fetched)
