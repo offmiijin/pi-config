@@ -178,6 +178,11 @@ export interface BwrapCall {
   command: string[];
   /** Diretório de trabalho dentro do sandbox. */
   cwd: string;
+  /** Diretório base (workspace) para resolução de mounts/quarantena.
+   *  Necessário quando cwd é um dir de quarentena (fetch/runs) — os
+   *  mounts devem ser resolvidos a partir do workspace, não do próprio
+   *  dir de quarentena (senão vira path aninhado). Padrão: cwd. */
+  baseCwd?: string;
   /** Conteúdo opcional para stdin. */
   stdin?: string;
   /** Sinal de aborto. */

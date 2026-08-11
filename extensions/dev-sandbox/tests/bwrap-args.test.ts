@@ -528,4 +528,26 @@ describe("buildBwrapArgs — cache", () => {
     expect(flagValues(argsA, "--bind")).toContain(sockA);
     expect(flagValues(argsB, "--bind")).toContain(sockB);
   });
+
+  it("perfil fetch monta o dir de fetch real (sem path aninhado)", () => {
+    const cwd = fixtureProj();
+    const args = buildBwrapArgs(makeConfig(), cwd, "fetch");
+    const binds = flagValues(args, "--bind");
+    expect(binds).toContain(join(cwd, ".sandbox-cache", "fetch"));
+    // Regressão: cwd de quarentena como base gerava bind aninhado
+    // (<fetch>/.sandbox-cache/fetch) — o dir real nunca era montado.
+    for (const b of binds) {
+      expect(b.includes(join(".sandbox-cache", "fetch", ".sandbox-cache"))).toBe(false);
+    }
+  });
+
+  it("perfil quarantine monta o dir de runs real (sem path aninhado)", () => {
+    const cwd = fixtureProj();
+    const args = buildBwrapArgs(makeConfig(), cwd, "quarantine");
+    const binds = flagValues(args, "--bind");
+    expect(binds).toContain(join(cwd, ".sandbox-cache", "runs"));
+    for (const b of binds) {
+      expect(b.includes(join(".sandbox-cache", "runs", ".sandbox-cache"))).toBe(false);
+    }
+  });
 });

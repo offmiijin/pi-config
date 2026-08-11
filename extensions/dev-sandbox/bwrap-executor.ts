@@ -993,7 +993,11 @@ export function execInSandbox(
       return;
     }
 
-    const baseArgs = buildBwrapArgs(config, opts.cwd, profile);
+    // Base para resolução de mounts — difere de opts.cwd nos perfis de
+    // quarentena, onde o processo roda dentro do próprio dir de quarentena
+    // e os mounts precisam ser resolvidos a partir do workspace.
+    const baseCwd = opts.baseCwd ?? opts.cwd;
+    const baseArgs = buildBwrapArgs(config, baseCwd, profile);
     let args = [...baseArgs];
 
     // ── Seccomp BPF ──────────────────────────
@@ -1013,7 +1017,7 @@ export function execInSandbox(
 
     // ── Landlock + comando ───────────────────
     // Landlock é aplicado dentro do bwrap, após mounts e seccomp.
-    args = wrapWithLandlock(args, opts.command, config, opts.cwd, profile);
+    args = wrapWithLandlock(args, opts.command, config, baseCwd, profile);
 
     // stdio: stdin, stdout, stderr, + opcionalmente FD 3 (BPF)
     const stdio: any[] = ["pipe", "pipe", "pipe"];

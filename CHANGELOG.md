@@ -18,6 +18,7 @@
 
 ### Changed
 
+- Nota de quarentena no system prompt (dev-sandbox) passa a listar o critério de decisão dos perfis: `sandbox_fetch` para download (rede, sem acesso ao projeto), `sandbox_quarantine_exec` para instalar/executar código externo (sem rede, sem projeto, escrita só em `.sandbox-cache/runs/<work>`), `sandbox_promote` como única saída de artefatos para o projeto
 - Exibição do `/pi-config-changelog` passa a renderizar markdown colorido (tema do pi) com scroll, em vez de texto plano
 - Extensão `commands-hub.ts` renomeada para `thinking-level.ts` (comando `/thinking` inalterado)
 - `/thinking` passa a derivar os níveis de thinking suportados do modelo ativo via `thinkingLevelMap` (inclui nível `max`; oculta e invalida níveis não suportados, ex.: deepseek v4 só high/max)
@@ -28,3 +29,4 @@
 ### Fixed
 
 - `/pi-config-changelog` não trava mais o TUI — substituído `ctx.ui.custom()` por `appendEntry()` + `registerEntryRenderer()`, que renderiza markdown colorido dentro do chat sem risco de congelamento
+- Perfis de quarentena `fetch` e `quarantine` quebrados: `sandbox_fetch` falhava com `curl: (23)` e `sandbox_quarantine_exec` não conseguia ler/escrever no workdir (`Permission denied`). A resolução dos dirs de quarentena usava como base o próprio dir de quarentena (`cwd` do processo), gerando bind mounts aninhados (`<fetch>/.sandbox-cache/fetch`) — o dir real nunca era montado. Novo campo `baseCwd` no `BwrapCall` separa a base dos mounts (workspace) do cwd do processo; testes de regressão adicionados em `bwrap-args.test.ts` e `quarantine.test.ts`
