@@ -161,12 +161,24 @@ describe("fetchPages", () => {
 		expect(output.results).toHaveLength(1);
 	});
 
-	it("outputDir is under <cwd>/.sandbox-cache/web-fetch/ with date+hex subdir", async () => {
+	it("outputDir is <cwd>/.sandbox-cache/fetch/page_<key>/", async () => {
 		const output = await fetchPages(["https://example.com"], testCwd);
-		const expectedPrefix = `${testCwd}/.sandbox-cache/web-fetch/page_`;
-		expect(output.outputDir.startsWith(expectedPrefix)).toBe(true);
-		// Suffix: YYYYMMDD_XXXXXXXX (8-digit date + underscore + 8-char hex)
-		expect(output.outputDir.slice(expectedPrefix.length)).toMatch(/^\d{8}_[0-9a-f]{8}$/);
+		expect(output.outputDir).toBe(
+			`${testCwd}/.sandbox-cache/fetch/page_default`,
+		);
+	});
+
+	it("uses session key to scope the output dir", async () => {
+		const output = await fetchPages(
+			["https://example.com"],
+			testCwd,
+			undefined,
+			3,
+			"sess-abc-123",
+		);
+		expect(output.outputDir).toBe(
+			`${testCwd}/.sandbox-cache/fetch/page_sess-abc-123`,
+		);
 	});
 
 	it("processes multiple URLs", async () => {
@@ -206,7 +218,7 @@ describe("fetchPages", () => {
 		expect(output.results[0].error).toBe("ENOTFOUND");
 	});
 
-	it("downloads PDF as binary to .sandbox-cache/fetch/", async () => {
+	it("downloads PDF as binary to the session dir", async () => {
 		(globalThis.fetch as any).mockResolvedValue({
 			ok: true,
 			status: 200,
@@ -227,7 +239,7 @@ describe("fetchPages", () => {
 		expect(r.binary).toBe(true);
 		expect(r.file).toBe("https_example_com_doc_pdf.pdf");
 		expect(r.size).toBeGreaterThan(0);
-		expect(output.binaryDir).toBe(`${testCwd}/.sandbox-cache/fetch`);
+		expect(output.binaryDir).toBe(`${testCwd}/.sandbox-cache/fetch/page_default`);
 	});
 
 	it("falls back to .bin when content-type is unknown", async () => {

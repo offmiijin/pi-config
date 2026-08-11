@@ -2,12 +2,13 @@
  * Web Search Extension — Page Fetcher
  *
  * Fetches pages in parallel (max 10 concurrent), extracts clean text with
- * cheerio, and saves each page to <cwd>/.sandbox-cache/web-fetch/page_<date>_<randomhex>/.
- * Non-text content (PDF, images, archives, ...) is downloaded as-is to
- * <cwd>/.sandbox-cache/fetch/.
+ * cheerio, and saves everything (text + binary) under
+ * <cwd>/.sandbox-cache/fetch/page_<sessionId>/ — ONE directory per pi session.
  *
  * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
- * namespace (which mounts $CWD read-write but has isolated /tmp).
+ * namespace (which mounts $CWD read-write but has isolated /tmp). The fetch root
+ * is the same dir used by dev-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch);
+ * page dirs (page_*) live inside it and are cleaned after 7 days.
  */
 
 import * as cheerio from "cheerio";
@@ -37,7 +38,7 @@ export interface FetchItemResult {
 
 export interface FetchOutput {
 	outputDir: string;
-	/** diretório dos arquivos binários (.sandbox-cache/fetch/) — presente quando houve download */
+	/** diretório dos arquivos binários (= outputDir) — presente quando houve download */
 	binaryDir?: string;
 	total: number;
 	succeeded: number;
@@ -77,16 +78,14 @@ export function extractText(html: string): string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getDateStr(): string {
-	const now = new Date();
-	const y = now.getFullYear();
-	const m = String(now.getMonth() + 1).padStart(2, "0");
-	const d = String(now.getDate()).padStart(2, "0");
-	return `${y}${m}${d}`;
-}
-
 function randomHex(length: number): string {
 	return Math.random().toString(16).slice(2, 2 + length);
+}
+
+/** Sanitiza o id da sessão para uso como nome de diretório. */
+function sanitizeSessionKey(key: string): string {
+	const clean = key.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/^_+|_+$/g, "");
+	return (clean || "default").slice(0, 64);
 }
 
 // ---------------------------------------------------------------------------
@@ -165,10 +164,12 @@ function uniqueFilename(filename: string, used: Set<string>): string {
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
- * Remove cache directories older than 7 days.
+ * Remove page directories (page_*, um por sessão do pi) older than 7 days.
+ * Only touches dirs with the page_ prefix — artifacts of sandbox_fetch
+ * at the fetch root (files, ca-extract/, ...) are never removed.
  * Silently ignores errors (permission, race, etc.).
  */
-async function cleanOldCaches(baseDir: string): Promise<void> {
+async function cleanOldPages(baseDir: string): Promise<void> {
 	const now = Date.now();
 	try {
 		const entries = await fs.readdir(baseDir, { withFileTypes: true });
@@ -200,9 +201,12 @@ async function cleanOldCaches(baseDir: string): Promise<void> {
  *   - respects the external `signal` for Esc-based abort
  *
  * Successful pages are saved as clean text to:
- *   <cwd>/.sandbox-cache/web-fetch/page_<YYYYMMDD>_<8-char-hex>/<sanitised-url>.txt
+ *   <cwd>/.sandbox-cache/fetch/page_<sessionId>/<sanitised-url>.txt
  * Non-text responses (PDF, images, archives, ...) are downloaded as-is to:
- *   <cwd>/.sandbox-cache/fetch/<sanitised-url>.<ext>
+ *   <cwd>/.sandbox-cache/fetch/page_<sessionId>/<sanitised-url>.<ext>
+ *
+ * `sessionKey` escopa a saída: um único diretório por sessão do pi (todas as
+ * chamadas de web_fetch da mesma sessão compartilham o dir). Fallback: "default".
  *
  * Uses project-local .sandbox-cache/ so files are accessible inside dev-sandbox's
  * bwrap namespace (which mounts $CWD read-write but has isolated /tmp).
@@ -212,18 +216,16 @@ export async function fetchPages(
 	cwd: string,
 	signal?: AbortSignal,
 	maxConcurrent: number = DEFAULT_CONCURRENCY,
+	sessionKey: string = "default",
 ): Promise<FetchOutput> {
-	// 1. Clean caches older than 7 days, then create fresh output directory
-	const dateStr = getDateStr();
-	const randHex = randomHex(8);
-	const cacheRoot = path.join(cwd, ".sandbox-cache", "web-fetch");
-	await cleanOldCaches(cacheRoot);
-	const outputDir = path.join(cacheRoot, `page_${dateStr}_${randHex}`);
-	await fs.mkdir(outputDir, { recursive: true });
-
-	// Diretório para downloads binários (PDF, imagens, arquivos...)
-	const binaryDir = path.join(cwd, ".sandbox-cache", "fetch");
-	await fs.mkdir(binaryDir, { recursive: true });
+	// 1. Clean pages older than 7 days, then resolve the session dir
+	const fetchRoot = path.join(cwd, ".sandbox-cache", "fetch");
+	await cleanOldPages(fetchRoot);
+	// Um único dir por sessão — texto e binário juntos
+	const sessionDir = path.join(fetchRoot, `page_${sanitizeSessionKey(sessionKey)}`);
+	await fs.mkdir(sessionDir, { recursive: true });
+	const outputDir = sessionDir;
+	const binaryDir = sessionDir;
 
 	const results: FetchItemResult[] = [];
 	const usedFilenames = new Set<string>();
