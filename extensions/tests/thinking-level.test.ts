@@ -13,7 +13,7 @@ import {
 	getSupportedLevels,
 	parseSelectedLevel,
 	clampLevel,
-} from "../thinking-level";
+} from "../01-thinking-level";
 
 describe("getSupportedLevels", () => {
 	it("sem modelo retorna níveis padrão off..high", () => {
