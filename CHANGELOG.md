@@ -11,6 +11,10 @@
 
 ## Unreleased
 
+### Removed
+
+- Etapa opcional de configuração do SearXNG removida do `install.sh` (Docker + container local); busca local agora configura manualmente via `/web_search config`
+
 ### Added
 
 - Instalação automática da configuração do repositório em `~/.pi/agent` com backup automático (PR [#82](https://github.com/offmiijin/pi-config/pull/82))
