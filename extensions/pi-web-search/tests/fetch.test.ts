@@ -22,7 +22,7 @@ vi.mock("../utils", async (importOriginal) => {
 	};
 });
 
-import { extractText, fetchPages } from "../fetch";
+import { extractText, fetchPages, extensionForContentType } from "../fetch";
 
 // Test cwd — used for all fetchPages calls
 const testCwd = "/home/user/project";
@@ -206,7 +206,7 @@ describe("fetchPages", () => {
 		expect(output.results[0].error).toBe("ENOTFOUND");
 	});
 
-	it("skips non-HTML content types", async () => {
+	it("downloads PDF as binary to .sandbox-cache/fetch/", async () => {
 		(globalThis.fetch as any).mockResolvedValue({
 			ok: true,
 			status: 200,
@@ -215,12 +215,50 @@ describe("fetchPages", () => {
 					name.toLowerCase() === "content-type" ? "application/pdf" : null,
 			},
 			text: async () => "%PDF-1.4...",
+			arrayBuffer: async () =>
+				new TextEncoder().encode("%PDF-1.4...").buffer,
 		});
 
 		const output = await fetchPages(["https://example.com/doc.pdf"], testCwd);
-		expect(output.succeeded).toBe(0);
-		expect(output.failed).toBe(1);
-		expect(output.results[0].error).toContain("UNSUPPORTED");
+		expect(output.succeeded).toBe(1);
+		expect(output.failed).toBe(0);
+		const r = output.results[0];
+		expect(r.error).toBeUndefined();
+		expect(r.binary).toBe(true);
+		expect(r.file).toBe("https_example_com_doc_pdf.pdf");
+		expect(r.size).toBeGreaterThan(0);
+		expect(output.binaryDir).toBe(`${testCwd}/.sandbox-cache/fetch`);
+	});
+
+	it("falls back to .bin when content-type is unknown", async () => {
+		(globalThis.fetch as any).mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: {
+				get: (name: string) =>
+					name.toLowerCase() === "content-type" ? "application/octet-stream" : null,
+			},
+			text: async () => "\u0000\u0001\u0002",
+			arrayBuffer: async () =>
+				new TextEncoder().encode("\u0000\u0001\u0002").buffer,
+		});
+
+		const output = await fetchPages(["https://example.com/blob"], testCwd);
+		expect(output.succeeded).toBe(1);
+		expect(output.results[0].file).toBe("https_example_com_blob.bin");
+	});
+
+	it("uses URL extension when content-type is absent", async () => {
+		(globalThis.fetch as any).mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: { get: () => null },
+			text: async () => "data",
+			arrayBuffer: async () => new TextEncoder().encode("data").buffer,
+		});
+
+		const output = await fetchPages(["https://example.com/file.zip"], testCwd);
+		expect(output.results[0].file).toBe("https_example_com_file_zip.zip");
 	});
 
 	it("handles empty URL list", async () => {
@@ -263,5 +301,38 @@ describe("fetchPages", () => {
 		], testCwd);
 		expect(output.succeeded).toBe(1);
 		expect(output.failed).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// extensionForContentType — pure function
+// ---------------------------------------------------------------------------
+describe("extensionForContentType", () => {
+	it("maps known application types", () => {
+		expect(extensionForContentType("application/pdf", "https://x/a")).toBe("pdf");
+		expect(extensionForContentType("application/zip", "https://x/a")).toBe("zip");
+		expect(
+			extensionForContentType(
+				"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				"https://x/a",
+			),
+		).toBe("docx");
+	});
+
+	it("maps image/audio/video subtypes", () => {
+		expect(extensionForContentType("image/png", "https://x/a")).toBe("png");
+		expect(extensionForContentType("image/jpeg", "https://x/a")).toBe("jpg");
+		expect(extensionForContentType("image/svg+xml", "https://x/a")).toBe("svg");
+		expect(extensionForContentType("video/mp4", "https://x/a")).toBe("mp4");
+	});
+
+	it("ignores charset suffix", () => {
+		expect(extensionForContentType("text/html; charset=utf-8", "https://x/a")).toBe("bin");
+	});
+
+	it("falls back to URL extension then .bin", () => {
+		expect(extensionForContentType("application/octet-stream", "https://x/file.tar.gz")).toBe("gz");
+		expect(extensionForContentType("application/octet-stream", "https://x/blob")).toBe("bin");
+		expect(extensionForContentType("", "https://x/blob")).toBe("bin");
 	});
 });

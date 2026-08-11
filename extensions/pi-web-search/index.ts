@@ -224,6 +224,7 @@ export default function (pi: ExtensionAPI) {
 			"Fetch full page content from a list of URLs. " +
 			"Extracts clean text from each page (strips HTML tags, scripts, navigation) " +
 			"and saves to .sandbox-cache/web-fetch/page_<date>_<random>/. " +
+			"Non-text content (PDF, images, archives, ...) is downloaded as-is to .sandbox-cache/fetch/. " +
 			"Processes up to 10 URLs in parallel; excess URLs are queued. " +
 			"Each request uses a random User-Agent and a small random delay to avoid blocking. " +
 			"Call after web_search to get the actual content of the URLs found.",
@@ -292,7 +293,8 @@ export default function (pi: ExtensionAPI) {
 			for (const r of output.results) {
 				if (r.file && r.size !== undefined) {
 					const sizeKB = (r.size / 1024).toFixed(1);
-					lines.push(`  ✅ ${r.file} (${sizeKB} KB)`);
+					const icon = r.binary ? "⬇️" : "✅";
+					lines.push(`  ${icon} ${r.file} (${sizeKB} KB)`);
 					lines.push(`     ${r.url}`);
 				} else if (r.error) {
 					lines.push(`  ❌ ${r.url}`);
@@ -310,6 +312,12 @@ export default function (pi: ExtensionAPI) {
 			if (output.succeeded > 0) {
 				lines.push(
 					`Use \`read\` to inspect the saved files under ${output.outputDir}/`,
+				);
+			}
+
+			if (output.binaryDir) {
+				lines.push(
+					`Binary downloads (PDF/images/...) saved under ${output.binaryDir}/`,
 				);
 			}
 

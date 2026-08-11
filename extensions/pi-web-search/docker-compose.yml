@@ -12,7 +12,7 @@ services:
       - SEARXNG_METHOD=GET
     volumes:
       - ./searxng:/etc/searxng:rw
-    restart: unless-stopped
+    restart: always
 
 # ── After first start ──────────────────────────────────────────────────
 # SearXNG needs 'json' in search.formats for the API to work.

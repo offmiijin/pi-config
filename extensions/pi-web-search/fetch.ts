@@ -3,6 +3,8 @@
  *
  * Fetches pages in parallel (max 10 concurrent), extracts clean text with
  * cheerio, and saves each page to <cwd>/.sandbox-cache/web-fetch/page_<date>_<randomhex>/.
+ * Non-text content (PDF, images, archives, ...) is downloaded as-is to
+ * <cwd>/.sandbox-cache/fetch/.
  *
  * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
  * namespace (which mounts $CWD read-write but has isolated /tmp).
@@ -29,10 +31,14 @@ export interface FetchItemResult {
 	size?: number;
 	status?: number;
 	error?: string;
+	/** true quando o conteúdo foi baixado como arquivo binário (não texto) */
+	binary?: boolean;
 }
 
 export interface FetchOutput {
 	outputDir: string;
+	/** diretório dos arquivos binários (.sandbox-cache/fetch/) — presente quando houve download */
+	binaryDir?: string;
 	total: number;
 	succeeded: number;
 	failed: number;
@@ -83,6 +89,74 @@ function randomHex(length: number): string {
 	return Math.random().toString(16).slice(2, 2 + length);
 }
 
+// ---------------------------------------------------------------------------
+// Binary content
+// ---------------------------------------------------------------------------
+
+/**
+ * Extensão de arquivo a partir do Content-Type.
+ * Tipos conhecidos → mapa fixo; image/audio/video/font → subtipo;
+ * senão extensão da URL; último recurso `.bin`.
+ */
+/** @visibleForTesting */
+export function extensionForContentType(contentType: string, url: string): string {
+	const ct = (contentType.split(";")[0] || "").trim().toLowerCase();
+
+	const special: Record<string, string> = {
+		"application/pdf": "pdf",
+		"application/zip": "zip",
+		"application/gzip": "gz",
+		"application/x-tar": "tar",
+		"application/x-7z-compressed": "7z",
+		"application/x-rar-compressed": "rar",
+		"application/msword": "doc",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+		"application/vnd.ms-excel": "xls",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+		"application/vnd.ms-powerpoint": "ppt",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+		"application/json": "json",
+		"application/xml": "xml",
+	};
+	if (special[ct]) return special[ct];
+
+	const [main, sub] = ct.split("/");
+	if (main && sub && ["image", "audio", "video", "font"].includes(main)) {
+		const s = sub.split("+")[0];
+		return s === "jpeg" ? "jpg" : s || "bin";
+	}
+
+	// Fallback: extensão do caminho da URL
+	try {
+		const urlExt = path
+			.extname(new URL(url).pathname)
+			.replace(/^\./, "")
+			.toLowerCase();
+		if (urlExt && urlExt.length <= 10) return urlExt;
+	} catch { /* URL inválida — usa .bin */ }
+	return "bin";
+}
+
+/** Nome base sanitizado da URL, sem extensão. */
+function urlToBaseName(url: string): string {
+	return sanitizeFilename(url).replace(/\.txt$/, "");
+}
+
+/** Garante nome único: colisões ganham sufixo _2, _3... preservando a extensão. */
+function uniqueFilename(filename: string, used: Set<string>): string {
+	let f = filename;
+	while (used.has(f)) {
+		const dot = f.lastIndexOf(".");
+		const base = dot > 0 ? f.slice(0, dot) : f;
+		const ext = dot > 0 ? f.slice(dot) : "";
+		const m = base.match(/_\d+$/);
+		f = m
+			? `${base.replace(/_\d+$/, "")}_${parseInt(m[0].slice(1)) + 1}${ext}`
+			: `${base}_2${ext}`;
+	}
+	return f;
+}
+
 
 // ---------------------------------------------------------------------------
 // Cache cleanup
@@ -127,6 +201,8 @@ async function cleanOldCaches(baseDir: string): Promise<void> {
  *
  * Successful pages are saved as clean text to:
  *   <cwd>/.sandbox-cache/web-fetch/page_<YYYYMMDD>_<8-char-hex>/<sanitised-url>.txt
+ * Non-text responses (PDF, images, archives, ...) are downloaded as-is to:
+ *   <cwd>/.sandbox-cache/fetch/<sanitised-url>.<ext>
  *
  * Uses project-local .sandbox-cache/ so files are accessible inside dev-sandbox's
  * bwrap namespace (which mounts $CWD read-write but has isolated /tmp).
@@ -144,6 +220,10 @@ export async function fetchPages(
 	await cleanOldCaches(cacheRoot);
 	const outputDir = path.join(cacheRoot, `page_${dateStr}_${randHex}`);
 	await fs.mkdir(outputDir, { recursive: true });
+
+	// Diretório para downloads binários (PDF, imagens, arquivos...)
+	const binaryDir = path.join(cwd, ".sandbox-cache", "fetch");
+	await fs.mkdir(binaryDir, { recursive: true });
 
 	const results: FetchItemResult[] = [];
 	const usedFilenames = new Set<string>();
@@ -191,44 +271,42 @@ export async function fetchPages(
 				return;
 			}
 
-			// Only process HTML / plain text responses
+			// Only process HTML / plain text responses; everything else is
+			// downloaded as-is to .sandbox-cache/fetch/ (PDF, imagens, ...)
 			const contentType = (response.headers.get("content-type") || "").toLowerCase();
-			if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+			const isText =
+				contentType.includes("text/html") || contentType.includes("text/plain");
+
+			let filename: string;
+			if (isText) {
+				const html = await response.text();
+				const text = extractText(html);
+				filename = uniqueFilename(`${urlToBaseName(url)}.txt`, usedFilenames);
+				const filePath = path.join(outputDir, filename);
+				await fs.writeFile(filePath, text, "utf-8");
+
 				results.push({
 					url,
-					error: `UNSUPPORTED: ${contentType}`,
+					file: filename,
+					size: Buffer.byteLength(text, "utf-8"),
 					status: response.status,
 				});
-				return;
+			} else {
+				// Download binário: preserva bytes originais
+				const ext = extensionForContentType(contentType, url);
+				filename = uniqueFilename(`${urlToBaseName(url)}.${ext}`, usedFilenames);
+				const buf = Buffer.from(await response.arrayBuffer());
+				const filePath = path.join(binaryDir, filename);
+				await fs.writeFile(filePath, buf);
+
+				results.push({
+					url,
+					file: filename,
+					size: buf.byteLength,
+					status: response.status,
+					binary: true,
+				});
 			}
-
-			const html = await response.text();
-			const text = extractText(html);
-
-			// ── Save to file ────────────────────────────────────────
-			// Collision-safe filename: if two URLs sanitise to the same
-			// name, the second gets a `_2` suffix.
-			let filename = sanitizeFilename(url);
-			while (usedFilenames.has(filename)) {
-				const base = filename.replace(/\.txt$/, "");
-				const match = base.match(/_(\d+)$/);
-				if (match) {
-					filename = `${base.replace(/_\d+$/, "")}_${parseInt(match[1]) + 1}.txt`;
-				} else {
-					filename = `${base}_2.txt`;
-				}
-			}
-			usedFilenames.add(filename);
-
-			const filePath = path.join(outputDir, filename);
-			await fs.writeFile(filePath, text, "utf-8");
-
-			results.push({
-				url,
-				file: filename,
-				size: Buffer.byteLength(text, "utf-8"),
-				status: response.status,
-			});
 		} catch (err: unknown) {
 			const name = err instanceof Error ? err.name : "";
 			const message = err instanceof Error ? err.message : String(err);
@@ -250,5 +328,13 @@ export async function fetchPages(
 	const succeeded = results.filter((r) => !r.error).length;
 	const failed = results.filter((r) => r.error).length;
 
-	return { outputDir, total: urls.length, succeeded, failed, results };
+	const hasBinary = results.some((r) => r.binary);
+	return {
+		outputDir,
+		binaryDir: hasBinary ? binaryDir : undefined,
+		total: urls.length,
+		succeeded,
+		failed,
+		results,
+	};
 }
