@@ -719,3 +719,41 @@ describe("conteúdo editorial (Fase 5)", () => {
 		);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Fase 6 — tags obsoletas
+// ---------------------------------------------------------------------------
+describe("obsoletas (Fase 6)", () => {
+	it("font/basefont/tt → filhos", () => {
+		expect(md('<p><font color="red">texto</font></p>')).toBe("texto");
+		expect(md("<p><tt>mono</tt></p>")).toBe("mono");
+		expect(md("<p><basefont>base</basefont></p>")).toBe("base");
+	});
+
+	it("marquee/blink/content → texto interno", () => {
+		expect(md("<p><marquee>rola</marquee> <blink>pisca</blink></p>")).toBe(
+			"rola pisca",
+		);
+		expect(md("<p><content>slot</content></p>")).toBe("slot");
+	});
+
+	it("keygen/command/isindex removidos", () => {
+		expect(md("<p>x</p><keygen><command><isindex>")).toBe("x");
+	});
+
+	it("listing decodifica entidades → código", () => {
+		expect(md("<listing>a &lt; b</listing>")).toBe("```\na < b\n```");
+	});
+
+	it("xmp preserva markup cru → código", () => {
+		expect(md("<xmp>código <b>x</b></xmp>")).toBe("```\ncódigo <b>x</b>\n```");
+	});
+
+	it("plaintext vira código (remove </plaintext> literal)", () => {
+		expect(md("<plaintext>raw</plaintext>")).toBe("```\nraw\n```");
+	});
+
+	it("tag desconhecida preserva só o texto", () => {
+		expect(md("<p><my-tag attr=\"v\">interno</my-tag></p>")).toBe("interno");
+	});
+});

@@ -30,6 +30,7 @@ const BLOCK_TAGS = new Set([
 	"address", "hr", "ul", "ol", "menu", "dir", "dl", "dt", "dd",
 	"table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
 	"form", "fieldset", "legend", "select", "datalist", "textarea", "optgroup",
+	"listing", "xmp", "plaintext",
 	"h1", "h2", "h3", "h4", "h5", "h6",
 ]);
 
@@ -39,12 +40,13 @@ const COMPLEX_CELL_TAGS = new Set([
 	"figure", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
 ]);
 
-/** Tags removidas integralmente (com descendentes) — Fase 1.8. */
+/** Tags removidas integralmente (com descendentes) — Fase 1.8 + 6. */
 const REMOVED_TAGS = new Set([
 	"script", "style", "template", "noscript", "iframe", "frame", "frameset",
 	"portal", "svg", "math", "canvas", "object", "embed", "applet", "base",
 	"link", "meta", "title", "param", "slot",
 	"header", "footer", "nav", "aside", "search",
+	"keygen", "command", "isindex",
 ]);
 
 const LIST_TAGS = new Set(["ul", "ol", "menu", "dir"]);
@@ -58,6 +60,8 @@ const FLATTEN_TAGS = new Set([
 	"span", "bdi", "bdo", "wbr", "small", "big", "u", "mark",
 	"cite", "dfn", "abbr", "acronym", "time", "data", "sub", "sup",
 	"ruby", "rb", "rtc", "rbc", "ins", "menuitem",
+	// Obsoletas (Fase 6)
+	"font", "basefont", "tt", "marquee", "blink", "content",
 ]);
 
 /** Ponto de entrada: renderiza o documento (ou um container selecionado). */
@@ -321,11 +325,11 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 		case "option":
 			return null; // tratado dentro de select/datalist
 
-		case "textarea": {
-			const t = $(node).text().replace(/\s+$/, "");
-			if (!t.trim()) return null;
-			return `${fenceFor(t)}\n${t}\n${fenceFor(t)}`;
-		}
+		case "textarea":
+		case "listing":
+		case "xmp":
+		case "plaintext":
+			return renderRawTextBlock($, node);
 
 		case "output": {
 			const t = renderChildren($, node, opts).trim();
@@ -702,6 +706,19 @@ function selectLines($: CheerioAPI, node: Element): string[] {
 function renderSelect($: CheerioAPI, node: Element): string | null {
 	const lines = selectLines($, node);
 	return lines.length ? lines.join("\n") : null;
+}
+
+/**
+ * Bloco de código cru (textarea, listing, xmp, plaintext).
+ * plaintext: parser inclui o `</plaintext>` literal no texto — remove o sufixo.
+ */
+function renderRawTextBlock($: CheerioAPI, node: Element): string | null {
+	const t = $(node)
+		.text()
+		.replace(/<\/plaintext>\s*$/i, "")
+		.replace(/\s+$/, "");
+	if (!t.trim()) return null;
+	return `${fenceFor(t)}\n${t}\n${fenceFor(t)}`;
 }
 
 /** <optgroup> isolado: título em negrito + opções. */
