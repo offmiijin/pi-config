@@ -29,6 +29,7 @@ const BLOCK_TAGS = new Set([
 	"details", "summary", "blockquote", "pre", "figure", "figcaption",
 	"address", "hr", "ul", "ol", "menu", "dir", "dl", "dt", "dd",
 	"table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
+	"form", "fieldset", "legend", "select", "datalist", "textarea", "optgroup",
 	"h1", "h2", "h3", "h4", "h5", "h6",
 ]);
 
@@ -276,6 +277,56 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 		case "source":
 		case "track":
 			return null;
+
+		// ── Formulários (Fase 4) ────────────────────────────────────
+		case "form":
+		case "fieldset": {
+			const t = renderChildren($, node, opts).trim();
+			return t || null;
+		}
+
+		case "legend":
+		case "label": {
+			const t = renderChildren($, node, opts).trim();
+			return t ? `**${t}**` : null;
+		}
+
+		case "input":
+			return renderInput($, node);
+
+		case "button": {
+			const t = renderChildren($, node, opts).trim();
+			return t || null;
+		}
+
+		case "select":
+		case "datalist":
+			return renderSelect($, node);
+
+		case "optgroup":
+			return renderOptgroup($, node);
+
+		case "option":
+			return null; // tratado dentro de select/datalist
+
+		case "textarea": {
+			const t = $(node).text().replace(/\s+$/, "");
+			if (!t.trim()) return null;
+			return `${fenceFor(t)}\n${t}\n${fenceFor(t)}`;
+		}
+
+		case "output": {
+			const t = renderChildren($, node, opts).trim();
+			return t || null;
+		}
+
+		case "progress":
+		case "meter": {
+			const t = renderChildren($, node, opts).trim();
+			if (t) return t;
+			const v = attr($, node, "value");
+			return v !== undefined && v.trim() !== "" ? escapeText(v.trim()) : null;
+		}
 
 		case "rt":
 		case "rp":
@@ -555,4 +606,60 @@ function renderMedia($: CheerioAPI, node: Element, opts: RenderOptions): string 
 	const text = renderChildren($, node, opts).trim();
 	if (!src) return text;
 	return `[${text ? `${label}: ${text}` : label}](${escapeUrl(src)})`;
+}
+
+// ---------------------------------------------------------------------------
+// Formulários (Fase 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * <input>: checkbox → `[x]`/`[ ]`, radio → `(x)`/`( )`,
+ * botões → texto do `value` (sem ação); demais tipos → ignorado.
+ */
+function renderInput($: CheerioAPI, node: Element): string | null {
+	const type = (attr($, node, "type") ?? "text").toLowerCase();
+	if (type === "checkbox") {
+		return attr($, node, "checked") !== undefined ? "[x]" : "[ ]";
+	}
+	if (type === "radio") {
+		return attr($, node, "checked") !== undefined ? "(x)" : "( )";
+	}
+	if (type === "button" || type === "submit" || type === "reset") {
+		const v = (attr($, node, "value") ?? "").trim();
+		return v ? escapeText(v) : null;
+	}
+	return null; // text/search/email/url/password/number/hidden/... → ignorado
+}
+
+/** Linhas de opções de um select/datalist (opções diretas + dentro de optgroup). */
+function selectLines($: CheerioAPI, node: Element): string[] {
+	const lines: string[] = [];
+	for (const child of node.children ?? []) {
+		if (!isElement(child)) continue;
+		const tag = child.tagName.toLowerCase();
+		if (tag === "option") {
+			const t = $(child).text().replace(/\s+/g, " ").trim();
+			if (!t) continue;
+			const selected = attr($, child, "selected") !== undefined;
+			lines.push(`- ${selected ? `**${escapeText(t)}**` : escapeText(t)}`);
+		} else if (tag === "optgroup") {
+			const title = (attr($, child, "label") ?? "").trim();
+			if (title) lines.push(`**${escapeText(title)}**`);
+			lines.push(...selectLines($, child));
+		}
+	}
+	return lines;
+}
+
+/** <select>/<datalist>: lista de opções; selecionada destacada em negrito. */
+function renderSelect($: CheerioAPI, node: Element): string | null {
+	const lines = selectLines($, node);
+	return lines.length ? lines.join("\n") : null;
+}
+
+/** <optgroup> isolado: título em negrito + opções. */
+function renderOptgroup($: CheerioAPI, node: Element): string | null {
+	const title = (attr($, node, "label") ?? "").trim();
+	const out = [...(title ? [`**${escapeText(title)}**`] : []), ...selectLines($, node)];
+	return out.length ? out.join("\n") : null;
 }

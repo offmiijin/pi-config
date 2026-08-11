@@ -29,6 +29,10 @@ export const KEPT_ATTRIBUTES = [
 	"cite",
 	"colspan",
 	"rowspan",
+	"checked",
+	"selected",
+	"value",
+	"label",
 ] as const;
 
 /**

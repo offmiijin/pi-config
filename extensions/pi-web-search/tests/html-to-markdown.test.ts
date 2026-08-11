@@ -68,6 +68,10 @@ describe("contrato", () => {
 			"cite",
 			"colspan",
 			"rowspan",
+			"checked",
+			"selected",
+			"value",
+			"label",
 		]);
 	});
 
@@ -582,5 +586,90 @@ describe("tabelas (Fase 3)", () => {
 		const html =
 			"<table><tr><th>Site</th></tr><tr><td><a href=\"https://x.com\">link</a></td></tr></table>";
 		expect(md(html)).toBe("| Site |\n| --- |\n| [link](https://x.com) |");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fase 4 — formulários
+// ---------------------------------------------------------------------------
+describe("formulários (Fase 4)", () => {
+	it("checkbox marcado e desmarcado", () => {
+		expect(md('<input type="checkbox" checked>')).toBe("[x]");
+		expect(md('<input type="checkbox">')).toBe("[ ]");
+	});
+
+	it("radio marcado e desmarcado", () => {
+		expect(md('<input type="radio" checked>')).toBe("(x)");
+		expect(md('<input type="radio">')).toBe("( )");
+	});
+
+	it("inputs de texto/hidden/email ignorados", () => {
+		const html =
+			'<form><input type="text" placeholder="x"><input type="hidden">' +
+			'<input type="email"></form>';
+		expect(md(html)).toBe("");
+	});
+
+	it("botões viram texto do value (sem ação)", () => {
+		expect(md('<input type="submit" value="Enviar">')).toBe("Enviar");
+		expect(md('<input type="reset" value="Limpar">')).toBe("Limpar");
+	});
+
+	it("button renderiza texto interno", () => {
+		expect(md("<button>Clique aqui</button>")).toBe("Clique aqui");
+	});
+
+	it("label em negrito", () => {
+		expect(md("<label>Nome:</label>")).toBe("**Nome:**");
+	});
+
+	it("label com checkbox preserva o estado", () => {
+		expect(md('<label><input type="checkbox" checked> Aceito</label>')).toBe(
+			"**[x] Aceito**",
+		);
+	});
+
+	it("select vira lista; selecionada destacada", () => {
+		const html =
+			"<select><option>A</option><option selected>B</option><option>C</option></select>";
+		expect(md(html)).toBe("- A\n- **B**\n- C");
+	});
+
+	it("select com optgroup", () => {
+		const html =
+			'<select><optgroup label="Frutas"><option>Maçã</option><option>Pera</option></optgroup>' +
+			"<option>Outro</option></select>";
+		expect(md(html)).toBe("**Frutas**\n- Maçã\n- Pera\n- Outro");
+	});
+
+	it("textarea vira bloco de código", () => {
+		expect(md("<textarea>linha 1\nlinha 2</textarea>")).toBe(
+			"```\nlinha 1\nlinha 2\n```",
+		);
+	});
+
+	it("textarea vazio → nada", () => {
+		expect(md("<textarea></textarea><p>x</p>")).toBe("x");
+	});
+
+	it("fieldset com legend", () => {
+		expect(
+			md("<fieldset><legend>Dados</legend><p>conteúdo</p></fieldset>"),
+		).toBe("**Dados**\n\nconteúdo");
+	});
+
+	it("progress usa texto interno ou value", () => {
+		expect(md('<progress value="50">meio</progress>')).toBe("meio");
+		expect(md('<progress value="50"></progress>')).toBe("50");
+	});
+
+	it("datalist vira lista", () => {
+		expect(md("<datalist><option>a</option><option>b</option></datalist>")).toBe(
+			"- a\n- b",
+		);
+	});
+
+	it("output vira texto", () => {
+		expect(md("<output>resultado</output>")).toBe("resultado");
 	});
 });
