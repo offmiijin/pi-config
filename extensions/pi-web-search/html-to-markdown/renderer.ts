@@ -57,12 +57,14 @@ const HEADING_LEVEL: Record<string, number> = {
 const FLATTEN_TAGS = new Set([
 	"span", "bdi", "bdo", "wbr", "small", "big", "u", "mark",
 	"cite", "dfn", "abbr", "acronym", "time", "data", "sub", "sup",
-	"ruby", "rb", "rtc", "rbc",
+	"ruby", "rb", "rtc", "rbc", "ins", "menuitem",
 ]);
 
 /** Ponto de entrada: renderiza o documento (ou um container selecionado). */
 export function render($: CheerioAPI, opts: RenderOptions, rootEl?: AnyNode): string {
-	return renderChildren($, rootEl ?? $.root()[0], opts);
+	const root = rootEl ?? $.root()[0];
+	// Elemento raiz passa pelo dispatch (ex.: article aninhado → separadores ---)
+	return isElement(root) ? renderNode($, root, opts) ?? "" : renderChildren($, root, opts);
 }
 
 function isElement(n: AnyNode): n is Element {
@@ -160,7 +162,6 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 		case "html":
 		case "body":
 		case "main":
-		case "article":
 		case "section":
 		case "div":
 		case "center":
@@ -172,6 +173,9 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 			const t = renderChildren($, node, opts).trim();
 			return t || null;
 		}
+
+		case "article":
+			return renderArticle($, node, opts);
 
 		case "summary": {
 			const t = renderChildren($, node, opts).trim();
@@ -243,6 +247,14 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 		case "i": {
 			const t = renderChildren($, node, opts).trim();
 			return t ? `*${t}*` : null;
+		}
+
+		// Conteúdo editorial (Fase 5): strikethrough GFM
+		case "del":
+		case "s":
+		case "strike": {
+			const t = renderChildren($, node, opts).trim();
+			return t ? `~~${t}~~` : null;
 		}
 
 		case "code":
@@ -423,6 +435,41 @@ function renderDl($: CheerioAPI, node: Element, opts: RenderOptions): string | n
 		}
 	}
 	return out || null;
+}
+
+/**
+ * <article>: container transparente; com <article> aninhado (direto), os
+ * blocos são separados por `---` (Fase 5).
+ */
+function renderArticle($: CheerioAPI, node: Element, opts: RenderOptions): string | null {
+	const kids = (node.children ?? []).filter(isElement);
+	const hasNested = kids.some((c) => c.tagName.toLowerCase() === "article");
+	if (!hasNested) {
+		const t = renderChildren($, node, opts).trim();
+		return t || null;
+	}
+
+	let out = "";
+	let prevBlock = false;
+	for (const child of node.children ?? []) {
+		const rendered = renderNode($, child, opts);
+		if (rendered === null || rendered === "") continue;
+		const isBlock = isBlockNode(child);
+		const isArticle = isElement(child) && child.tagName.toLowerCase() === "article";
+		if (!isBlock && rendered.trim() === "") {
+			if (!out || prevBlock) continue; // whitespace em borda de bloco
+			out += " ";
+			prevBlock = false;
+			continue;
+		}
+		if (out) {
+			if (isArticle) out += "\n\n---\n\n";
+			else if (prevBlock || isBlock) out += "\n\n";
+		}
+		out += rendered;
+		prevBlock = isBlock;
+	}
+	return out.trim() || null;
 }
 
 // ---------------------------------------------------------------------------

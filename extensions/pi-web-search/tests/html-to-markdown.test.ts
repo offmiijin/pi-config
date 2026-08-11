@@ -673,3 +673,49 @@ describe("formulários (Fase 4)", () => {
 		expect(md("<output>resultado</output>")).toBe("resultado");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Fase 5 — conteúdo editorial
+// ---------------------------------------------------------------------------
+describe("conteúdo editorial (Fase 5)", () => {
+	it("del/s/strike → ~~texto~~", () => {
+		expect(md("<p><del>removido</del></p>")).toBe("~~removido~~");
+		expect(md("<p><s>antigo</s></p>")).toBe("~~antigo~~");
+		expect(md("<p><strike>velho</strike></p>")).toBe("~~velho~~");
+	});
+
+	it("ins → texto simples", () => {
+		expect(md("<p>novo <ins>texto</ins></p>")).toBe("novo texto");
+	});
+
+	it("menuitem → texto simples", () => {
+		expect(md("<p><menuitem>opção</menuitem></p>")).toBe("opção");
+	});
+
+	it("article aninhado separado por ---", () => {
+		const html =
+			"<article><h2>Post</h2><p>corpo</p>" +
+			"<article><h3>Comentário</h3><p>texto</p></article>" +
+			"<article><h3>Outro</h3></article></article>";
+		expect(md(html)).toBe(
+			"## Post\n\ncorpo\n\n---\n\n### Comentário\n\ntexto\n\n---\n\n### Outro",
+		);
+	});
+
+	it("article sem aninhado → transparente", () => {
+		expect(md("<article><p>a</p></article>")).toBe("a");
+	});
+
+	it("iframe/object/embed omitidos sem link automático", () => {
+		const html =
+			'<p>x</p><iframe src="https://x.com"></iframe>' +
+			'<object data="https://y.com"></object><embed src="https://z.com">';
+		expect(md(html)).toBe("x");
+	});
+
+	it("details/summary segue com resumo destacado", () => {
+		expect(md("<details><summary>Resumo</summary><p>Detalhe</p></details>")).toBe(
+			"**Resumo**\n\nDetalhe",
+		);
+	});
+});
