@@ -44,5 +44,6 @@
 
 ### Fixed
 
+- `html-to-markdown`: conteúdo inline diretamente após um bloco (ex.: `<strong>` depois de `<h1>` sem `<p>`) era silenciosamente descartado pelo join de blocos — corrigido e coberto por teste de regressão (Fase 7 de aceite)
 - `/pi-config-changelog` não trava mais o TUI — substituído `ctx.ui.custom()` por `appendEntry()` + `registerEntryRenderer()`, que renderiza markdown colorido dentro do chat sem risco de congelamento
 - Perfis de quarentena `fetch` e `quarantine` quebrados: `sandbox_fetch` falhava com `curl: (23)` e `sandbox_quarantine_exec` não conseguia ler/escrever no workdir (`Permission denied`). A resolução dos dirs de quarentena usava como base o próprio dir de quarentena (`cwd` do processo), gerando bind mounts aninhados (`<fetch>/.sandbox-cache/fetch`) — o dir real nunca era montado. Novo campo `baseCwd` no `BwrapCall` separa a base dos mounts (workspace) do cwd do processo; testes de regressão adicionados em `bwrap-args.test.ts` e `quarantine.test.ts`

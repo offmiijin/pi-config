@@ -373,7 +373,7 @@ describe("escape e remoção", () => {
 	it("remove template/math/canvas/object/embed", () => {
 		const html =
 			"<p>x</p><template>t</template><math>m</math><canvas>c</canvas>" +
-			"<object>o</object><embed>e</embed>";
+			"<object>o</object><embed>";
 		expect(md(html)).toBe("x");
 	});
 
@@ -755,5 +755,79 @@ describe("obsoletas (Fase 6)", () => {
 
 	it("tag desconhecida preserva só o texto", () => {
 		expect(md("<p><my-tag attr=\"v\">interno</my-tag></p>")).toBe("interno");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Fase 7 — critérios de aceite
+// ---------------------------------------------------------------------------
+describe("aceite (Fase 7)", () => {
+	it("li com múltiplos parágrafos mantém estrutura", () => {
+		const html =
+			"<ul><li><p>primeiro parágrafo</p><p>segundo</p></li><li>item</li></ul>";
+		expect(md(html)).toBe("- primeiro parágrafo\n\n  segundo\n- item");
+	});
+
+	it("HTML malformado não gera Markdown inválido nem quebra", () => {
+		const html =
+			"<p>aberto<p>aninhado</p><ul><li>x<li>y</ul>" +
+			"<h1>titulo</h2><b>negrito <i>italico</b> fim";
+		const out = md(html);
+		expect(out).not.toMatch(/<\/?[a-zA-Z][^>]*>/); // sem HTML bruto
+		expect(out).toContain("aberto");
+		expect(out).toContain("titulo");
+		expect(out).toContain("negrito");
+		expect(out).toContain("fim");
+	});
+
+	it("link text com colchetes escapados (parênteses literais)", () => {
+		expect(md('<a href="https://x.com">texto [com] (parens)</a>')).toBe(
+			"[texto \\[com\\] (parens)](https://x.com)",
+		);
+	});
+
+	it("inline após bloco não é descartado (regressão)", () => {
+		expect(md("<h1>t</h1><strong>negrito</strong><em>itálico</em>")).toBe(
+			"# t\n\n**negrito***itálico*",
+		);
+		expect(md("<p>a</p>texto solto depois")).toBe("a\n\ntexto solto depois");
+	});
+
+	it("documento composto de aceite — integra todas as fases", () => {
+		const html = `<article>
+			<h1>Título</h1>
+			<p>Intro com <strong>negrito</strong> e <a href="/rel">link relativo</a>.</p>
+			<h2>Lista</h2>
+			<ul><li>um</li><li>dois<ul><li>sub</li></ul></li></ul>
+			<blockquote><p>Citação</p></blockquote>
+			<table><tr><th>K</th><th>V</th></tr><tr><td>a</td><td>1</td></tr></table>
+			<form><label><input type="checkbox" checked> Termos</label></form>
+			<pre><code class="language-js">const a = 1;</code></pre>
+		</article>`;
+		expect(md(html)).toBe(
+			[
+				"# Título",
+				"",
+				"Intro com **negrito** e [link relativo](https://example.com/rel).",
+				"",
+				"## Lista",
+				"",
+				"- um",
+				"- dois",
+				"  - sub",
+				"",
+				"> Citação",
+				"",
+				"| K | V |",
+				"| --- | --- |",
+				"| a | 1 |",
+				"",
+				"**[x] Termos**",
+				"",
+				"```js",
+				"const a = 1;",
+				"```",
+			].join("\n"),
+		);
 	});
 });

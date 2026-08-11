@@ -94,14 +94,14 @@ function attr($: CheerioAPI, el: Element, name: string): string | undefined {
 function renderChildren($: CheerioAPI, el: AnyNode | undefined, opts: RenderOptions): string {
 	if (!el || !("children" in el)) return "";
 
-	const parts: Array<{ text: string; isBlock: boolean; tag?: string }> = [];
+	const parts: Array<{ text: string; isBlock: boolean; tag?: string; ws?: boolean }> = [];
 	for (const child of el.children) {
 		const rendered = renderNode($, child, opts);
 		if (rendered === null || rendered === "") continue;
 		const isBlock = isBlockNode(child);
 		// Texto puro com só whitespace vira espaço inline (nunca quebra <br>)
 		if (!isBlock && child.type === "text" && rendered.trim() === "") {
-			parts.push({ text: " ", isBlock: false });
+			parts.push({ text: " ", isBlock: false, ws: true });
 		} else {
 			parts.push({
 				text: rendered,
@@ -120,7 +120,7 @@ function renderChildren($: CheerioAPI, el: AnyNode | undefined, opts: RenderOpti
 		}
 		const prev = parts[i - 1];
 		if (prev.isBlock || p.isBlock) {
-			if (!p.isBlock) continue; // whitespace entre blocos → pula
+			if (p.ws) continue; // whitespace entre blocos → pula (só whitespace)
 			if (opts.inListItem && p.tag && LIST_TAGS.has(p.tag)) {
 				out += "\n"; // lista aninhada segue na mesma linha do item (tight)
 			} else {
