@@ -11,10 +11,6 @@
 
 ## Unreleased
 
-### Removed
-
-- Etapa opcional de configuração do SearXNG removida do `install.sh` (Docker + container local); busca local agora configura manualmente via `/web_search config`
-
 ### Added
 
 - Instalação automática da configuração do repositório em `~/.pi/agent` com backup automático (PR [#83](https://github.com/offmiijin/pi-config/pull/83))
@@ -23,7 +19,6 @@
 ### Changed
 
 - `web_fetch` passa a baixar conteúdo não-texto (PDF, imagens, arquivos, ...) como binário para `.sandbox-cache/fetch/`, com extensão derivada do Content-Type (fallback: extensão da URL ou `.bin`), em vez de falhar com `UNSUPPORTED`
-
 - Nota de quarentena no system prompt (dev-sandbox) passa a listar o critério de decisão dos perfis: `sandbox_fetch` para download (rede, sem acesso ao projeto), `sandbox_quarantine_exec` para instalar/executar código externo (sem rede, sem projeto, escrita só em `.sandbox-cache/runs/<work>`), `sandbox_promote` como única saída de artefatos para o projeto
 - Exibição do `/pi-config-changelog` passa a renderizar markdown colorido (tema do pi) com scroll, em vez de texto plano
 - Extensão `commands-hub.ts` renomeada para `thinking-level.ts` (comando `/thinking` inalterado)
@@ -31,6 +26,11 @@
 - Seleção interativa do `/thinking` usa sufixo `[valor]` na opção e parsing por valor exato (regex), eliminando o parsing frágil por `startsWith`/`includes` de label
 - Nível atual não suportado pelo modelo gera aviso e sugere o nível mais próximo (maior suportado ≤ atual; senão o menor suportado)
 - Notificações do `/thinking` passam a exibir o modelo ativo; suíte de testes unitários `thinking-level.test.ts` (vitest) adicionada ao CI
+
+### Removed
+
+- Etapa opcional de configuração do SearXNG removida do `install.sh` (Docker + container local); busca local agora configura manualmente via `/web_search config`
+- Diretório órfão `searxng-data/` removido de pi-web-search (volume nomeado antigo substituído por bind mount `./searxng` em 33f9842 — config morta, sem referências)
 
 ### Fixed
 

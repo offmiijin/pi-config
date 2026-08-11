@@ -41,7 +41,7 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.notify(
 				"🌐 Nenhum provedor de busca configurado.\n" +
 					"  • API gratuita: /web_search config <tavily|exa|serper> <key>\n" +
-					"  • SearXNG local: docker compose up -d em extensions/pi-web-search (ou ./install.sh --searxng)",
+					"  • SearXNG local: docker compose up -d em extensions/pi-web-search",
 				"warning",
 			);
 		}
