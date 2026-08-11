@@ -635,6 +635,7 @@ describe("state query after events", () => {
 						size: 5120,
 						status: 200,
 						binary: true,
+						textFile: "https_example_com_doc_pdf.txt",
 					},
 				],
 			},
@@ -647,6 +648,7 @@ describe("state query after events", () => {
 		expect(text).toContain("⬇️");
 		expect(text).toContain("https_example_com_doc_pdf.pdf");
 		expect(text).toContain("binário");
+		expect(text).toContain("texto: https_example_com_doc_pdf.txt");
 	});
 });
 

@@ -10,7 +10,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("node:fs/promises", () => ({
 	mkdir: vi.fn().mockResolvedValue(undefined),
 	writeFile: vi.fn().mockResolvedValue(undefined),
+	readFile: vi.fn().mockResolvedValue("%PDF text extracted by mock"),
+	rm: vi.fn().mockResolvedValue(undefined),
 }));
+
+// Mock pdftotext (node:child_process) — pdftotext disponível, extração ok
+vi.mock("node:child_process", () => {
+	const { EventEmitter } = require("node:events");
+	return {
+		spawnSync: vi.fn(() => ({ error: undefined })),
+		spawn: vi.fn(() => {
+			const child = new EventEmitter() as any;
+			child.kill = vi.fn();
+			setImmediate(() => child.emit("close", 0));
+			return child;
+		}),
+	};
+});
 
 // Mock randomDelay and randomUserAgent so tests run instantly and deterministically
 vi.mock("../utils", async (importOriginal) => {
@@ -22,7 +38,13 @@ vi.mock("../utils", async (importOriginal) => {
 	};
 });
 
-import { extractText, fetchPages, extensionForContentType } from "../fetch";
+import {
+	extractText,
+	fetchPages,
+	extensionForContentType,
+	__resetPdfTextCache,
+} from "../fetch";
+import { spawnSync } from "node:child_process";
 
 // Test cwd — used for all fetchPages calls
 const testCwd = "/home/user/project";
@@ -238,8 +260,53 @@ describe("fetchPages", () => {
 		expect(r.error).toBeUndefined();
 		expect(r.binary).toBe(true);
 		expect(r.file).toBe("https_example_com_doc_pdf.pdf");
+		expect(r.textFile).toBe("https_example_com_doc_pdf.txt");
 		expect(r.size).toBeGreaterThan(0);
 		expect(output.binaryDir).toBe(`${testCwd}/.sandbox-cache/fetch/page_default`);
+	});
+
+	it("sniffs PDF by magic bytes even with generic content-type", async () => {
+		(globalThis.fetch as any).mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: {
+				get: (name: string) =>
+					name.toLowerCase() === "content-type" ? "application/octet-stream" : null,
+			},
+			text: async () => "%PDF-1.7 data",
+			arrayBuffer: async () =>
+				new TextEncoder().encode("%PDF-1.7 data").buffer,
+		});
+
+		const output = await fetchPages(["https://example.com/spec"], testCwd);
+		const r = output.results[0];
+		expect(r.binary).toBe(true);
+		expect(r.file).toBe("https_example_com_spec.bin");
+		expect(r.textFile).toBe("https_example_com_spec.txt");
+	});
+
+	it("notes when pdftotext is unavailable", async () => {
+		__resetPdfTextCache();
+		vi.mocked(spawnSync).mockReturnValueOnce({ error: new Error("ENOENT") } as any);
+
+		(globalThis.fetch as any).mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: {
+				get: (name: string) =>
+					name.toLowerCase() === "content-type" ? "application/pdf" : null,
+			},
+			text: async () => "%PDF-1.4",
+			arrayBuffer: async () =>
+				new TextEncoder().encode("%PDF-1.4").buffer,
+		});
+
+		const output = await fetchPages(["https://example.com/doc.pdf"], testCwd);
+		const r = output.results[0];
+		expect(r.textFile).toBeUndefined();
+		expect(r.note).toContain("pdftotext");
+
+		__resetPdfTextCache();
 	});
 
 	it("falls back to .bin when content-type is unknown", async () => {

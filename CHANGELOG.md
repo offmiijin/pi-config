@@ -21,6 +21,7 @@
 - `web_fetch` passa a baixar conteúdo não-texto (PDF, imagens, arquivos, ...) como binário para `.sandbox-cache/fetch/`, com extensão derivada do Content-Type (fallback: extensão da URL ou `.bin`), em vez de falhar com `UNSUPPORTED`
 - `web_fetch` passa a salvar páginas (texto) em `.sandbox-cache/fetch/page_<id>/` — um único diretório por sessão do pi (mesmo dir dos downloads binários e da raiz de downloads do `sandbox_fetch`), substituindo o antigo `.sandbox-cache/web-fetch/page_*` (um dir por chamada)
 - `web_agent` passa a distinguir downloads binários no estado da pesquisa (ícone ⬇️ + rótulo "binário" nas Pages Fetched)
+- PDFs baixados pelo `web_fetch` ganham extração de texto via `pdftotext` (poppler-utils): texto salvo como `<nome>.txt` ao lado do `.pdf`, legível pelo agente; fallback silencioso (nota no resultado) quando o binário está ausente; detecção por magic bytes `%PDF-` cobre content-type genérico
 - Nota de quarentena no system prompt (dev-sandbox) passa a listar o critério de decisão dos perfis: `sandbox_fetch` para download (rede, sem acesso ao projeto), `sandbox_quarantine_exec` para instalar/executar código externo (sem rede, sem projeto, escrita só em `.sandbox-cache/runs/<work>`), `sandbox_promote` como única saída de artefatos para o projeto
 - Exibição do `/pi-config-changelog` passa a renderizar markdown colorido (tema do pi) com scroll, em vez de texto plano
 - Extensão `commands-hub.ts` renomeada para `thinking-level.ts` (comando `/thinking` inalterado)

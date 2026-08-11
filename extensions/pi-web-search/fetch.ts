@@ -4,6 +4,8 @@
  * Fetches pages in parallel (max 10 concurrent), extracts clean text with
  * cheerio, and saves everything (text + binary) under
  * <cwd>/.sandbox-cache/fetch/page_<sessionId>/ — ONE directory per pi session.
+ * PDFs additionally get text extracted via `pdftotext` (poppler-utils) so the
+ * agent can read the content (saved as <name>.txt beside the .pdf).
  *
  * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
  * namespace (which mounts $CWD read-write but has isolated /tmp). The fetch root
@@ -14,6 +16,7 @@
 import * as cheerio from "cheerio";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
 import {
 	randomUserAgent,
 	randomDelay,
@@ -34,6 +37,10 @@ export interface FetchItemResult {
 	error?: string;
 	/** true quando o conteúdo foi baixado como arquivo binário (não texto) */
 	binary?: boolean;
+	/** texto extraído do binário (PDF → pdftotext) salvo ao lado do arquivo */
+	textFile?: string;
+	/** aviso não-fatal (ex.: extração indisponível) */
+	note?: string;
 }
 
 export interface FetchOutput {
@@ -156,6 +163,67 @@ function uniqueFilename(filename: string, used: Set<string>): string {
 	return f;
 }
 
+
+// ---------------------------------------------------------------------------
+// PDF text extraction (pdftotext / poppler-utils)
+// ---------------------------------------------------------------------------
+
+const PDF_TEXT_TIMEOUT_MS = 30_000;
+
+let pdftotextAvailable: boolean | null = null;
+
+/** pdftotext presente no PATH? (cache por processo) */
+function isPdftotextAvailable(): boolean {
+	if (pdftotextAvailable === null) {
+		try {
+			pdftotextAvailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error === undefined;
+		} catch {
+			pdftotextAvailable = false;
+		}
+	}
+	return pdftotextAvailable;
+}
+
+/** @visibleForTesting */
+export function __resetPdfTextCache(): void {
+	pdftotextAvailable = null;
+}
+
+/**
+ * Extrai texto do PDF via `pdftotext -layout` (poppler-utils).
+ * Escreve o texto em `txtPath` e o retorna; null em falha/timeout/escaneado.
+ */
+async function extractPdfText(pdfPath: string, txtPath: string): Promise<string | null> {
+	return new Promise((resolve) => {
+		const child = spawn(
+			"pdftotext",
+			["-layout", "-enc", "UTF-8", pdfPath, txtPath],
+			{ stdio: "ignore" },
+		);
+		const timer = setTimeout(() => child.kill("SIGKILL"), PDF_TEXT_TIMEOUT_MS);
+		child.on("error", () => {
+			clearTimeout(timer);
+			resolve(null);
+		});
+		child.on("close", async (code) => {
+			clearTimeout(timer);
+			if (code !== 0) {
+				resolve(null);
+				return;
+			}
+			try {
+				resolve(await fs.readFile(txtPath, "utf-8"));
+			} catch {
+				resolve(null);
+			}
+		});
+	});
+}
+
+/** true quando o buffer começa com magic bytes de PDF. */
+function isPdfBuffer(buf: Buffer): boolean {
+	return buf.subarray(0, 5).toString("latin1") === "%PDF-";
+}
 
 // ---------------------------------------------------------------------------
 // Cache cleanup
@@ -284,6 +352,7 @@ export async function fetchPages(
 				const html = await response.text();
 				const text = extractText(html);
 				filename = uniqueFilename(`${urlToBaseName(url)}.txt`, usedFilenames);
+				usedFilenames.add(filename);
 				const filePath = path.join(outputDir, filename);
 				await fs.writeFile(filePath, text, "utf-8");
 
@@ -295,19 +364,40 @@ export async function fetchPages(
 				});
 			} else {
 				// Download binário: preserva bytes originais
-				const ext = extensionForContentType(contentType, url);
-				filename = uniqueFilename(`${urlToBaseName(url)}.${ext}`, usedFilenames);
 				const buf = Buffer.from(await response.arrayBuffer());
+				const ext = extensionForContentType(contentType, url);
+				const isPdf = ext === "pdf" || isPdfBuffer(buf);
+				filename = uniqueFilename(`${urlToBaseName(url)}.${ext}`, usedFilenames);
+				usedFilenames.add(filename);
 				const filePath = path.join(binaryDir, filename);
 				await fs.writeFile(filePath, buf);
 
-				results.push({
+				const item: FetchItemResult = {
 					url,
 					file: filename,
 					size: buf.byteLength,
 					status: response.status,
 					binary: true,
-				});
+				};
+
+				// PDF → extrai texto via pdftotext para o agente poder ler
+				if (isPdf && isPdftotextAvailable()) {
+					const textFile = uniqueFilename(`${urlToBaseName(url)}.txt`, usedFilenames);
+					usedFilenames.add(textFile);
+					const textPath = path.join(binaryDir, textFile);
+					const text = await extractPdfText(filePath, textPath);
+					if (text !== null && text.trim().length > 0) {
+						await fs.writeFile(textPath, text, "utf-8");
+						item.textFile = textFile;
+					} else {
+						// Escaneado/falha — remove arquivo de texto vazio, se criado
+						await fs.rm(textPath, { force: true }).catch(() => undefined);
+					}
+				} else if (isPdf) {
+					item.note = "pdftotext indisponível — texto do PDF não extraído (instale poppler-utils)";
+				}
+
+				results.push(item);
 			}
 		} catch (err: unknown) {
 			const name = err instanceof Error ? err.name : "";

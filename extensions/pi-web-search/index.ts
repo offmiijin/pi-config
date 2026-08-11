@@ -298,6 +298,12 @@ export default function (pi: ExtensionAPI) {
 					const icon = r.binary ? "⬇️" : "✅";
 					lines.push(`  ${icon} ${r.file} (${sizeKB} KB)`);
 					lines.push(`     ${r.url}`);
+					if (r.textFile) {
+						lines.push(`     → texto extraído: ${r.textFile} (use \`read\`)`);
+					}
+					if (r.note) {
+						lines.push(`     ⚠ ${r.note}`);
+					}
 				} else if (r.error) {
 					lines.push(`  ❌ ${r.url}`);
 					lines.push(`     → ${r.error}`);
