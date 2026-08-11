@@ -222,8 +222,8 @@ export default function (pi: ExtensionAPI) {
 		label: "Web Fetch",
 		description:
 			"Fetch full page content from a list of URLs. " +
-			"Extracts clean text from each page (strips HTML tags, scripts, navigation) " +
-			"and saves to .sandbox-cache/fetch/page_<id>/. " +
+			"Converts each page's HTML to Markdown (.md) and saves to " +
+			".sandbox-cache/fetch/page_<id>/. " +
 			"Non-text content (PDF, images, archives, ...) is downloaded as-is to the same dir. " +
 			"Processes up to 10 URLs in parallel; excess URLs are queued. " +
 			"Each request uses a random User-Agent and a small random delay to avoid blocking. " +

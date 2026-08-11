@@ -1,8 +1,8 @@
 /**
  * Web Search Extension — Page Fetcher
  *
- * Fetches pages in parallel (max 10 concurrent), extracts clean text with
- * cheerio, and saves everything (text + binary) under
+ * Fetches pages in parallel (max 10 concurrent), converts HTML pages to
+ * Markdown (.md) via html-to-markdown/, and saves everything (text + binary) under
  * <cwd>/.sandbox-cache/fetch/page_<sessionId>/ — ONE directory per pi session.
  * PDFs additionally get text extracted via `pdftotext` (poppler-utils) so the
  * agent can read the content (saved as <name>.txt beside the .pdf).
@@ -13,7 +13,7 @@
  * page dirs (page_*) live inside it and are cleaned after 7 days.
  */
 
-import * as cheerio from "cheerio";
+import { htmlToMarkdown } from "./html-to-markdown";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -52,34 +52,6 @@ export interface FetchOutput {
 	succeeded: number;
 	failed: number;
 	results: FetchItemResult[];
-}
-
-// ---------------------------------------------------------------------------
-// HTML → clean text
-// ---------------------------------------------------------------------------
-
-/**
- * Strip all tags, scripts, styles, navigation elements from HTML.
- * Returns plain text with normalised whitespace.
- */
-/** @visibleForTesting */
-export function extractText(html: string): string {
-	const $ = cheerio.load(html);
-
-	// Remove non-content elements
-	$(
-		"script, style, noscript, svg, iframe, " +
-			"nav, footer, header, " +
-			'[role="navigation"], [role="banner"], [role="contentinfo"]',
-	).remove();
-
-	const body = $("body").length ? $("body") : $.root();
-	let text = body.text();
-
-	// Normalise whitespace
-	text = text.replace(/\s+/g, " ").trim();
-
-	return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +118,7 @@ export function extensionForContentType(contentType: string, url: string): strin
 
 /** Nome base sanitizado da URL, sem extensão. */
 function urlToBaseName(url: string): string {
-	return sanitizeFilename(url).replace(/\.txt$/, "");
+	return sanitizeFilename(url).replace(/\.(txt|md)$/, "");
 }
 
 /** Garante nome único: colisões ganham sufixo _2, _3... preservando a extensão. */
@@ -269,8 +241,8 @@ async function cleanOldPages(baseDir: string): Promise<void> {
  *   - aborts after FETCH_TIMEOUT_MS (15s)
  *   - respects the external `signal` for Esc-based abort
  *
- * Successful pages are saved as clean text to:
- *   <cwd>/.sandbox-cache/fetch/page_<sessionId>/<sanitised-url>.txt
+ * Successful pages are converted to Markdown and saved to:
+ *   <cwd>/.sandbox-cache/fetch/page_<sessionId>/<sanitised-url>.md
  * Non-text responses (PDF, images, archives, ...) are downloaded as-is to:
  *   <cwd>/.sandbox-cache/fetch/page_<sessionId>/<sanitised-url>.<ext>
  *
@@ -360,17 +332,21 @@ export async function fetchPages(
 
 			let filename: string;
 			if (isText) {
+				// HTML → Markdown (.md) via html-to-markdown (baseUrl = URL final,
+				// após redirects, para resolver links relativos nas fases seguintes)
 				const html = await response.text();
-				const text = extractText(html);
-				filename = uniqueFilename(`${urlToBaseName(url)}.txt`, usedFilenames);
+				const { markdown } = htmlToMarkdown(html, {
+					baseUrl: response.url || url,
+				});
+				filename = uniqueFilename(`${urlToBaseName(url)}.md`, usedFilenames);
 				usedFilenames.add(filename);
 				const filePath = path.join(outputDir, filename);
-				await fs.writeFile(filePath, text, "utf-8");
+				await fs.writeFile(filePath, markdown, "utf-8");
 
 				results.push({
 					url,
 					file: filename,
-					size: Buffer.byteLength(text, "utf-8"),
+					size: Buffer.byteLength(markdown, "utf-8"),
 					status: response.status,
 				});
 			} else {
