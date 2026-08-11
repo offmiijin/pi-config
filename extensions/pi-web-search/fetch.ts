@@ -23,6 +23,7 @@ import {
 	asyncPool,
 	sanitizeFilename,
 	FETCH_TIMEOUT_MS,
+	BINARY_TIMEOUT_MS,
 	DEFAULT_CONCURRENCY,
 } from "./utils";
 
@@ -316,7 +317,7 @@ export async function fetchPages(
 			signal.addEventListener("abort", abortHandler, { once: true });
 		}
 
-		const timer = setTimeout(
+		let timeoutId = setTimeout(
 			() => controller.abort(new Error("TIMEOUT")),
 			FETCH_TIMEOUT_MS,
 		);
@@ -346,6 +347,16 @@ export async function fetchPages(
 			const contentType = (response.headers.get("content-type") || "").toLowerCase();
 			const isText =
 				contentType.includes("text/html") || contentType.includes("text/plain");
+
+			// Binários podem ser grandes/lentos (PDF de MBs, servidores lentos):
+			// estende o orçamento de download após o TTFB (headers recebidos).
+			if (!isText) {
+				clearTimeout(timeoutId);
+				timeoutId = setTimeout(
+					() => controller.abort(new Error("TIMEOUT")),
+					BINARY_TIMEOUT_MS,
+				);
+			}
 
 			let filename: string;
 			if (isText) {
@@ -409,7 +420,7 @@ export async function fetchPages(
 				results.push({ url, error: message || name || "UNKNOWN" });
 			}
 		} finally {
-			clearTimeout(timer);
+			clearTimeout(timeoutId);
 			if (signal) {
 				signal.removeEventListener("abort", abortHandler);
 			}
