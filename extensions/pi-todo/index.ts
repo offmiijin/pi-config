@@ -11,6 +11,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { reconstructState } from "./reconstruct.ts";
 import { createTodoState } from "./state.ts";
 import { registerTodoTool, type TodoToolState } from "./tools.ts";
+import { createTodoWidget, WIDGET_ID } from "./widget.ts";
 
 export default function (pi: ExtensionAPI) {
 	// Estado em memória compartilhado entre tools, eventos e widget.
@@ -23,7 +24,14 @@ export default function (pi: ExtensionAPI) {
 	// Reconstrói o último snapshot válido do branch atual:
 	// - /resume e reinício do pi → estado sobrevive;
 	// - /fork e navegação de árvore → estado reflete o ponto da história.
-	pi.on("session_start", async (_event, ctx) => rebuildState(ctx));
+	pi.on("session_start", async (_event, ctx) => {
+		rebuildState(ctx);
+
+		// Widget acima do editor — projeção viva do estado (Fase 5).
+		if (ctx.hasUI) {
+			ctx.ui.setWidget(WIDGET_ID, (_tui, theme) => createTodoWidget(holder, theme));
+		}
+	});
 	pi.on("session_tree", async (_event, ctx) => rebuildState(ctx));
 
 	registerTodoTool(pi, holder);
