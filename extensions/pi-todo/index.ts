@@ -8,6 +8,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { registerTodosCommand } from "./commands.ts";
 import { registerAutoError } from "./errors.ts";
 import { reconstructState } from "./reconstruct.ts";
 import { createTodoState } from "./state.ts";
@@ -36,4 +37,5 @@ export default function (pi: ExtensionAPI) {
 
 	registerTodoTool(pi, holder);
 	registerAutoError(pi, holder);
+	registerTodosCommand(pi, holder);
 }
