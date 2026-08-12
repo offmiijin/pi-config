@@ -84,6 +84,15 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 			"add (texts: descrições), update (id + status, opcional error), " +
 			"clear (limpa a lista).",
 		promptSnippet: "Gerencia a lista de tarefas (to-do) da sessão: list, add, update, clear",
+		promptGuidelines: [
+			"Antes de executar uma tarefa extensa (muitas etapas, múltiplos arquivos ou diretórios), use a tool todo para dividir o trabalho em etapas concretas e rastreáveis.",
+			"Marque a etapa em execução como in-progress via todo (update com id e status in-progress) antes de começar; apenas uma etapa pode ficar em execução por vez.",
+			"Marque a etapa como done via todo (update com id e status done) somente após verificar que o resultado foi alcançado.",
+			"Se não conseguir prosseguir em uma etapa, marque-a como error via todo (update com id, status error e o motivo) e explique o bloqueio ao usuário.",
+			"Se uma ferramenta falhar durante a execução, a tool todo marca a etapa ativa como error automaticamente — retome usando todo update para in-progress ou pending quando corrigir o problema.",
+			"Em conversas longas, use todo list para recuperar o contexto do que já foi feito e do que falta.",
+			"Ao concluir todo o trabalho, use todo clear para limpar a lista e encerrar o rastreamento.",
+		],
 		parameters: TodoParams,
 		executionMode: "sequential",
 
