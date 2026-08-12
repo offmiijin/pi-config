@@ -75,6 +75,9 @@ export function normalizeTodoState(value: unknown): TodoState | null {
 // Reconstrução a partir do branch
 // ---------------------------------------------------------------------------
 
+/** Chave da entrada custom usada para persistir estado fora da tool (erro automático). */
+export const TODO_STATE_ENTRY = "pi-todo-state";
+
 /**
  * Forma mínima de entrada da sessão (compatível com o shape do SessionManager).
  * Tipos frouxos de propósito: dados da sessão não são confiáveis e o módulo
@@ -82,6 +85,8 @@ export function normalizeTodoState(value: unknown): TodoState | null {
  */
 export interface TodoSessionEntry {
 	type?: unknown;
+	customType?: unknown;
+	data?: unknown;
 	message?: {
 		role?: unknown;
 		toolName?: unknown;
@@ -91,20 +96,25 @@ export interface TodoSessionEntry {
 
 /**
  * Reconstrói o estado percorrendo o branch atual e aplicando o ÚLTIMO
- * snapshot válido da tool `todo`. Entradas não relacionadas são ignoradas;
- * snapshots corrompidos são pulados (mantém o último válido). Sem snapshot
- * válido → estado vazio.
+ * snapshot válido entre:
+ * - tool results da tool `todo` (mutações da tool, Fase 4);
+ * - entradas custom `pi-todo-state` (erro automático, Fase 7).
+ * Entradas não relacionadas são ignoradas; snapshots corrompidos são pulados
+ * (mantém o último válido). Sem snapshot válido → estado vazio.
  */
 export function reconstructState(entries: readonly TodoSessionEntry[]): TodoState {
 	let state: TodoState | null = null;
 
 	for (const entry of entries) {
-		if (entry.type !== "message") continue;
-		const msg = entry.message;
-		if (!msg || msg.role !== "toolResult" || msg.toolName !== "todo") continue;
-
-		const normalized = normalizeTodoState(msg.details);
-		if (normalized) state = normalized;
+		if (entry.type === "message") {
+			const msg = entry.message;
+			if (!msg || msg.role !== "toolResult" || msg.toolName !== "todo") continue;
+			const normalized = normalizeTodoState(msg.details);
+			if (normalized) state = normalized;
+		} else if (entry.type === "custom" && entry.customType === TODO_STATE_ENTRY) {
+			const normalized = normalizeTodoState(entry.data);
+			if (normalized) state = normalized;
+		}
 	}
 
 	return state ?? createTodoState();
