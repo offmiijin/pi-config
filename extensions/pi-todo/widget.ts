@@ -6,7 +6,7 @@
  * atual a cada renderização da TUI (sem cache), então nunca fica obsoleto.
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderTodoLine } from "./render.ts";
 import type { TodoState } from "./types.ts";
@@ -43,4 +43,21 @@ export function createTodoWidget(holder: { value: TodoState }, theme: Theme) {
 		render: (width: number): string[] => renderWidgetLines(holder.value, theme, width),
 		invalidate: (): void => {},
 	};
+}
+
+/**
+ * Atualização visual central (Fase 6):
+ * - lista vazia → remove o widget (`setWidget(id, undefined)`);
+ * - lista com tarefas → re-registra a projeção viva acima do editor.
+ *
+ * Deve ser chamada após TODA mutação de estado: add/update/clear (tool),
+ * reconstrução de sessão/árvore e erro automático (Fase 7).
+ */
+export function updateTodoWidget(ctx: ExtensionContext, holder: { value: TodoState }): void {
+	if (!ctx.hasUI) return;
+	if (holder.value.items.length === 0) {
+		ctx.ui.setWidget(WIDGET_ID, undefined);
+		return;
+	}
+	ctx.ui.setWidget(WIDGET_ID, (_tui, theme) => createTodoWidget(holder, theme));
 }
