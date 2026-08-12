@@ -44,6 +44,9 @@
 
 ### Fixed
 
+- `html-to-markdown`: âncoras de header com texto invisível (ex.: `[​](url)` com zero-width space em VitePress/Nextra) eram emitidas como link vazio — agora descartadas; link sem texto visível vira a URL como texto
+- `html-to-markdown`: elementos com `data-as="p"` (padrão shadcn/nextra) eram tratados como inline e grudavam no bloco anterior — agora viram parágrafo
+- `html-to-markdown`: nó de whitespace entre um bloco e um inline "engolia" a fronteira, colando o inline ao bloco (`...](url)In the examples`) — fronteira preservada
 - `html-to-markdown`: conteúdo inline diretamente após um bloco (ex.: `<strong>` depois de `<h1>` sem `<p>`) era silenciosamente descartado pelo join de blocos — corrigido e coberto por teste de regressão (Fase 7 de aceite)
 - `/pi-config-changelog` não trava mais o TUI — substituído `ctx.ui.custom()` por `appendEntry()` + `registerEntryRenderer()`, que renderiza markdown colorido dentro do chat sem risco de congelamento
 - Perfis de quarentena `fetch` e `quarantine` quebrados: `sandbox_fetch` falhava com `curl: (23)` e `sandbox_quarantine_exec` não conseguia ler/escrever no workdir (`Permission denied`). A resolução dos dirs de quarentena usava como base o próprio dir de quarentena (`cwd` do processo), gerando bind mounts aninhados (`<fetch>/.sandbox-cache/fetch`) — o dir real nunca era montado. Novo campo `baseCwd` no `BwrapCall` separa a base dos mounts (workspace) do cwd do processo; testes de regressão adicionados em `bwrap-args.test.ts` e `quarantine.test.ts`

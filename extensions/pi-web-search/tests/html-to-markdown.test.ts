@@ -253,9 +253,20 @@ describe("links", () => {
 	});
 
 	it("link sem texto → URL como texto", () => {
-		expect(md('<a href="https://x.com"></a>')).toBe(
-			"[https://x.com](https://x.com)",
-		);
+		expect(md('<a href="https://x.com"></a>')).toBe("https://x.com");
+	});
+
+	it("âncora de header com texto invisível → descartada", () => {
+		expect(md('<h2><a href="#secao">\u200b</a>Título</h2>')).toBe("## Título");
+	});
+
+	it("span data-as=\"p\" vira parágrafo", () => {
+		expect(md('<p>a</p><span data-as="p">b</span>')).toBe("a\n\nb");
+	});
+
+	it("whitespace entre bloco e inline preserva a fronteira", () => {
+		expect(md("<p>a</p> <b>b</b>")).toBe("a\n\n**b**");
+		expect(md("<div>bloco</div> <span>inline</span>")).toBe("bloco\n\ninline");
 	});
 
 	it("link com imagem dentro", () => {

@@ -87,9 +87,11 @@ export function sanitizeAttributes($: CheerioAPI): void {
 				lower === "class" &&
 				el.tagName.toLowerCase() === "code" &&
 				/(?:^|\s)language-[a-zA-Z0-9_+-]+/.test(el.attribs[name] ?? "");
+			const isParagraphAs = lower === "data-as" && el.attribs[name] === "p";
 			const allowed =
 				KEPT_ATTRIBUTES.includes(lower as (typeof KEPT_ATTRIBUTES)[number]) ||
-				isLanguageClass;
+				isLanguageClass ||
+				isParagraphAs;
 			if (!allowed) $(el).removeAttr(name);
 		}
 	});

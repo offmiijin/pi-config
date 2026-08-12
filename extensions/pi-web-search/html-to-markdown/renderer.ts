@@ -75,8 +75,12 @@ function isElement(n: AnyNode): n is Element {
 	return n.type === "tag" || n.type === "script" || n.type === "style";
 }
 
-function isBlockNode(n: AnyNode): boolean {
-	return isElement(n) && BLOCK_TAGS.has(n.tagName.toLowerCase());
+function isBlockNode($: CheerioAPI, n: AnyNode): boolean {
+	return (
+		isElement(n) &&
+		(BLOCK_TAGS.has(n.tagName.toLowerCase()) ||
+			attr($, n, "data-as") === "p") // span/div com data-as="p" → bloco parágrafo
+	);
 }
 
 function attr($: CheerioAPI, el: Element, name: string): string | undefined {
@@ -98,7 +102,7 @@ function renderChildren($: CheerioAPI, el: AnyNode | undefined, opts: RenderOpti
 	for (const child of el.children) {
 		const rendered = renderNode($, child, opts);
 		if (rendered === null || rendered === "") continue;
-		const isBlock = isBlockNode(child);
+		const isBlock = isBlockNode($, child);
 		// Texto puro com só whitespace vira espaço inline (nunca quebra <br>)
 		if (!isBlock && child.type === "text" && rendered.trim() === "") {
 			parts.push({ text: " ", isBlock: false, ws: true });
@@ -112,22 +116,28 @@ function renderChildren($: CheerioAPI, el: AnyNode | undefined, opts: RenderOpti
 	}
 
 	let out = "";
-	for (let i = 0; i < parts.length; i++) {
-		const p = parts[i];
+	let prevIsBlock = false;
+	for (const p of parts) {
 		if (!out) {
 			out = p.text;
+			prevIsBlock = p.isBlock;
 			continue;
 		}
-		const prev = parts[i - 1];
-		if (prev.isBlock || p.isBlock) {
-			if (p.ws) continue; // whitespace entre blocos → pula (só whitespace)
-			if (opts.inListItem && p.tag && LIST_TAGS.has(p.tag)) {
+		if (p.ws) {
+			// whitespace entre blocos → pula (fronteira preservada); entre inlines → espaço
+			if (prevIsBlock || out.endsWith(" ")) continue;
+			out += " ";
+			continue;
+		}
+		if (prevIsBlock || p.isBlock) {
+			if (opts.inListItem && p.isBlock && p.tag && LIST_TAGS.has(p.tag)) {
 				out += "\n"; // lista aninhada segue na mesma linha do item (tight)
 			} else {
 				out += "\n\n";
 			}
 		}
 		out += p.text;
+		prevIsBlock = p.isBlock;
 	}
 	return out;
 }
@@ -147,6 +157,12 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 	const tag = node.tagName.toLowerCase();
 
 	if (REMOVED_TAGS.has(tag)) return null;
+
+	// Elementos com data-as="p" (ex.: sites shadcn/nextra) → parágrafo
+	if (attr($, node, "data-as") === "p") {
+		const t = renderChildren($, node, { ...opts, escapeCtx: "text" }).trim();
+		return t || null;
+	}
 
 	// ── Títulos ────────────────────────────────────────────────────────
 	const level = HEADING_LEVEL[tag];
@@ -458,7 +474,7 @@ function renderArticle($: CheerioAPI, node: Element, opts: RenderOptions): strin
 	for (const child of node.children ?? []) {
 		const rendered = renderNode($, child, opts);
 		if (rendered === null || rendered === "") continue;
-		const isBlock = isBlockNode(child);
+		const isBlock = isBlockNode($, child);
 		const isArticle = isElement(child) && child.tagName.toLowerCase() === "article";
 		if (!isBlock && rendered.trim() === "") {
 			if (!out || prevBlock) continue; // whitespace em borda de bloco
@@ -609,14 +625,20 @@ function inlineCtx(opts: RenderOptions, base: MarkdownEscapeContext): MarkdownEs
 }
 
 function renderLink($: CheerioAPI, node: Element, opts: RenderOptions): string {
-	const href = resolveUrl(attr($, node, "href"), opts.baseUrl, opts.allowedProtocols);
+	const rawHref = attr($, node, "href") ?? "";
+	const href = resolveUrl(rawHref, opts.baseUrl, opts.allowedProtocols);
 	const text = renderChildren($, node, {
 		...opts,
 		escapeCtx: inlineCtx(opts, "link-text"),
 	}).trim();
 	if (!href) return text || "";
-	const label = text || escapeText(href, "link-text");
-	return `[${label}](${escapeUrl(href)})`;
+	// Texto efetivamente invisível (ZWSP/ZWNJ/ZWJ/hifen) → âncora de decoração
+	const visible = text.replace(/[\u200b-\u200d\u2060\u00ad]/g, "").trim();
+	if (!visible) {
+		// Âncora de header (href só fragmento) → descarta; senão URL como texto
+		return rawHref.trim().startsWith("#") ? "" : escapeText(href, "link-text");
+	}
+	return `[${text}](${escapeUrl(href)})`;
 }
 
 function renderArea($: CheerioAPI, node: Element, opts: RenderOptions): string {
