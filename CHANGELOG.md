@@ -15,6 +15,7 @@
 
 - Instalação automática da configuração do repositório em `~/.pi/agent` com backup automático (PR [#83](https://github.com/offmiijin/pi-config/pull/83))
 - Extensão `pi-config-changelog` com comando `/pi-config-changelog` para visualizar o CHANGELOG da versão atual
+- Extensão `pi-todo` com tool única `todo` (list/add/update/clear) para organizar o raciocínio em tarefas extensas: widget TUI acima do editor com as 5 primeiras tarefas e bolinhas coloridas por status (cinza `pending`, amarelo `in-progress`, verde `done`, vermelho `error`), detecção automática de erro (falha de ferramenta marca a etapa ativa como `error`), persistência entre sessões via snapshots em `tool result.details` e comando `/todos` para lista completa
 
 ### Changed
 
