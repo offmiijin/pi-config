@@ -75,6 +75,23 @@ describe("runChecks — degradação (6.3)", () => {
 		delete binMocks["rg"];
 	});
 
+	it("pdftotext ausente → warn (não erro) com hint poppler", async () => {
+		binMocks["pdftotext"] = { status: 1, errno: "ENOENT" };
+		const checks = await runChecks({ skipNetwork: true, pm: "apt" });
+		const pdftotext = checks.find((c) => c.id === "pdftotext")!;
+		expect(pdftotext.status).toBe("warn");
+		expect(pdftotext.fix).toContain("poppler-utils");
+		delete binMocks["pdftotext"];
+	});
+
+	it("pdftotext presente → ok com versão", async () => {
+		binMocks["pdftotext"] = { status: 0, stdout: "" };
+		const checks = await runChecks({ skipNetwork: true });
+		const pdftotext = checks.find((c) => c.id === "pdftotext")!;
+		expect(pdftotext.status).toBe("ok");
+		delete binMocks["pdftotext"];
+	});
+
 	it("ambiente completo → deps e sandbox sem pendências", async () => {
 		// (node version é dependente do ambiente — não asserta aqui)
 		const checks = await runChecks({ skipNetwork: true });

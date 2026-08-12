@@ -424,8 +424,14 @@ describe("tool_result tracking", () => {
 			toolCallId: "fetch-1",
 			details: {
 				results: [
-					{ url: "https://a.com", file: "a.txt", size: 1024, status: 200 },
-					{ url: "https://b.com", file: "b.txt", size: 2048, status: 200 },
+					{ url: "https://a.com", file: "a.md", size: 1024, status: 200 },
+					{
+						url: "https://b.com",
+						file: "b.pdf",
+						size: 2048,
+						status: 200,
+						binary: true,
+					},
 				],
 			},
 			isError: false,
@@ -433,13 +439,15 @@ describe("tool_result tracking", () => {
 
 		const r1 = __getState().fetches.get("fetch-1:https://a.com")!;
 		expect(r1.status).toBe("done");
-		expect(r1.file).toBe("a.txt");
+		expect(r1.file).toBe("a.md");
 		expect(r1.size).toBe(1024);
+		expect(r1.binary).toBeUndefined();
 
 		const r2 = __getState().fetches.get("fetch-1:https://b.com")!;
 		expect(r2.status).toBe("done");
-		expect(r2.file).toBe("b.txt");
+		expect(r2.file).toBe("b.pdf");
 		expect(r2.size).toBe(2048);
+		expect(r2.binary).toBe(true);
 	});
 
 	it("updates web_fetch URLs to error", async () => {
@@ -590,7 +598,7 @@ describe("state query after events", () => {
 			toolCallId: "fetch-1",
 			details: {
 				results: [
-					{ url: "https://a.com", file: "https_a_com.txt", size: 5120, status: 200 },
+					{ url: "https://a.com", file: "https_a_com.md", size: 5120, status: 200 },
 				],
 			},
 			isError: false,
@@ -600,7 +608,47 @@ describe("state query after events", () => {
 
 		const text = result.content[0].text;
 		expect(text).toContain("Pages Fetched (1)");
-		expect(text).toContain("https_a_com.txt");
+		expect(text).toContain("https_a_com.md");
+	});
+
+	it("renders binary downloads distinctly", async () => {
+		const { registerWebAgent } = await loadAgent();
+		const api = createFakeAPI();
+		registerWebAgent(api);
+
+		const tool = api.getTool("web_agent")!;
+		await tool.execute("id0", { goal: "research" }, undefined);
+
+		await api.emit("tool_call", {
+			toolName: "web_fetch",
+			toolCallId: "fetch-1",
+			input: { urls: ["https://example.com/doc.pdf"] },
+		});
+		await api.emit("tool_result", {
+			toolName: "web_fetch",
+			toolCallId: "fetch-1",
+			details: {
+				results: [
+					{
+						url: "https://example.com/doc.pdf",
+						file: "https_example_com_doc_pdf.pdf",
+						size: 5120,
+						status: 200,
+						binary: true,
+						textFile: "https_example_com_doc_pdf.txt",
+					},
+				],
+			},
+			isError: false,
+		});
+
+		const result = await tool.execute("id2", {}, undefined);
+
+		const text = result.content[0].text;
+		expect(text).toContain("⬇️");
+		expect(text).toContain("https_example_com_doc_pdf.pdf");
+		expect(text).toContain("binário");
+		expect(text).toContain("texto: https_example_com_doc_pdf.txt");
 	});
 });
 
@@ -772,7 +820,7 @@ describe("suggestions", () => {
 			toolCallId: "fetch-1",
 			details: {
 				results: [
-					{ url: "https://a.com", file: "a.txt", size: 512, status: 200 },
+					{ url: "https://a.com", file: "a.md", size: 512, status: 200 },
 				],
 			},
 			isError: false,
@@ -958,8 +1006,8 @@ describe("complete research flow", () => {
 			toolCallId: "fetch-1",
 			details: {
 				results: [
-					{ url: "https://a.com", file: "a.txt", size: 1024, status: 200 },
-					{ url: "https://b.com", file: "b.txt", size: 2048, status: 200 },
+					{ url: "https://a.com", file: "a.md", size: 1024, status: 200 },
+					{ url: "https://b.com", file: "b.md", size: 2048, status: 200 },
 				],
 			},
 			isError: false,
@@ -983,8 +1031,8 @@ describe("complete research flow", () => {
 
 		// Pages Fetched
 		expect(text).toContain("Pages Fetched (2)");
-		expect(text).toContain("a.txt");
-		expect(text).toContain("b.txt");
+		expect(text).toContain("a.md");
+		expect(text).toContain("b.md");
 
 		// Suggestions
 		expect(text).toContain("- **web_fetch** ALL 1 discovered URL(s) at once using the JSON array above");

@@ -117,7 +117,7 @@ export async function search(
 ): Promise<SearchOutput> {
 	// 0. SearXNG (local, self-hosted). Tenta quando configurado (URL/chave) OU
 	//     quando responde no localhost — o probe (3s, cache por processo) cobre
-	//     quem subiu o container (install.sh --searxng, docker compose) sem
+	//     quem subiu o container (docker compose up -d) sem
 	//     precisar configurar URL/chave, e evita o timeout de 10s do
 	//     searchSearxng quando o SearXNG não está rodando.
 	const searxngConfigured = getSearxngUrl() !== null || getSearxngKey() !== null;
@@ -178,7 +178,7 @@ export async function search(
 			configured.length === 0
 				? "Nenhum provedor de busca configurado — web_search sem resultados.\n" +
 					"Opções:\n" +
-					"  • SearXNG local (grátis): docker compose up -d em extensions/pi-web-search (ou ./install.sh --searxng)\n" +
+					"  • SearXNG local (grátis): docker compose up -d em extensions/pi-web-search\n" +
 					"  • API gratuita: /web_search config <tavily|exa|serper> <key> (tavily/exa 1k/mês, serper 2.5k/mês)\n" +
 					"  • Env vars: TAVILY_API_KEY, EXA_API_KEY, SERPER_API_KEY, SEARXNG_URL"
 				: `All engines failed (configuradas: ${configured.join(", ")}): ${errors.join(" | ")}`,

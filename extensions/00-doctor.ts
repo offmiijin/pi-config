@@ -15,7 +15,7 @@
  *   - npm CLI
  *   - Pacotes npm das extensões (hoisted em <root>/node_modules)
  *   - Binários externos: bubblewrap, ripgrep (obrigatórios do sandbox),
- *     git, gh (opcionais)
+ *     git, gh, pdftotext (opcionais)
  *   - Artefatos do sandbox: seccomp.bpf, landlock-exec
  *   - User namespaces e ABI Landlock do kernel
  *   - Docker / SearXNG (opcionais, pi-web-search)
@@ -99,6 +99,7 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		git: "sudo apt install git",
 		node: "sudo apt install nodejs npm",
 		docker: "sudo apt install docker.io",
+		poppler: "sudo apt install poppler-utils",
 	},
 	dnf: {
 		bubblewrap: "sudo dnf install bubblewrap",
@@ -107,6 +108,7 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		git: "sudo dnf install git",
 		node: "sudo dnf install nodejs npm",
 		docker: "sudo dnf install docker",
+		poppler: "sudo dnf install poppler-utils",
 	},
 	pacman: {
 		bubblewrap: "sudo pacman -S bubblewrap",
@@ -115,6 +117,7 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		git: "sudo pacman -S git",
 		node: "sudo pacman -S nodejs npm",
 		docker: "sudo pacman -S docker",
+		poppler: "sudo pacman -S poppler",
 	},
 	zypper: {
 		bubblewrap: "sudo zypper install bubblewrap",
@@ -123,6 +126,7 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		git: "sudo zypper install git",
 		node: "sudo zypper install nodejs20 npm",
 		docker: "sudo zypper install docker",
+		poppler: "sudo zypper install poppler-tools",
 	},
 	apk: {
 		bubblewrap: "sudo apk add bubblewrap",
@@ -131,6 +135,7 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		git: "sudo apk add git",
 		node: "sudo apk add nodejs npm",
 		docker: "sudo apk add docker",
+		poppler: "sudo apk add poppler-utils",
 	},
 };
 
@@ -231,7 +236,9 @@ function runBin(cmd: string, args: string[]): BinResult {
 	try {
 		const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 8000 });
 		if (r.status === 0) {
-			const first = (r.stdout ?? "").split("\n")[0]?.trim() ?? "";
+			// Alguns binários (ex.: pdftotext -v) imprimem a versão em stderr
+			const out = (r.stdout ?? "") || (r.stderr ?? "");
+			const first = out.split("\n")[0]?.trim() ?? "";
 			return { ok: true, version: first };
 		}
 		return { ok: false, missing: r.error?.code === "ENOENT" };
@@ -339,6 +346,17 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		status: gh.ok ? "ok" : "warn",
 		detail: gh.ok ? gh.version : "não encontrado",
 		fix: gh.ok ? undefined : `${installHint(pm, "gh")} — pi-github fica desativada (opcional)`,
+	});
+
+	const pdftotext = runBin("pdftotext", ["-v"]);
+	checks.push({
+		id: "pdftotext",
+		label: "pdftotext (pi-web-search PDF)",
+		status: pdftotext.ok ? "ok" : "warn",
+		detail: pdftotext.ok ? pdftotext.version : "não encontrado",
+		fix: pdftotext.ok
+			? undefined
+			: `${installHint(pm, "poppler")} — web_fetch baixa PDFs sem extrair o texto (modo degradado)`,
 	});
 
 	// Artefatos do sandbox

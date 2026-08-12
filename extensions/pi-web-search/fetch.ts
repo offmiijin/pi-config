@@ -1,22 +1,29 @@
 /**
  * Web Search Extension — Page Fetcher
  *
- * Fetches pages in parallel (max 10 concurrent), extracts clean text with
- * cheerio, and saves each page to <cwd>/.sandbox-cache/web-fetch/page_<date>_<randomhex>/.
+ * Fetches pages in parallel (max 10 concurrent), converts HTML pages to
+ * Markdown (.md) via html-to-markdown/, and saves everything (text + binary) under
+ * <cwd>/.sandbox-cache/fetch/page_<sessionId>/ — ONE directory per pi session.
+ * PDFs additionally get text extracted via `pdftotext` (poppler-utils) so the
+ * agent can read the content (saved as <name>.txt beside the .pdf).
  *
  * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
- * namespace (which mounts $CWD read-write but has isolated /tmp).
+ * namespace (which mounts $CWD read-write but has isolated /tmp). The fetch root
+ * is the same dir used by dev-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch);
+ * page dirs (page_*) live inside it and are cleaned after 7 days.
  */
 
-import * as cheerio from "cheerio";
+import { htmlToMarkdown } from "./html-to-markdown";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
 import {
 	randomUserAgent,
 	randomDelay,
 	asyncPool,
 	sanitizeFilename,
 	FETCH_TIMEOUT_MS,
+	BINARY_TIMEOUT_MS,
 	DEFAULT_CONCURRENCY,
 } from "./utils";
 
@@ -29,10 +36,18 @@ export interface FetchItemResult {
 	size?: number;
 	status?: number;
 	error?: string;
+	/** true quando o conteúdo foi baixado como arquivo binário (não texto) */
+	binary?: boolean;
+	/** texto extraído do binário (PDF → pdftotext) salvo ao lado do arquivo */
+	textFile?: string;
+	/** aviso não-fatal (ex.: extração indisponível) */
+	note?: string;
 }
 
 export interface FetchOutput {
 	outputDir: string;
+	/** diretório dos arquivos binários (= outputDir) — presente quando houve download */
+	binaryDir?: string;
 	total: number;
 	succeeded: number;
 	failed: number;
@@ -40,49 +55,148 @@ export interface FetchOutput {
 }
 
 // ---------------------------------------------------------------------------
-// HTML → clean text
-// ---------------------------------------------------------------------------
-
-/**
- * Strip all tags, scripts, styles, navigation elements from HTML.
- * Returns plain text with normalised whitespace.
- */
-/** @visibleForTesting */
-export function extractText(html: string): string {
-	const $ = cheerio.load(html);
-
-	// Remove non-content elements
-	$(
-		"script, style, noscript, svg, iframe, " +
-			"nav, footer, header, " +
-			'[role="navigation"], [role="banner"], [role="contentinfo"]',
-	).remove();
-
-	const body = $("body").length ? $("body") : $.root();
-	let text = body.text();
-
-	// Normalise whitespace
-	text = text.replace(/\s+/g, " ").trim();
-
-	return text;
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getDateStr(): string {
-	const now = new Date();
-	const y = now.getFullYear();
-	const m = String(now.getMonth() + 1).padStart(2, "0");
-	const d = String(now.getDate()).padStart(2, "0");
-	return `${y}${m}${d}`;
-}
 
 function randomHex(length: number): string {
 	return Math.random().toString(16).slice(2, 2 + length);
 }
 
+/** Sanitiza o id da sessão para uso como nome de diretório. */
+function sanitizeSessionKey(key: string): string {
+	const clean = key.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/^_+|_+$/g, "");
+	return (clean || "default").slice(0, 64);
+}
+
+// ---------------------------------------------------------------------------
+// Binary content
+// ---------------------------------------------------------------------------
+
+/**
+ * Extensão de arquivo a partir do Content-Type.
+ * Tipos conhecidos → mapa fixo; image/audio/video/font → subtipo;
+ * senão extensão da URL; último recurso `.bin`.
+ */
+/** @visibleForTesting */
+export function extensionForContentType(contentType: string, url: string): string {
+	const ct = (contentType.split(";")[0] || "").trim().toLowerCase();
+
+	const special: Record<string, string> = {
+		"application/pdf": "pdf",
+		"application/zip": "zip",
+		"application/gzip": "gz",
+		"application/x-tar": "tar",
+		"application/x-7z-compressed": "7z",
+		"application/x-rar-compressed": "rar",
+		"application/msword": "doc",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+		"application/vnd.ms-excel": "xls",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+		"application/vnd.ms-powerpoint": "ppt",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+		"application/json": "json",
+		"application/xml": "xml",
+	};
+	if (special[ct]) return special[ct];
+
+	const [main, sub] = ct.split("/");
+	if (main && sub && ["image", "audio", "video", "font"].includes(main)) {
+		const s = sub.split("+")[0];
+		return s === "jpeg" ? "jpg" : s || "bin";
+	}
+
+	// Fallback: extensão do caminho da URL
+	try {
+		const urlExt = path
+			.extname(new URL(url).pathname)
+			.replace(/^\./, "")
+			.toLowerCase();
+		if (urlExt && urlExt.length <= 10) return urlExt;
+	} catch { /* URL inválida — usa .bin */ }
+	return "bin";
+}
+
+/** Nome base sanitizado da URL, sem extensão. */
+function urlToBaseName(url: string): string {
+	return sanitizeFilename(url).replace(/\.(txt|md)$/, "");
+}
+
+/** Garante nome único: colisões ganham sufixo _2, _3... preservando a extensão. */
+function uniqueFilename(filename: string, used: Set<string>): string {
+	let f = filename;
+	while (used.has(f)) {
+		const dot = f.lastIndexOf(".");
+		const base = dot > 0 ? f.slice(0, dot) : f;
+		const ext = dot > 0 ? f.slice(dot) : "";
+		const m = base.match(/_\d+$/);
+		f = m
+			? `${base.replace(/_\d+$/, "")}_${parseInt(m[0].slice(1)) + 1}${ext}`
+			: `${base}_2${ext}`;
+	}
+	return f;
+}
+
+
+// ---------------------------------------------------------------------------
+// PDF text extraction (pdftotext / poppler-utils)
+// ---------------------------------------------------------------------------
+
+const PDF_TEXT_TIMEOUT_MS = 30_000;
+
+let pdftotextAvailable: boolean | null = null;
+
+/** pdftotext presente no PATH? (cache por processo) */
+function isPdftotextAvailable(): boolean {
+	if (pdftotextAvailable === null) {
+		try {
+			pdftotextAvailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error === undefined;
+		} catch {
+			pdftotextAvailable = false;
+		}
+	}
+	return pdftotextAvailable;
+}
+
+/** @visibleForTesting */
+export function __resetPdfTextCache(): void {
+	pdftotextAvailable = null;
+}
+
+/**
+ * Extrai texto do PDF via `pdftotext -layout` (poppler-utils).
+ * Escreve o texto em `txtPath` e o retorna; null em falha/timeout/escaneado.
+ */
+async function extractPdfText(pdfPath: string, txtPath: string): Promise<string | null> {
+	return new Promise((resolve) => {
+		const child = spawn(
+			"pdftotext",
+			["-layout", "-enc", "UTF-8", pdfPath, txtPath],
+			{ stdio: "ignore" },
+		);
+		const timer = setTimeout(() => child.kill("SIGKILL"), PDF_TEXT_TIMEOUT_MS);
+		child.on("error", () => {
+			clearTimeout(timer);
+			resolve(null);
+		});
+		child.on("close", async (code) => {
+			clearTimeout(timer);
+			if (code !== 0) {
+				resolve(null);
+				return;
+			}
+			try {
+				resolve(await fs.readFile(txtPath, "utf-8"));
+			} catch {
+				resolve(null);
+			}
+		});
+	});
+}
+
+/** true quando o buffer começa com magic bytes de PDF. */
+function isPdfBuffer(buf: Buffer): boolean {
+	return buf.subarray(0, 5).toString("latin1") === "%PDF-";
+}
 
 // ---------------------------------------------------------------------------
 // Cache cleanup
@@ -91,10 +205,12 @@ function randomHex(length: number): string {
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
- * Remove cache directories older than 7 days.
+ * Remove page directories (page_*, um por sessão do pi) older than 7 days.
+ * Only touches dirs with the page_ prefix — artifacts of sandbox_fetch
+ * at the fetch root (files, ca-extract/, ...) are never removed.
  * Silently ignores errors (permission, race, etc.).
  */
-async function cleanOldCaches(baseDir: string): Promise<void> {
+async function cleanOldPages(baseDir: string): Promise<void> {
 	const now = Date.now();
 	try {
 		const entries = await fs.readdir(baseDir, { withFileTypes: true });
@@ -125,8 +241,13 @@ async function cleanOldCaches(baseDir: string): Promise<void> {
  *   - aborts after FETCH_TIMEOUT_MS (15s)
  *   - respects the external `signal` for Esc-based abort
  *
- * Successful pages are saved as clean text to:
- *   <cwd>/.sandbox-cache/web-fetch/page_<YYYYMMDD>_<8-char-hex>/<sanitised-url>.txt
+ * Successful pages are converted to Markdown and saved to:
+ *   <cwd>/.sandbox-cache/fetch/page_<sessionId>/<sanitised-url>.md
+ * Non-text responses (PDF, images, archives, ...) are downloaded as-is to:
+ *   <cwd>/.sandbox-cache/fetch/page_<sessionId>/<sanitised-url>.<ext>
+ *
+ * `sessionKey` escopa a saída: um único diretório por sessão do pi (todas as
+ * chamadas de web_fetch da mesma sessão compartilham o dir). Fallback: "default".
  *
  * Uses project-local .sandbox-cache/ so files are accessible inside dev-sandbox's
  * bwrap namespace (which mounts $CWD read-write but has isolated /tmp).
@@ -136,14 +257,16 @@ export async function fetchPages(
 	cwd: string,
 	signal?: AbortSignal,
 	maxConcurrent: number = DEFAULT_CONCURRENCY,
+	sessionKey: string = "default",
 ): Promise<FetchOutput> {
-	// 1. Clean caches older than 7 days, then create fresh output directory
-	const dateStr = getDateStr();
-	const randHex = randomHex(8);
-	const cacheRoot = path.join(cwd, ".sandbox-cache", "web-fetch");
-	await cleanOldCaches(cacheRoot);
-	const outputDir = path.join(cacheRoot, `page_${dateStr}_${randHex}`);
-	await fs.mkdir(outputDir, { recursive: true });
+	// 1. Clean pages older than 7 days, then resolve the session dir
+	const fetchRoot = path.join(cwd, ".sandbox-cache", "fetch");
+	await cleanOldPages(fetchRoot);
+	// Um único dir por sessão — texto e binário juntos
+	const sessionDir = path.join(fetchRoot, `page_${sanitizeSessionKey(sessionKey)}`);
+	await fs.mkdir(sessionDir, { recursive: true });
+	const outputDir = sessionDir;
+	const binaryDir = sessionDir;
 
 	const results: FetchItemResult[] = [];
 	const usedFilenames = new Set<string>();
@@ -166,7 +289,7 @@ export async function fetchPages(
 			signal.addEventListener("abort", abortHandler, { once: true });
 		}
 
-		const timer = setTimeout(
+		let timeoutId = setTimeout(
 			() => controller.abort(new Error("TIMEOUT")),
 			FETCH_TIMEOUT_MS,
 		);
@@ -191,44 +314,78 @@ export async function fetchPages(
 				return;
 			}
 
-			// Only process HTML / plain text responses
+			// Only process HTML / plain text responses; everything else is
+			// downloaded as-is to .sandbox-cache/fetch/ (PDF, imagens, ...)
 			const contentType = (response.headers.get("content-type") || "").toLowerCase();
-			if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+			const isText =
+				contentType.includes("text/html") || contentType.includes("text/plain");
+
+			// Binários podem ser grandes/lentos (PDF de MBs, servidores lentos):
+			// estende o orçamento de download após o TTFB (headers recebidos).
+			if (!isText) {
+				clearTimeout(timeoutId);
+				timeoutId = setTimeout(
+					() => controller.abort(new Error("TIMEOUT")),
+					BINARY_TIMEOUT_MS,
+				);
+			}
+
+			let filename: string;
+			if (isText) {
+				// HTML → Markdown (.md) via html-to-markdown (baseUrl = URL final,
+				// após redirects, para resolver links relativos nas fases seguintes)
+				const html = await response.text();
+				const { markdown } = htmlToMarkdown(html, {
+					baseUrl: response.url || url,
+				});
+				filename = uniqueFilename(`${urlToBaseName(url)}.md`, usedFilenames);
+				usedFilenames.add(filename);
+				const filePath = path.join(outputDir, filename);
+				await fs.writeFile(filePath, markdown, "utf-8");
+
 				results.push({
 					url,
-					error: `UNSUPPORTED: ${contentType}`,
+					file: filename,
+					size: Buffer.byteLength(markdown, "utf-8"),
 					status: response.status,
 				});
-				return;
-			}
+			} else {
+				// Download binário: preserva bytes originais
+				const buf = Buffer.from(await response.arrayBuffer());
+				const ext = extensionForContentType(contentType, url);
+				const isPdf = ext === "pdf" || isPdfBuffer(buf);
+				filename = uniqueFilename(`${urlToBaseName(url)}.${ext}`, usedFilenames);
+				usedFilenames.add(filename);
+				const filePath = path.join(binaryDir, filename);
+				await fs.writeFile(filePath, buf);
 
-			const html = await response.text();
-			const text = extractText(html);
+				const item: FetchItemResult = {
+					url,
+					file: filename,
+					size: buf.byteLength,
+					status: response.status,
+					binary: true,
+				};
 
-			// ── Save to file ────────────────────────────────────────
-			// Collision-safe filename: if two URLs sanitise to the same
-			// name, the second gets a `_2` suffix.
-			let filename = sanitizeFilename(url);
-			while (usedFilenames.has(filename)) {
-				const base = filename.replace(/\.txt$/, "");
-				const match = base.match(/_(\d+)$/);
-				if (match) {
-					filename = `${base.replace(/_\d+$/, "")}_${parseInt(match[1]) + 1}.txt`;
-				} else {
-					filename = `${base}_2.txt`;
+				// PDF → extrai texto via pdftotext para o agente poder ler
+				if (isPdf && isPdftotextAvailable()) {
+					const textFile = uniqueFilename(`${urlToBaseName(url)}.txt`, usedFilenames);
+					usedFilenames.add(textFile);
+					const textPath = path.join(binaryDir, textFile);
+					const text = await extractPdfText(filePath, textPath);
+					if (text !== null && text.trim().length > 0) {
+						await fs.writeFile(textPath, text, "utf-8");
+						item.textFile = textFile;
+					} else {
+						// Escaneado/falha — remove arquivo de texto vazio, se criado
+						await fs.rm(textPath, { force: true }).catch(() => undefined);
+					}
+				} else if (isPdf) {
+					item.note = "pdftotext indisponível — texto do PDF não extraído (instale poppler-utils)";
 				}
+
+				results.push(item);
 			}
-			usedFilenames.add(filename);
-
-			const filePath = path.join(outputDir, filename);
-			await fs.writeFile(filePath, text, "utf-8");
-
-			results.push({
-				url,
-				file: filename,
-				size: Buffer.byteLength(text, "utf-8"),
-				status: response.status,
-			});
 		} catch (err: unknown) {
 			const name = err instanceof Error ? err.name : "";
 			const message = err instanceof Error ? err.message : String(err);
@@ -239,7 +396,7 @@ export async function fetchPages(
 				results.push({ url, error: message || name || "UNKNOWN" });
 			}
 		} finally {
-			clearTimeout(timer);
+			clearTimeout(timeoutId);
 			if (signal) {
 				signal.removeEventListener("abort", abortHandler);
 			}
@@ -250,5 +407,13 @@ export async function fetchPages(
 	const succeeded = results.filter((r) => !r.error).length;
 	const failed = results.filter((r) => r.error).length;
 
-	return { outputDir, total: urls.length, succeeded, failed, results };
+	const hasBinary = results.some((r) => r.binary);
+	return {
+		outputDir,
+		binaryDir: hasBinary ? binaryDir : undefined,
+		total: urls.length,
+		succeeded,
+		failed,
+		results,
+	};
 }

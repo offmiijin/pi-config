@@ -11,7 +11,6 @@
 #   4. Dependências npm das extensões (npm ci em <agent>/node_modules)
 #   5. landlock-exec (compila com Rust se disponível)
 #   6. Verificações: user namespaces, inotify, seccomp, landlock, binário do pi
-#   7. Opcional: Docker + SearXNG para busca local
 #
 # Se já existir configuração em <destino>, ela é renomeada para backup
 # (~/.pi/agent-bak-<timestamp>) — dados pessoais NÃO são migrados, o
@@ -21,7 +20,6 @@
 # Uso:
 #   git clone <repo> && cd pi-config && ./install.sh
 #   ./install.sh --yes           # não-interativo (instala só o obrigatório)
-#   ./install.sh --searxng       # também sobe Docker + SearXNG
 #   ./install.sh --force         # reinstala deps npm mesmo já presentes
 #   PI_AGENT_DIR=/path ./install.sh   # diretório do agente (destino)
 #
@@ -33,20 +31,18 @@ set -euo pipefail
 ASSUME_YES=0
 DRY_RUN="${DRY_RUN:-0}"
 DO_FORCE=0
-DO_SEARXNG=0
 AGENT_DIR="${PI_AGENT_DIR:-}"
 
 usage() {
   sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   echo
-  echo "Flags: --yes | --force | --searxng | --dir PATH | --dry-run | --help"
+  echo "Flags: --yes | --force | --dir PATH | --dry-run | --help"
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) ASSUME_YES=1 ;;
     --force|-f) DO_FORCE=1 ;;
-    --searxng) DO_SEARXNG=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --dir|-d) AGENT_DIR="$2"; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -447,71 +443,6 @@ check_landlock() {
   warn "  Isolamento Landlock desativado; bwrap/seccomp continuam ativos."
 }
 
-# ── Docker + SearXNG (opcional) ──────────────────────────────────────────
-# O container SearXNG roda no HOST (não no sandbox do pi).
-# O pi acessa via HTTP em localhost:4000 (--share-net compartilha rede do host).
-# Falhas aqui NUNCA abortam o instalador: SearXNG é um extra opcional.
-setup_searxng() {
-  local ws="$AGENT_DIR/extensions/pi-web-search"
-  [ -d "$ws" ] || { warn "pi-web-search não encontrado — pulando SearXNG."; return; }
-
-  if [ "$DO_SEARXNG" -eq 0 ]; then
-    confirm_opt "Configurar Docker + SearXNG para busca local (opcional)?" || return 0
-  fi
-
-  # ── Instala Docker (binário + daemon) ──────────────────────
-  if ! has_cmd docker; then
-    install_system_pkgs "$([ "$DO_SEARXNG" -eq 1 ] && echo 0 || echo 1)" docker
-  fi
-  if ! has_cmd docker; then
-    warn "Docker indisponível — use APIs externas: /web_search config <tavily|exa|serper> <key>"
-    return
-  fi
-
-  # ── Verifica daemon rodando ────────────────────────────────
-  if ! docker info >/dev/null 2>&1; then
-    warn "Docker instalado mas daemon não está rodando."
-    warn "  Inicie o daemon (systemctl start docker) e rode o SearXNG manualmente:"
-    warn "    cd $ws && docker compose up -d"
-    return
-  fi
-
-  # ── Plugin docker compose ──────────────────────────────────
-  if ! docker compose version >/dev/null 2>&1; then
-    warn "Plugin 'docker compose' não encontrado — instalando..."
-    install_system_pkgs 1 docker-compose
-    if ! docker compose version >/dev/null 2>&1; then
-      warn "Plugin compose indisponível. Instale docker-compose-plugin manualmente."
-      return
-    fi
-  fi
-
-  # ── .env com chave aleatória para o SEARXNG_SECRET ────────
-  local envfile="$ws/.env"
-  if [ ! -f "$envfile" ]; then
-    local key
-    key="$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 40 || true)"
-    if [ "$DRY_RUN" -eq 1 ]; then
-      echo "[dry-run] cria $envfile com SEARXNG_KEY aleatória"
-    else
-      printf 'SEARXNG_KEY=%s\n' "${key:-change-me}" > "$envfile"
-      log "✓ .env gerado em $ws/.env"
-    fi
-  fi
-
-  # ── Sobe container (falha não derruba instalador) ─────────
-  if [ "$DO_SEARXNG" -eq 1 ] || confirm_opt "Subir container SearXNG (docker compose up -d)?"; then
-    if run bash -c "cd '$ws' && docker compose up -d" 2>/dev/null; then
-      log "✓ SearXNG iniciado em http://localhost:4000"
-      warn "Após o 1º start, habilite JSON no SearXNG:"
-      warn "  docker exec pi-searxng sed -i 's/  formats:\\n    - html/  formats:\\n    - html\\n    - json/' /etc/searxng/settings.yml && docker restart pi-searxng"
-    else
-      warn "Falha ao subir SearXNG (porta 4000 ocupada? container já existe?)."
-      warn "  Verifique manualmente: cd $ws && docker compose up -d"
-    fi
-  fi
-}
-
 # ── pi binary ────────────────────────────────────────────────────────────
 check_pi() {
   if has_cmd pi; then
@@ -547,7 +478,6 @@ main() {
   check_kernel
   check_seccomp
   check_landlock
-  setup_searxng
   check_pi
 
   echo
