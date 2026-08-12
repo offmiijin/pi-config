@@ -1,18 +1,17 @@
 /**
  * pi-todo — Entry point
  *
- * Composição da extensão. Fases seguintes registram aqui:
- * - Fase 5: widget TUI acima do editor;
- * - Fase 7: detecção automática de erro (tool_execution_end);
- * - Fase 9: comando /todos.
+ * Composição da extensão: registra a tool `todo`, a detecção automática de
+ * erro e o comando /todos; mantém o estado compartilhado e o reconstrói a
+ * partir do branch atual da sessão.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerTodosCommand } from "./commands.ts";
 import { registerAutoError } from "./errors.ts";
 import { reconstructState } from "./reconstruct.ts";
-import { createTodoState } from "./state.ts";
-import { registerTodoTool, type TodoToolState } from "./tools.ts";
+import { createTodoState, type TodoToolState } from "./state.ts";
+import { registerTodoTool } from "./tools.ts";
 import { updateTodoWidget } from "./widget.ts";
 
 export default function (pi: ExtensionAPI) {

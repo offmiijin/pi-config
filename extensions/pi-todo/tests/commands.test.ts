@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { registerTodosCommand } from "../commands.ts";
 import { addTodos, createTodoState } from "../state.ts";
-import type { TodoToolState } from "../tools.ts";
+import type { TodoToolState } from "../state.ts";
 
 function fakeTheme() {
 	return {

@@ -1,15 +1,15 @@
 /**
  * pi-todo — Comando /todos
  *
- * Fase 9: lista COMPLETA de tarefas em tela temporária (além das 5 do
- * widget). Apenas visualização — não altera estado. Requer modo TUI
- * (`ctx.ui.custom` substitui o editor enquanto aberto).
+ * Lista COMPLETA de tarefas em tela temporária (além das 5 do widget).
+ * Apenas visualização — não altera estado. Requer modo TUI (`ctx.ui.custom`
+ * substitui o editor enquanto aberto).
  */
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { renderTodoLine } from "./render.ts";
-import type { TodoToolState } from "./tools.ts";
+import type { TodoToolState } from "./state.ts";
 
 /** Componente de tela cheia: projeção viva do holder, Esc/Ctrl+C fecha. */
 class TodoListComponent {

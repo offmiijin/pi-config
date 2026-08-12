@@ -1,24 +1,19 @@
 /**
  * pi-todo — Tool única
  *
- * Fase 4: tool `todo` com ações list/add/update/clear.
- * Estado é lido/gravado via holder compartilhado; cada resposta carrega o
- * snapshot completo em `details` (persistência — Fase 3). Execução sequencial
- * evita corrida entre chamadas irmãs do mesmo turno (ex.: add + update).
+ * Tool `todo` com ações list/add/update/clear. Estado é lido/gravado via
+ * holder compartilhado; cada resposta carrega o snapshot completo em
+ * `details`. Execução sequencial evita corrida entre chamadas irmãs do mesmo
+ * turno (ex.: add + update).
  */
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderTodoLine } from "./render.ts";
-import { addTodos, clearTodos, isTodoStatus, snapshot, updateTodo } from "./state.ts";
+import { addTodos, clearTodos, isTodoStatus, snapshot, updateTodo, type TodoToolState } from "./state.ts";
 import { updateTodoWidget } from "./widget.ts";
 import type { TodoAction, TodoDetails, TodoState, TodoStatus } from "./types.ts";
-
-/** Estado compartilhado entre index (reconstrução) e tool (mutações). */
-export interface TodoToolState {
-	value: TodoState;
-}
 
 /**
  * Enum de strings compatível com Google API (mesmo shape do StringEnum do

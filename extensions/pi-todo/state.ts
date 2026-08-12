@@ -1,13 +1,18 @@
 /**
  * pi-todo — Estado puro
  *
- * Fase 2: mutações imutáveis do estado da lista de tarefas.
+ * Mutações imutáveis do estado da lista de tarefas.
  * Nenhuma função aqui acessa I/O, UI ou sessão — apenas dados.
  * Contratos de transição e invariantes documentados em types.ts.
  */
 
 import type { TodoItem, TodoState, TodoStatus } from "./types.ts";
 import { TODO_STATUSES } from "./types.ts";
+
+/** Estado compartilhado entre composição (reconstrução) e tool (mutações). */
+export interface TodoToolState {
+	value: TodoState;
+}
 
 // ---------------------------------------------------------------------------
 // Construção e utilitários

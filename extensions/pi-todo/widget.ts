@@ -1,9 +1,9 @@
 /**
  * pi-todo — Widget TUI acima do editor
  *
- * Fase 5: projeção das primeiras 5 tarefas com bolinhas coloridas.
- * O componente é uma projeção viva do holder: `render()` recalcula do estado
- * atual a cada renderização da TUI (sem cache), então nunca fica obsoleto.
+ * Projeção das primeiras 5 tarefas com bolinhas coloridas. O componente é
+ * uma projeção viva do holder: `render()` recalcula do estado atual a cada
+ * renderização da TUI (sem cache), então nunca fica obsoleto.
  */
 
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -46,12 +46,12 @@ export function createTodoWidget(holder: { value: TodoState }, theme: Theme) {
 }
 
 /**
- * Atualização visual central (Fase 6):
+ * Atualização visual central:
  * - lista vazia → remove o widget (`setWidget(id, undefined)`);
  * - lista com tarefas → re-registra a projeção viva acima do editor.
  *
  * Deve ser chamada após TODA mutação de estado: add/update/clear (tool),
- * reconstrução de sessão/árvore e erro automático (Fase 7).
+ * reconstrução de sessão/árvore e erro automático.
  */
 export function updateTodoWidget(ctx: ExtensionContext, holder: { value: TodoState }): void {
 	if (!ctx.hasUI) return;

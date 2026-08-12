@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { registerAutoError } from "../errors.ts";
 import { TODO_STATE_ENTRY } from "../reconstruct.ts";
 import { addTodos, createTodoState, updateTodo } from "../state.ts";
-import type { TodoToolState } from "../tools.ts";
+import type { TodoToolState } from "../state.ts";
 import { WIDGET_ID } from "../widget.ts";
 
 function setup() {

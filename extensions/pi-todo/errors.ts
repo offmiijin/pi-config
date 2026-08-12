@@ -1,11 +1,11 @@
 /**
  * pi-todo — Detecção automática de erro
  *
- * Fase 7: quando UMA FERRAMENTA falha (`tool_execution_end` com `isError`)
- * durante a execução de uma tarefa `in-progress`, a tarefa ativa é marcada
- * como `error` automaticamente — o modelo não conseguiu prosseguir na etapa.
+ * Quando UMA FERRAMENTA falha (`tool_execution_end` com `isError`) durante a
+ * execução de uma tarefa `in-progress`, a tarefa ativa é marcada como
+ * `error` automaticamente — o modelo não conseguiu prosseguir na etapa.
  *
- * Política (Fase 12/Parte 8):
+ * Política:
  * - erro da própria tool `todo` é operacional (parâmetros), não falha de
  *   etapa → nunca dispara esta marcação (evita recursão);
  * - ferramentas paralelas: marca ao PRIMEIRO erro observado; erros seguintes
@@ -15,8 +15,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { TODO_STATE_ENTRY } from "./reconstruct.ts";
-import { snapshot, updateTodo } from "./state.ts";
-import type { TodoToolState } from "./tools.ts";
+import { snapshot, updateTodo, type TodoToolState } from "./state.ts";
 import { updateTodoWidget } from "./widget.ts";
 
 /** Limita o texto do motivo extraído do resultado da ferramenta. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createTodoState } from "../state.ts";
-import { registerTodoTool, type TodoToolState, type TodoParamsInput } from "../tools.ts";
+import { createTodoState, type TodoToolState } from "../state.ts";
+import { registerTodoTool, type TodoParamsInput } from "../tools.ts";
 import type { TodoDetails } from "../types.ts";
 
 function fakeTheme() {

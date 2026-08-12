@@ -1,8 +1,8 @@
 /**
  * pi-todo — Formatação compartilhada
  *
- * Fase 4: helpers de formatação usados pela renderização da tool (Fase 4)
- * e pelo widget TUI (Fase 5) — fonte única para cor da bolinha e da linha.
+ * Helpers de formatação usados pela renderização da tool e pelo widget TUI —
+ * fonte única para cor da bolinha e da linha.
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";

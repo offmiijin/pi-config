@@ -1,10 +1,10 @@
 /**
  * pi-todo — Reconstrução de estado a partir da sessão
  *
- * Fase 3: leitura de snapshots persistidos em `tool result.details` e
- * reconstrução do estado em memória. Dados vindos da sessão (JSON) não são
- * confiáveis — todo snapshot é normalizado e validado contra os invariantes
- * de types.ts antes de ser aceito.
+ * Leitura de snapshots persistidos em `tool result.details` e em entradas
+ * custom, com reconstrução do estado em memória. Dados vindos da sessão
+ * (JSON) não são confiáveis — todo snapshot é normalizado e validado contra
+ * os invariantes de types.ts antes de ser aceito.
  */
 
 import type { TodoItem, TodoState } from "./types.ts";
@@ -97,8 +97,8 @@ export interface TodoSessionEntry {
 /**
  * Reconstrói o estado percorrendo o branch atual e aplicando o ÚLTIMO
  * snapshot válido entre:
- * - tool results da tool `todo` (mutações da tool, Fase 4);
- * - entradas custom `pi-todo-state` (erro automático, Fase 7).
+ * - tool results da tool `todo` (mutações via tool);
+ * - entradas custom `pi-todo-state` (erro automático).
  * Entradas não relacionadas são ignoradas; snapshots corrompidos são pulados
  * (mantém o último válido). Sem snapshot válido → estado vazio.
  */

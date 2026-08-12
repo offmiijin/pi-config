@@ -1,9 +1,8 @@
 /**
  * pi-todo — Modelo de dados e invariantes
  *
- * Fase 1: tipos e invariantes do estado da lista de tarefas.
- * Contratos de mutação são validados na Fase 2 (state.ts); aqui eles são
- * documentados como invariantes que toda implementação deve respeitar.
+ * Contratos de mutação são validados em state.ts; aqui documentados como
+ * invariantes que toda implementação deve respeitar.
  */
 
 // ---------------------------------------------------------------------------
@@ -71,17 +70,7 @@ export interface TodoState {
 /** Ações suportadas pela tool única `todo`. */
 export type TodoAction = "list" | "add" | "update" | "clear";
 
-/**
- * Snapshot persistido em `tool result.details` (Fase 3).
- *
- * `error` aqui é erro de OPERAÇÃO (parâmetros inválidos, id inexistente),
- * distinto de `TodoItem.error` (falha da etapa em si).
- *
- * Invariantes:
- * - `items` é sempre o snapshot COMPLETO do estado pós-ação — nunca uma
- *   projeção truncada.
- * - `nextId` acompanha o mesmo estado do snapshot.
- */
+/** Snapshot persistido em `tool result.details`. */
 export interface TodoDetails {
 	action: TodoAction;
 	items: TodoItem[];
@@ -94,7 +83,7 @@ export interface TodoDetails {
 // ---------------------------------------------------------------------------
 
 /**
- * Transições permitidas de `status` (contrato para a Fase 2):
+ * Transições permitidas de `status` (validadas em state.ts):
  *
  * - `pending`     → `in-progress` | `done` | `error`
  * - `in-progress` → `done` | `error` | `pending` (retrabalho)
