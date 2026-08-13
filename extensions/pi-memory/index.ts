@@ -35,6 +35,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	ensureDirectories,
 	identifyProject,
+	RETENTION_ENABLED,
+	RETENTION_DB_PATH,
 } from "./constants.ts";
 import {
 	formatMemoryIndexText,
@@ -43,6 +45,7 @@ import {
 	migrateLegacyMemories,
 	parseFrontmatter,
 	saveMemory,
+	ensureMemoryIdentities,
 } from "./memory/memory.ts";
 import {
 	INDEX_DB_PATH,
@@ -71,6 +74,8 @@ import {
 	type ModelRegistryLike,
 } from "./pipeline/processor.ts";
 import type { MemoryFileRef } from "./pipeline/validator.ts";
+import { RetentionScheduler } from "./memory/retention-scheduler.ts";
+import { MemoryActivityStore } from "./memory/retention-store.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemorySave } from "./tools/save.ts";
@@ -101,6 +106,9 @@ export default function (pi: ExtensionAPI) {
 	// extração resolve o modelo FIXO de config.ts em runtime (não herda o
 	// modelo interativo da sessão).
 	let extractionModelRegistry: ModelRegistryLike | null = null;
+	// Scheduler de retenção por desuso (feature flag RETENTION_ENABLED).
+	// Null quando desativado/indisponível — busca e escrita seguem sem ele.
+	let retentionScheduler: RetentionScheduler | null = null;
 
 	// Resolução do modelo de extração + contexto de memórias relacionadas
 	// (FTS5). Melhor-esforço — falha degrada o prompt, não o job.
@@ -231,6 +239,18 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] migração falhou: ${(err as Error).message}`);
 		}
 
+		// Frontmatter v3: atribui memory_id/retention_policy a memórias sem
+		// identidade (v2). Idempotente e NÃO altera updated/confidence — a
+		// ordenação por recência e o estado factual ficam intactos.
+		try {
+			const identified = ensureMemoryIdentities(state.projectId);
+			if (identified > 0) {
+				console.warn(`[pi-memory] identificadas ${identified} memória(s) (frontmatter v3)`);
+			}
+		} catch (err) {
+			console.warn(`[pi-memory] atribuição de identidade falhou: ${(err as Error).message}`);
+		}
+
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		state.currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
 		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
@@ -307,6 +327,32 @@ export default function (pi: ExtensionAPI) {
 		state.pipeline = pipeline;
 		state.worker = worker;
 
+		// Retenção por inatividade (feature flag — default OFF). Abre o banco
+		// de atividade, agenda o sweep periódico e roda um sweep inicial para
+		// popular os scores no índice antes da primeira busca. Falha degrada:
+		// store fechado + scheduler null — busca segue sem registrar uso.
+		if (RETENTION_ENABLED) {
+			try {
+				const retentionStore = new MemoryActivityStore(RETENTION_DB_PATH);
+				retentionStore.open();
+				state.retention = retentionStore;
+				const scheduler = new RetentionScheduler(retentionStore, state.index);
+				retentionScheduler = scheduler;
+				scheduler.setProject(state.projectId);
+				scheduler.start(state.projectId);
+				await scheduler.sweep();
+			} catch (err) {
+				try {
+					state.retention?.close();
+				} catch {
+					// close best-effort
+				}
+				state.retention = null;
+				retentionScheduler = null;
+				console.warn(`[pi-memory] retenção indisponível: ${(err as Error).message}`);
+			}
+		}
+
 		state.consecutiveEmptySearches = 0;
 		// Reseta o cache do índice de memória da sessão
 		state.cachedIndexText = null;
@@ -323,6 +369,7 @@ export default function (pi: ExtensionAPI) {
 		state.projectId = nextProjectId;
 		// Worker segue aberto entre projetos; passa a consumir o novo.
 		worker?.setProject(nextProjectId);
+		retentionScheduler?.setProject(nextProjectId);
 		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
 
 		// Sincroniza o índice para o novo projeto (global + projeto novo).
@@ -423,6 +470,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		// Retenção: para o ciclo e fecha o banco de atividade ANTES do índice
+		// (sweep em voo aborta na próxima checagem; escrita não fica órfã).
+		retentionScheduler?.stop();
+		retentionScheduler = null;
+		state.retention?.close();
+		state.retention = null;
+
 		state.index?.close();
 		state.index = null;
 		state.pipeline = null;
