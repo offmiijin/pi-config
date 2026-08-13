@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS memory_documents (
   project_id TEXT,
   type TEXT NOT NULL,
   context TEXT NOT NULL,
+  memory_id TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL,
   summary TEXT,
   tags_json TEXT NOT NULL DEFAULT '[]',
@@ -81,6 +82,8 @@ export interface IndexDocument {
 	contentHash: string;
 	/** Relevância operacional por desuso (derivada do .retention.sqlite). */
 	retentionScore: number;
+	/** Identidade estável (frontmatter v3) — vazia quando ausente (v2 não migrado). */
+	memoryId: string;
 }
 
 /** SHA-256 hex do conteúdo bruto do arquivo (detecção de edição manual). */
@@ -190,6 +193,8 @@ export interface IndexSearchResult {
 	updated: string;
 	/** Relevância operacional por desuso — critério secundário de ordenação. */
 	retentionScore: number;
+	/** Identidade estável (frontmatter v3) — usada para registrar uso. */
+	memoryId: string;
 	/** Trecho relevante (coluna body), vazio quando o corpo é vazio. */
 	snippet: string;
 	/** Maior = melhor (BM25 ponderado — apenas lexical; metadados não entram). */
@@ -250,6 +255,7 @@ export function readMemoryDocFromFile(absPath: string, relPath: string): IndexDo
 		// e não carrega atividade. Default 1.0; o scheduler reaplica os scores
 		// reais após reconcile/recompute (e após rebuild, que zera tudo).
 		retentionScore: 1.0,
+		memoryId: typeof meta.memory_id === "string" ? meta.memory_id : "",
 	};
 }
 
@@ -372,14 +378,20 @@ export class MemoryIndex {
 		const db = this.requireDb();
 		db.exec("BEGIN");
 		try {
-			// v2 → v3: coluna retention_score no memory_documents. CREATE TABLE
-			// IF NOT EXISTS não altera tabela existente — ALTER explícito;
-			// idempotente contra erro de coluna duplicada (migração parcial).
+			// v2 → v3: colunas retention_score e memory_id no memory_documents.
+			// CREATE TABLE IF NOT EXISTS não altera tabela existente — ALTER
+			// explícito; idempotente contra erro de coluna duplicada (migração
+			// parcial).
 			if (oldVersion < 3) {
-				try {
-					db.exec("ALTER TABLE memory_documents ADD COLUMN retention_score REAL NOT NULL DEFAULT 1.0");
-				} catch (err) {
-					if (!/duplicate column/i.test((err as Error).message)) throw err;
+				for (const ddl of [
+					"ALTER TABLE memory_documents ADD COLUMN retention_score REAL NOT NULL DEFAULT 1.0",
+					"ALTER TABLE memory_documents ADD COLUMN memory_id TEXT NOT NULL DEFAULT ''",
+				]) {
+					try {
+						db.exec(ddl);
+					} catch (err) {
+						if (!/duplicate column/i.test((err as Error).message)) throw err;
+					}
 				}
 			}
 
@@ -736,7 +748,7 @@ export class MemoryIndex {
 		const rows = db
 			.prepare(
 				`SELECT d.path, d.scope, d.project_id, d.type, d.context, d.title, d.summary,
-				        d.confidence, d.updated, d.retention_score,
+				        d.confidence, d.updated, d.retention_score, d.memory_id,
 				        snippet(memory_fts, 3, '', '', '…', 24) AS snippet_text,
 				        -bm25(memory_fts, 8.0, 4.0, 2.0, 1.0, 0.5) AS score
 				 FROM memory_fts
@@ -762,6 +774,7 @@ export class MemoryIndex {
 			confidence: Number(r.confidence),
 			updated: String(r.updated),
 			retentionScore: Number(r.retention_score),
+			memoryId: String(r.memory_id ?? ""),
 			snippet: r.snippet_text === null ? "" : String(r.snippet_text),
 			score: Number(r.score),
 		}));
@@ -782,15 +795,15 @@ export class MemoryIndex {
 		db
 			.prepare(
 				`INSERT INTO memory_documents
-				   (path, scope, project_id, type, context, title, summary, tags_json,
+				   (path, scope, project_id, type, context, memory_id, title, summary, tags_json,
 				    confidence, updated, content_hash, created_at, modified_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT(path) DO UPDATE SET
 				   scope=excluded.scope, project_id=excluded.project_id, type=excluded.type,
-				   context=excluded.context, title=excluded.title, summary=excluded.summary,
-				   tags_json=excluded.tags_json, confidence=excluded.confidence,
-				   updated=excluded.updated, content_hash=excluded.content_hash,
-				   modified_at=excluded.modified_at,
+				   context=excluded.context, memory_id=excluded.memory_id, title=excluded.title,
+				   summary=excluded.summary, tags_json=excluded.tags_json,
+				   confidence=excluded.confidence, updated=excluded.updated,
+				   content_hash=excluded.content_hash, modified_at=excluded.modified_at,
 				   retention_score=memory_documents.retention_score`,
 			)
 			.run(
@@ -799,6 +812,7 @@ export class MemoryIndex {
 				doc.projectId,
 				doc.type,
 				doc.context,
+				doc.memoryId,
 				doc.title,
 				doc.summary,
 				JSON.stringify(doc.tags),

@@ -59,6 +59,7 @@ function makeState(worker: PipelineWorker | null = null): ToolState {
 		consecutiveEmptySearches: 0,
 		cachedIndexText: null,
 		index: null,
+		retention: null,
 		pipeline,
 		worker,
 	};

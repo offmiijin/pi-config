@@ -88,6 +88,7 @@ export default function (pi: ExtensionAPI) {
 		index: null,
 		pipeline: null,
 		worker: null,
+		retention: null,
 	};
 
 	// Pipeline operacional (episódios → worker). Null se indisponível —

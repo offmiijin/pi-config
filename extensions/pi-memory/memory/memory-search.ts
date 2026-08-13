@@ -27,6 +27,23 @@ export function readFileConfidence(filePath: string): number | undefined {
 }
 
 /**
+ * Lê o memory_id (identidade estável, frontmatter v3) de um arquivo de
+ * memória. Retorna null quando ausente/ilegível — o registro de uso então
+ * cai para lookup por path no .retention.sqlite.
+ */
+export function readFileMemoryId(filePath: string): string | null {
+	try {
+		if (!existsSync(filePath)) return null;
+		const content = readFileSync(filePath, "utf-8");
+		const { meta } = parseFrontmatter(content);
+		const id = meta.memory_id;
+		return typeof id === "string" && id.length > 0 ? id : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Resultados de uma busca de memórias.
  */
 export interface SearchResult {
@@ -34,6 +51,8 @@ export interface SearchResult {
 	file: string;
 	/** Linha(s) encontrada(s) com números de linha */
 	lines: string[];
+	/** Identidade estável (frontmatter v3) — null quando ausente. */
+	memoryId: string | null;
 }
 
 /**
@@ -150,7 +169,7 @@ export function searchMemories(options: SearchOptions): SearchResult[] {
 			const conf = readFileConfidence(file);
 			if (conf === undefined || conf < minConfidence) continue;
 		}
-		results.push({ file, lines });
+		results.push({ file, lines, memoryId: readFileMemoryId(file) });
 	}
 
 	return results.slice(0, limit);

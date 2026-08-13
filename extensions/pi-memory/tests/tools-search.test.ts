@@ -23,6 +23,7 @@ function result(overrides: Partial<IndexSearchResult> = {}): IndexSearchResult {
 		confidence: 0.8,
 		updated: "2026-08-01",
 		retentionScore: 1.0,
+		memoryId: "mem-1",
 		snippet: "O bug era no cache",
 		score: -1.23,
 		...overrides,
@@ -76,6 +77,7 @@ function rgResult(overrides: Partial<SearchResult> = {}): SearchResult {
 	return {
 		file: "/home/u/.pi/agent/memories/_global/gotchas/cache.md",
 		lines: ["L7: O bug era no cache"],
+		memoryId: null,
 		...overrides,
 	};
 }
