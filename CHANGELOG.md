@@ -7,6 +7,7 @@
 - Instalação automática da configuração do repositório em `~/.pi/agent` com backup automático (PR [#83](https://github.com/offmiijin/pi-config/pull/83))
 - Extensão `pi-config-changelog` com comando `/pi-config-changelog` para visualizar o CHANGELOG da versão atual
 - Extensão `pi-todo` com tool única `todo` (list/add/update/clear) para organizar o raciocínio em tarefas extensas: widget TUI acima do editor com as 5 primeiras tarefas e bolinhas coloridas por status (cinza `pending`, amarelo `in-progress`, verde `done`, vermelho `error`), detecção automática de erro (falha de ferramenta marca a etapa ativa como `error`), persistência entre sessões via snapshots em `tool result.details` e comando `/todos` para lista completa
+- Extensão `pi-memory` — retenção por inatividade (decay automático por desuso): `retention_score` (relevância operacional) separado de `confidence` (certeza factual, que só o `memory_decay` manual altera — desuso nunca move memórias para `.supersedes/`); frontmatter v3 com `memory_id` (identidade estável, preservada em consolidações e mudanças de tipo) e `retention_policy` (`normal`/`protected`; `_rules` → `protected`); banco de atividade derivado `.retention.sqlite` (`last_used_at`, `use_count`, `retention_score` — markdown continua canônico, sem escrita por leitura); `RetentionScheduler` independente do worker de extração com sweep periódico (reconcile → recompute por meia-vida com grace period → apply no índice); tool `memory_retention` com `status`/`preview` (dry-run sem escrita)/`run`; seção de retenção no `memory_status`; feature flag `RETENTION_ENABLED` (default `false`, rollout seguro); documentação em `docs/retention.md` e 42 testes novos (397 no total)
 
 ### Changed
 
@@ -28,6 +29,8 @@
 - Seleção interativa do `/thinking` usa sufixo `[valor]` na opção e parsing por valor exato (regex), eliminando o parsing frágil por `startsWith`/`includes` de label
 - Nível atual não suportado pelo modelo gera aviso e sugere o nível mais próximo (maior suportado ≤ atual; senão o menor suportado)
 - Notificações do `/thinking` passam a exibir o modelo ativo; suíte de testes unitários `thinking-level.test.ts` (vitest) adicionada ao CI
+- `memory_search` passa a registrar o uso dos resultados (engine SQLite e fallback ripgrep) no `.retention.sqlite` quando a retenção está ativa — busca vazia não registra, falha do store degrada sem quebrar a busca e o bump do score é imediato no índice
+- Índice FTS do `pi-memory` passa para schema v3: colunas `retention_score` e `memory_id` em `memory_documents` (migração via ALTER idempotente); ordenação da busca passa a usar `retention_score` como critério secundário (BM25 → confidence → retention_score → updated → path), sem dominar a relevância lexical
 
 ### Removed
 
