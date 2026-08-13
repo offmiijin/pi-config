@@ -22,6 +22,7 @@ function result(overrides: Partial<IndexSearchResult> = {}): IndexSearchResult {
 		summary: null,
 		confidence: 0.8,
 		updated: "2026-08-01",
+		retentionScore: 1.0,
 		snippet: "O bug era no cache",
 		score: -1.23,
 		...overrides,
