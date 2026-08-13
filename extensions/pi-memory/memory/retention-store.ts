@@ -59,6 +59,8 @@ export interface ActiveDoc {
 	type: string;
 	context: string;
 	policy: RetentionPolicy;
+	/** Data de criação da memória (frontmatter `created`) — vira first_seen_at. */
+	created?: string;
 }
 
 export interface ActivityRecord {
@@ -208,8 +210,10 @@ export class MemoryActivityStore {
 					doc.type,
 					doc.context,
 					doc.policy,
-					// Primeira vez nunca é sobrescrito (continuação da identidade).
-					prev?.firstSeenAt ?? nowIso,
+					// Primeira vez nunca é sobrescrito: usa a data de criação da
+					// memória (frontmatter) ou o primeiro reconcile como fallback.
+					prev?.firstSeenAt ??
+						(doc.created ? new Date(doc.created).toISOString() : nowIso),
 					nowIso,
 				);
 				if (prev === undefined) stats.added++;

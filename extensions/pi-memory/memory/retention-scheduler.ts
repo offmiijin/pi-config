@@ -53,7 +53,8 @@ export function buildActiveDocs(projectId: string): ActiveDoc[] {
 				rawPolicy === "protected" || rawPolicy === "normal"
 					? rawPolicy
 					: defaultRetentionPolicy(type);
-			docs.push({ memoryId, path: rel, scope, projectId: pid, type, context, policy });
+			const created = typeof meta.created === "string" ? meta.created : undefined;
+			docs.push({ memoryId, path: rel, scope, projectId: pid, type, context, policy, created });
 		} catch {
 			// arquivo corrompido — o sweep não pode quebrar por causa dele
 		}

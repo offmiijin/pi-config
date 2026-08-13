@@ -37,6 +37,11 @@ export function expect(actual: unknown) {
 		toBeUndefined: () => assert.strictEqual(actual, undefined),
 		toBeDefined: () => assert.notStrictEqual(actual, undefined),
 		toBeNull: () => assert.strictEqual(actual, null),
+		toBeCloseTo: (expected: number, precision = 2) =>
+			assert.ok(
+				Math.abs((actual as number) - expected) < Math.pow(10, -precision),
+				`expected ${String(actual)} to be close to ${expected}`,
+			),
 		toHaveLength: (n: number) =>
 			assert.strictEqual((actual as { length: number }).length, n),
 		toBeGreaterThan: (n: number) => assert.ok((actual as number) > n),
