@@ -60,6 +60,7 @@ function makeState(worker: PipelineWorker | null = null): ToolState {
 		cachedIndexText: null,
 		index: null,
 		retention: null,
+		retentionScheduler: null,
 		pipeline,
 		worker,
 	};

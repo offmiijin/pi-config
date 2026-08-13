@@ -78,6 +78,7 @@ import { RetentionScheduler } from "./memory/retention-scheduler.ts";
 import { MemoryActivityStore } from "./memory/retention-store.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
+import { registerMemoryRetention } from "./tools/retention.ts";
 import { registerMemorySave } from "./tools/save.ts";
 import { registerMemorySearch } from "./tools/search.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
@@ -94,6 +95,7 @@ export default function (pi: ExtensionAPI) {
 		pipeline: null,
 		worker: null,
 		retention: null,
+		retentionScheduler: null,
 	};
 
 	// Pipeline operacional (episódios → worker). Null se indisponível —
@@ -338,6 +340,7 @@ export default function (pi: ExtensionAPI) {
 				state.retention = retentionStore;
 				const scheduler = new RetentionScheduler(retentionStore, state.index);
 				retentionScheduler = scheduler;
+				state.retentionScheduler = scheduler;
 				scheduler.setProject(state.projectId);
 				scheduler.start(state.projectId);
 				await scheduler.sweep();
@@ -349,6 +352,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				state.retention = null;
 				retentionScheduler = null;
+				state.retentionScheduler = null;
 				console.warn(`[pi-memory] retenção indisponível: ${(err as Error).message}`);
 			}
 		}
@@ -476,6 +480,7 @@ export default function (pi: ExtensionAPI) {
 		retentionScheduler = null;
 		state.retention?.close();
 		state.retention = null;
+		state.retentionScheduler = null;
 
 		state.index?.close();
 		state.index = null;
@@ -492,4 +497,5 @@ export default function (pi: ExtensionAPI) {
 	registerMemorySearch(pi, state);
 	registerMemoryDecay(pi, state);
 	registerMemoryExtract(pi, state);
+	registerMemoryRetention(pi, state);
 }

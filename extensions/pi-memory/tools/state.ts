@@ -11,6 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMemoryStats } from "../memory/memory.ts";
 import type { IndexDocument, MemoryIndex } from "../memory/memory-index.ts";
 import type { MemoryActivityStore } from "../memory/retention-store.ts";
+import type { RetentionScheduler } from "../memory/retention-scheduler.ts";
 import type { PipelineDB } from "../pipeline/pipeline.ts";
 import type { PipelineWorker } from "../pipeline/worker.ts";
 
@@ -29,6 +30,8 @@ export interface ToolState {
 	worker: PipelineWorker | null;
 	/** Store de atividade de retenção — null se desativado/indisponível. */
 	retention: MemoryActivityStore | null;
+	/** Scheduler de retenção — null se desativado/indisponível. */
+	retentionScheduler: RetentionScheduler | null;
 }
 
 /**

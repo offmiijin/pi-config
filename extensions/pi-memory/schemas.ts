@@ -95,6 +95,21 @@ export const DecaySchema = Type.Object({
 export const ExtractSchema = Type.Object({});
 
 /* ------------------------------------------------------------------ */
+/* Retenção por inatividade (decay automático por desuso)              */
+/* ------------------------------------------------------------------ */
+
+export const RetentionActionEnum = Type.Union([
+	Type.Literal("status"),
+	Type.Literal("preview"),
+	Type.Literal("run"),
+]);
+export type RetentionAction = "status" | "preview" | "run";
+
+export const RetentionSchema = Type.Object({
+	action: RetentionActionEnum,
+});
+
+/* ------------------------------------------------------------------ */
 /* Extração (Fase 3) — schema da resposta do modelo                    */
 /* ------------------------------------------------------------------ */
 

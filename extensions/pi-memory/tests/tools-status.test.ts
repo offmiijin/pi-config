@@ -117,6 +117,7 @@ describe("memory_status (Fase 6)", () => {
 			pipeline,
 			worker: null,
 			retention: null,
+			retentionScheduler: null,
 		};
 		const tool = captureTool(state);
 		const res = await tool.execute("s1", {}, undefined, undefined, {});
@@ -149,6 +150,7 @@ describe("memory_status (Fase 6)", () => {
 			pipeline: null,
 			worker: null,
 			retention: null,
+			retentionScheduler: null,
 		};
 		const tool = captureTool(state);
 		const res = await tool.execute("s2", {}, undefined, undefined, {});
@@ -166,6 +168,7 @@ describe("memory_status (Fase 6)", () => {
 			pipeline,
 			worker: null,
 			retention: null,
+			retentionScheduler: null,
 		};
 		const tool = captureTool(state);
 		const res = await tool.execute("s3", {}, undefined, undefined, {});

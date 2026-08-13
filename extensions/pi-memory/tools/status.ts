@@ -69,6 +69,21 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 			);
 			const lastExtraction = p.listJobs(state.projectId, JOB_STATUS.DONE, 1)[0] ?? null;
 
+			// Seção de retenção por inatividade (feature flag) — omitida quando off.
+			let retText = "";
+			let retDetails: Record<string, unknown> | null = null;
+			if (state.retention?.isOpen) {
+				const m = state.retention.getMetrics(state.projectId);
+				retText = `  Retention: ${m.tracked} tracked (never used ${m.neverUsed}, protected ${m.protectedCount}, low ${m.lowRetention}), last sweep ${m.lastSweepAt ?? "(none)"}`;
+				retDetails = {
+					tracked: m.tracked,
+					never_used: m.neverUsed,
+					protected: m.protectedCount,
+					low_retention: m.lowRetention,
+					last_sweep_at: m.lastSweepAt,
+				};
+			}
+
 			const text = [
 				"Pipeline status:",
 				`  Episodes: ${episodes.total} (pending ${episodes.pending}, normalized ${episodes.normalized}, selected ${episodes.selected}, processed ${episodes.processed}, ignored ${episodes.ignored}, failed ${episodes.failed})`,
@@ -79,6 +94,7 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 					: "  Last extraction: (none yet)",
 				`  Candidates pending review: ${pendingCandidates}`,
 				`  Worker: ${state.worker?.isRunning ? `running (job ${state.worker.currentJobId ?? "-"})` : "off"}`,
+				...(retText ? [retText] : []),
 				"",
 				"Call memory_extract to force a background extraction job.",
 			].join("\n");
@@ -101,6 +117,7 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 								model: lastExtraction.model,
 							}
 						: null,
+					...(retDetails ? { retention: retDetails } : {}),
 				},
 			};
 		},
