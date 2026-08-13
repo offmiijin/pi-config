@@ -46,6 +46,16 @@ export const SaveSchema = Type.Object({
 				"Sobrescreve o anterior; usado pelo memory_extract para dedup.",
 		}),
 	),
+	retention_policy: Type.Optional(
+		Type.Union([
+			Type.Literal("normal"),
+			Type.Literal("protected"),
+		], {
+			description:
+				"Política de retenção (normal = decai por desuso; protected = nunca decai). " +
+				"Default por tipo: _rules → protected, demais → normal.",
+		}),
+	),
 });
 
 export const SearchSchema = Type.Object({

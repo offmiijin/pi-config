@@ -37,6 +37,33 @@ export type MemoryType = (typeof MEMORY_TYPES)[number];
 export const MEMORY_LANGUAGE_RULE =
 	"Write all memory content (title, content, tags) in PT-BR (Brazilian Portuguese).";
 
+/* ------------------------------------------------------------------ */
+/* Retenção por inatividade (decay automático por desuso)              */
+/* ------------------------------------------------------------------ */
+
+/** Feature flag — módulo de retenção desativado por padrão (rollout seguro). */
+export const RETENTION_ENABLED = false;
+
+/** Nome do banco de atividade (derivado, reconstruível). */
+export const RETENTION_DB_FILENAME = ".retention.sqlite";
+export const RETENTION_DB_PATH = join(MEMORIES_ROOT, RETENTION_DB_FILENAME);
+
+/** Sem decay antes deste período sem uso (dias). */
+export const RETENTION_GRACE_DAYS = 30;
+/** Meia-vida do score: cai pela metade a cada N dias de desuso. */
+export const RETENTION_HALF_LIFE_DAYS = 90;
+/** Piso do score — evita memória com score ~0 invisível de vez. */
+export const RETENTION_MIN_SCORE = 0.05;
+/** Intervalo do sweep periódico (24h). */
+export const RETENTION_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+export type RetentionPolicy = "normal" | "protected";
+
+/** Política default por tipo: _rules sempre protegida de decay automático. */
+export function defaultRetentionPolicy(type: string): RetentionPolicy {
+	return type === "_rules" ? "protected" : "normal";
+}
+
 /**
  * Lê a URL do remote origin (git opcional).
  * Retorna null quando não é repo git ou o git está ausente.
