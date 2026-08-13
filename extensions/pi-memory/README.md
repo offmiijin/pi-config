@@ -85,7 +85,7 @@ No evento `agent_settled`, o pi-memory:
 | `code-change` | tool calls `edit`, `write` (com diff) |
 | `command` | tool call `bash` (com exit code) |
 | `research` | `read`, `grep`, `find`, `ls` |
-| `memory-op` | `memory_save`, `memory_search`, `memory_decay`, `memory_extract` |
+| `memory-op` | `memory_save`, `memory_search`, `memory_decay`, `memory_extract`, `memory_retention` |
 | `tool` / `context` | outras tool calls e contexto |
 
 Toda evidência passa por `sanitizeEvidenceText` (segredos viram
@@ -177,6 +177,36 @@ memories/
 - `memory_extract` → normaliza pendings + enfileira job forçado (assíncrono,
   retorna `job_id` imediatamente).
 - `memory_save` / `memory_decay` → escrita/decay de memórias (snapshot).
+- `memory_retention` → status/preview/run do decay por inatividade (feature
+  flag — ver [Retenção por inatividade]).
+
+### 6b. Retenção por inatividade (feature flag)
+
+Memórias que nunca são usadas perdem **relevância operacional** (`retention_score`),
+mas **não** perdem certeza factual: `confidence` só muda via `memory_decay` manual e
+nada é movido para `.supersedes/` automaticamente. O desuso apenas rebaixa a
+prioridade da memória na ordenação da busca (critério secundário, depois de BM25
+e confidence).
+
+- Cada `memory_search` com resultados registra uso em `.retention.sqlite`
+  (`last_used_at`, `use_count`) e reseta o score para 1.0.
+- O `RetentionScheduler` (independente do worker de extração) faz sweep diário:
+  reconcile (espelhar arquivos ativos) → recompute (fórmula de meia-vida com
+  grace period) → apply no índice FTS.
+- Frontmatter v3: `memory_id` (identidade estável) e `retention_policy`
+  (`normal` | `protected`; `_rules` → `protected`).
+- Configuração: `RETENTION_ENABLED` (default `false`), `RETENTION_GRACE_DAYS` (30),
+  `RETENTION_HALF_LIFE_DAYS` (90), `RETENTION_MIN_SCORE` (0.05).
+
+```
+memory_search ──> resultados ──> recordAccess(path) ──> .retention.sqlite
+                                                         ├─ last_used_at
+                                                         ├─ use_count
+                                                         └─ retention_score
+RetentionScheduler ── sweep (reconcile → recompute → apply no índice)
+```
+
+O sweep nunca altera markdown nem confidence. Detalhes em `docs/retention.md`.
 
 O índice de memórias é injetado no system prompt (`before_agent_start`) e
 invalidado a cada escrita.
@@ -200,19 +230,29 @@ invalidado a cada escrita.
 `DEFAULT_MAX_ATTEMPTS = 4`, `DEFAULT_BACKOFF_MS = [0, 30_000, 120_000]`,
 seleção alvo 12K / cap 18K tokens.
 
+### Retenção por inatividade (`constants.ts`)
+
+| Constante | Valor | Efeito |
+|---|---|---|
+| `RETENTION_ENABLED` | `false` | feature flag — módulo desativado por padrão (rollout seguro) |
+| `RETENTION_GRACE_DAYS` | `30` | sem decay antes deste período sem uso |
+| `RETENTION_HALF_LIFE_DAYS` | `90` | score cai pela metade a cada 90 dias de desuso |
+| `RETENTION_MIN_SCORE` | `0.05` | piso do score |
+| `RETENTION_SWEEP_INTERVAL_MS` | `24h` | intervalo do sweep periódico |
+
 ## Testes
 
 ```bash
 cd ~/.pi/agent/extensions/pi-memory
-npm test            # 359 testes (Node)
-bun test            # 353 (Node-only lifecycle excluído no Bun)
+bun test            # 397 testes (Bun)
 npm run typecheck   # tsc strict
 ```
 
-- **Unit/integração** (`tests/`): 18 arquivos cobrindo pipeline (episódios,
+- **Unit/integração** (`tests/`): 23 arquivos cobrindo pipeline (episódios,
   jobs, worker, retry), extração/validação (processor, validator, extractor),
   memória (CRUD, snapshot, migração v1→v2, escrita atômica), índice FTS,
-  evidências (sanitização de segredos), schemas e tools.
+  retenção (algoritmo, store, scheduler, tool, frontmatter v3), evidências
+  (sanitização de segredos), schemas e tools.
 - **E2E real** (`e2e/e2e-real.ts`): script manual que roda o pipeline
   completo com **LLM real** (sessão JSONL → evidências → job → candidatos →
   revisor → commit → FTS) e faz self-cleanup:
@@ -242,11 +282,15 @@ extensions/pi-memory/
 │   ├── processor.ts    extração → validação → commit (Fases 3-4)
 │   └── validator.ts    validação/política/revisor (Fase 4)
 ├── memory/             CRUD de memórias
-│   ├── memory.ts       saveMemory, snapshot v2, migração, arquivamento
-│   ├── memory-index.ts índice FTS5 (.index.sqlite)
-│   └── memory-search.ts fallback de busca via ripgrep
-├── tools/              uma tool por arquivo (save, search, status, decay, extract)
-├── tests/              18 arquivos de teste
+│   ├── memory.ts       saveMemory, snapshot v2/v3, migração, arquivamento
+│   ├── memory-index.ts índice FTS5 (.index.sqlite) com retention_score
+│   ├── memory-search.ts fallback de busca via ripgrep
+│   ├── retention.ts    algoritmo de retenção (funções puras)
+│   ├── retention-store.ts .retention.sqlite (atividade de uso)
+│   └── retention-scheduler.ts sweep periódico de retenção
+├── tools/              uma tool por arquivo (save, search, status, decay, extract, retention)
+├── tests/              23 arquivos de teste
+├── docs/               arquitetura (retention.md)
 └── e2e/                E2E manual com LLM real
 ```
 
