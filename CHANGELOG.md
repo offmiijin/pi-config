@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+## [1.1.0] - 2026-08-16
+
 ### Added
 
 - Instalação automática da configuração do repositório em `~/.pi/agent` com backup automático (PR [#83](https://github.com/offmiijin/pi-config/pull/83))
