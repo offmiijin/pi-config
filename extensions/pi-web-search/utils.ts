@@ -69,6 +69,8 @@ export async function throttleSearch(): Promise<void> {
 // ---------------------------------------------------------------------------
 export const SEARCH_TIMEOUT_MS = 10_000;
 export const FETCH_TIMEOUT_MS = 15_000;
+/** Orçamento estendido para download de binários (PDFs grandes, servidores lentos). */
+export const BINARY_TIMEOUT_MS = 60_000;
 export const DEFAULT_CONCURRENCY = 3;
 
 // ---------------------------------------------------------------------------

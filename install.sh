@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────
-# install.sh — setup de dependências das extensões do pi
+# install.sh — instalação da configuração do pi
 #
-# Resolve, antes de abrir o pi:
+# Copia a configuração deste repositório para o diretório do agente e
+# instala as dependências. Fluxo:
 #   1. Node.js >= 22.19 + npm (via gerenciador de pacotes do sistema)
 #   2. Pacotes de sistema: bubblewrap, ripgrep, git (+ gh e docker opcionais)
-#   3. Dependências npm das extensões (npm ci em <agent>/node_modules)
-#   4. landlock-exec (compila com Rust se disponível)
-#   5. Verificações: user namespaces, inotify, binário do pi
-#   6. Opcional: Docker + SearXNG para busca local
+#   3. Copia extensions/, skills/, themes/, package*.json para o agente
+#      (cria settings.json a partir de settings.example.json se ausente)
+#   4. Dependências npm das extensões (npm ci em <agent>/node_modules)
+#   5. landlock-exec (compila com Rust se disponível)
+#   6. Verificações: user namespaces, inotify, seccomp, landlock, binário do pi
+#
+# Se já existir configuração em <destino>, ela é renomeada para backup
+# (~/.pi/agent-bak-<timestamp>) — dados pessoais NÃO são migrados, o
+# usuário re-autentica ao abrir o pi. Instalação é única; atualizações
+# futuras virão do git (git pull + rodar de novo).
 #
 # Uso:
-#   ./install.sh                 # interativo
+#   git clone <repo> && cd pi-config && ./install.sh
 #   ./install.sh --yes           # não-interativo (instala só o obrigatório)
-#   ./install.sh --searxng       # também sobe Docker + SearXNG
 #   ./install.sh --force         # reinstala deps npm mesmo já presentes
-#   PI_AGENT_DIR=/path ./install.sh   # diretório do agente (curl | bash)
+#   PI_AGENT_DIR=/path ./install.sh   # diretório do agente (destino)
 #
-# Idempotente: rodar 2x não quebra; cada etapa verifica se já está feita.
 # DRY_RUN=1 ./install.sh --yes   # só imprime os comandos (CI/teste)
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -26,20 +31,18 @@ set -euo pipefail
 ASSUME_YES=0
 DRY_RUN="${DRY_RUN:-0}"
 DO_FORCE=0
-DO_SEARXNG=0
 AGENT_DIR="${PI_AGENT_DIR:-}"
 
 usage() {
   sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   echo
-  echo "Flags: --yes | --force | --searxng | --dir PATH | --dry-run | --help"
+  echo "Flags: --yes | --force | --dir PATH | --dry-run | --help"
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) ASSUME_YES=1 ;;
     --force|-f) DO_FORCE=1 ;;
-    --searxng) DO_SEARXNG=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --dir|-d) AGENT_DIR="$2"; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -195,20 +198,59 @@ install_system_pkgs() { # install_system_pkgs 0|1 tool1 tool2... (0=obrigatório
   fi
 }
 
-# ── Diretório do agente ──────────────────────────────────────────────────
-resolve_agent_dir() {
-  if [ -n "$AGENT_DIR" ]; then
-    [ -d "$AGENT_DIR/extensions" ] || die "AGENT_DIR sem extensions/: $AGENT_DIR"
-    return
-  fi
+# ── Diretórios: fonte (clone) e destino (~/.pi/agent) ────────────────────
+SRC_DIR=""
+resolve_dirs() {
   local src="${BASH_SOURCE[0]}"
   if [[ "$src" == bash* || "$src" == -* || ! -e "$src" ]]; then
-    # curl | bash — sem arquivo local
-    AGENT_DIR="$HOME/.pi/agent"
-    [ -d "$AGENT_DIR/extensions" ] || die "Não encontrei ~/.pi/agent/extensions. Use PI_AGENT_DIR=/caminho ./install.sh"
-  else
-    AGENT_DIR="$(cd "$(dirname "$src")" && pwd)"
+    die "Rode o install.sh a partir do clone do repositório: git clone <repo> && cd pi-config && ./install.sh"
   fi
+  SRC_DIR="$(cd "$(dirname "$src")" && pwd)"
+  [ -d "$SRC_DIR/extensions" ] || die "SRC sem extensions/: $SRC_DIR — clone do repositório incompleto"
+
+  if [ -z "$AGENT_DIR" ]; then
+    AGENT_DIR="$HOME/.pi/agent"
+  fi
+}
+
+# ── Instalação da configuração no diretório do agente ───────────────────
+BACKUP_DIR=""
+install_config() {
+  local bak_root bak_name ts
+  if [ -d "$AGENT_DIR" ]; then
+    ts="$(date +%Y%m%d-%H%M%S)"
+    bak_root="$(dirname "$AGENT_DIR")"
+    bak_name="$(basename "$AGENT_DIR")-bak-$ts"
+    BACKUP_DIR="$bak_root/$bak_name"
+    warn "Configuração existente em $AGENT_DIR — renomeando para $BACKUP_DIR"
+    run mv "$AGENT_DIR" "$BACKUP_DIR"
+  fi
+
+  run mkdir -p "$AGENT_DIR"
+  run cp -r "$SRC_DIR/extensions" "$AGENT_DIR/"
+  run cp -r "$SRC_DIR/skills" "$AGENT_DIR/"
+  run cp -r "$SRC_DIR/themes" "$AGENT_DIR/"
+  run cp "$SRC_DIR/package.json" "$SRC_DIR/package-lock.json" "$AGENT_DIR/"
+  if [ -f "$SRC_DIR/settings.example.json" ]; then
+    run cp "$SRC_DIR/settings.example.json" "$AGENT_DIR/settings.json"
+    log "✓ settings.json criado a partir de settings.example.json"
+  fi
+  log "✓ Configuração instalada em $AGENT_DIR"
+}
+
+# ── Aviso final: backup criado ──────────────────────────────────────────
+print_backup_notice() {
+  [ -n "$BACKUP_DIR" ] || return 0
+  echo
+  warn "══════════════════════════════════════════════════════════"
+  warn " Configuração anterior renomeada para backup:"
+  warn "   $BACKUP_DIR"
+  warn ""
+  warn " Dados pessoais (auth.json, sessions/, memories/, settings.json)"
+  warn " ficaram no backup — NÃO foram migrados."
+  warn " Re-autentique seus providers ao abrir o pi."
+  warn " Para restaurar a config antiga: mv $BACKUP_DIR $AGENT_DIR"
+  warn "══════════════════════════════════════════════════════════"
 }
 
 # ── Node.js / npm ────────────────────────────────────────────────────────
@@ -308,93 +350,97 @@ ensure_landlock() {
 }
 
 # ── Verificações de kernel / ambiente ────────────────────────────────────
+# ── Verificações de kernel / ambiente ────────────────────────────────────
+in_container() {
+  [ -f /.dockerenv ] && return 0
+  grep -qE 'docker|containerd|kubepods' /proc/1/cgroup 2>/dev/null
+}
+
 check_kernel() {
   local uc apparmor watches
-  uc="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
-  apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
-  watches="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || true)"
 
-  if [ -n "$uc" ] && [ "$uc" != "1" ]; then
-    warn "⚠ kernel.unprivileged_userns_clone=$uc — bwrap vai falhar (sandbox fail-closed)."
-    warn "  Fix (root): sysctl kernel.unprivileged_userns_clone=1 (persistir em /etc/sysctl.d/)"
+  if in_container; then
+    log "✓ Container detectado — checagens de user namespaces do host puladas (validadas em runtime)"
+  else
+    uc="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+    apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
+
+    if [ -n "$uc" ] && [ "$uc" != "1" ]; then
+      warn "⚠ kernel.unprivileged_userns_clone=$uc — bwrap vai falhar (sandbox fail-closed)."
+      warn "  Fix (root): sysctl kernel.unprivileged_userns_clone=1 (persistir em /etc/sysctl.d/)"
+    fi
+    if [ -n "$apparmor" ] && [ "$apparmor" != "0" ]; then
+      warn "⚠ kernel.apparmor_restrict_unprivileged_userns=1 pode bloquear bwrap no Ubuntu 24.04+."
+      warn "  Se o pi falhar, use 'pi --no-sandbox' ou ajuste o AppArmor."
+    fi
+    if ! has_cmd unshare || ! unshare --user true 2>/dev/null; then
+      warn "⚠ user namespaces não funcionam neste ambiente — bwrap pode falhar."
+    fi
   fi
-  if [ -n "$apparmor" ] && [ "$apparmor" != "0" ]; then
-    warn "⚠ kernel.apparmor_restrict_unprivileged_userns=1 pode bloquear bwrap no Ubuntu 24.04+."
-    warn "  Se o pi falhar, use 'pi --no-sandbox' ou ajuste o AppArmor."
-  fi
+
+  watches="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || true)"
   if [ -n "$watches" ] && [ "$watches" -lt 100000 ]; then
     warn "⚠ fs.inotify.max_user_watches=$watches é baixo (watchers de arquivo)."
     warn "  Sugestão (root): sysctl fs.inotify.max_user_watches=524288"
   fi
+}
 
-  if ! has_cmd unshare || ! unshare --user true 2>/dev/null; then
-    warn "⚠ user namespaces não funcionam neste ambiente — bwrap pode falhar."
+# ── Seccomp / Landlock (kernel) ──────────────────────────────────────────
+kernel_version_ge() { # kernel_version_ge 5 13 → kernel >= 5.13
+  local kver major minor
+  kver="$(uname -r)"
+  major="${kver%%.*}"; minor="${kver#*.}"; minor="${minor%%.*}"
+  [ "${major:-0}" -gt "$1" ] && return 0
+  [ "${major:-0}" -lt "$1" ] && return 1
+  [ "${minor:-0}" -ge "$2" ]
+}
+
+kernel_config() { # conteúdo do config do kernel (vazio se indisponível)
+  local f
+  if [ -r /proc/config.gz ]; then
+    zcat /proc/config.gz 2>/dev/null || true
+  else
+    for f in "/boot/config-$(uname -r)" /boot/config; do
+      [ -r "$f" ] && cat "$f" 2>/dev/null && return
+    done
+  fi
+  :  # status 0 garantido (set -e seguro)
+}
+
+check_seccomp() {
+  local cfg
+  cfg="$(kernel_config)"
+  if [ -n "$cfg" ]; then
+    if echo "$cfg" | grep '^CONFIG_SECCOMP_FILTER=y' >/dev/null; then
+      log "✓ Seccomp (BPF filter) habilitado no kernel"
+    elif echo "$cfg" | grep '^CONFIG_SECCOMP=y' >/dev/null; then
+      warn "⚠ CONFIG_SECCOMP_FILTER não habilitado — filtro seccomp (seccomp.bpf) falha no sandbox."
+    else
+      warn "⚠ Seccomp desabilitado no kernel — sandbox sem isolamento seccomp."
+    fi
+  else
+    log "✓ Seccomp: config do kernel indisponível — validado em runtime pelo sandbox"
   fi
 }
 
-# ── Docker + SearXNG (opcional) ──────────────────────────────────────────
-# O container SearXNG roda no HOST (não no sandbox do pi).
-# O pi acessa via HTTP em localhost:4000 (--share-net compartilha rede do host).
-# Falhas aqui NUNCA abortam o instalador: SearXNG é um extra opcional.
-setup_searxng() {
-  local ws="$AGENT_DIR/extensions/pi-web-search"
-  [ -d "$ws" ] || { warn "pi-web-search não encontrado — pulando SearXNG."; return; }
-
-  if [ "$DO_SEARXNG" -eq 0 ]; then
-    confirm_opt "Configurar Docker + SearXNG para busca local (opcional)?" || return 0
-  fi
-
-  # ── Instala Docker (binário + daemon) ──────────────────────
-  if ! has_cmd docker; then
-    install_system_pkgs "$([ "$DO_SEARXNG" -eq 1 ] && echo 0 || echo 1)" docker
-  fi
-  if ! has_cmd docker; then
-    warn "Docker indisponível — use APIs externas: /web_search config <tavily|exa|serper> <key>"
+check_landlock() {
+  local lsm cfg
+  lsm="$(cat /sys/kernel/security/lsm 2>/dev/null || true)"
+  if [ -n "$lsm" ] && echo "$lsm" | grep landlock >/dev/null; then
+    log "✓ Landlock LSM ativo"
     return
   fi
-
-  # ── Verifica daemon rodando ────────────────────────────────
-  if ! docker info >/dev/null 2>&1; then
-    warn "Docker instalado mas daemon não está rodando."
-    warn "  Inicie o daemon (systemctl start docker) e rode o SearXNG manualmente:"
-    warn "    cd $ws && docker compose up -d"
+  cfg="$(kernel_config)"
+  if [ -n "$cfg" ] && echo "$cfg" | grep '^CONFIG_SECURITY_LANDLOCK=y' >/dev/null; then
+    log "✓ Landlock compilado no kernel (CONFIG_SECURITY_LANDLOCK=y)"
     return
   fi
-
-  # ── Plugin docker compose ──────────────────────────────────
-  if ! docker compose version >/dev/null 2>&1; then
-    warn "Plugin 'docker compose' não encontrado — instalando..."
-    install_system_pkgs 1 docker-compose
-    if ! docker compose version >/dev/null 2>&1; then
-      warn "Plugin compose indisponível. Instale docker-compose-plugin manualmente."
-      return
-    fi
+  if kernel_version_ge 5 13; then
+    warn "⚠ Landlock não detectado (sem CONFIG_SECURITY_LANDLOCK/LSM) — sandbox degradado."
+  else
+    warn "⚠ Kernel $(uname -r) < 5.13 — Landlock não suportado; sandbox degradado."
   fi
-
-  # ── .env com chave aleatória para o SEARXNG_SECRET ────────
-  local envfile="$ws/.env"
-  if [ ! -f "$envfile" ]; then
-    local key
-    key="$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 40 || true)"
-    if [ "$DRY_RUN" -eq 1 ]; then
-      echo "[dry-run] cria $envfile com SEARXNG_KEY aleatória"
-    else
-      printf 'SEARXNG_KEY=%s\n' "${key:-change-me}" > "$envfile"
-      log "✓ .env gerado em $ws/.env"
-    fi
-  fi
-
-  # ── Sobe container (falha não derruba instalador) ─────────
-  if [ "$DO_SEARXNG" -eq 1 ] || confirm_opt "Subir container SearXNG (docker compose up -d)?"; then
-    if run bash -c "cd '$ws' && docker compose up -d" 2>/dev/null; then
-      log "✓ SearXNG iniciado em http://localhost:4000"
-      warn "Após o 1º start, habilite JSON no SearXNG:"
-      warn "  docker exec pi-searxng sed -i 's/  formats:\\n    - html/  formats:\\n    - html\\n    - json/' /etc/searxng/settings.yml && docker restart pi-searxng"
-    else
-      warn "Falha ao subir SearXNG (porta 4000 ocupada? container já existe?)."
-      warn "  Verifique manualmente: cd $ws && docker compose up -d"
-    fi
-  fi
+  warn "  Isolamento Landlock desativado; bwrap/seccomp continuam ativos."
 }
 
 # ── pi binary ────────────────────────────────────────────────────────────
@@ -414,26 +460,30 @@ check_pi() {
 # ── Execução ─────────────────────────────────────────────────────────────
 main() {
   echo "──────────────────────────────────────────────"
-  echo "🧑⚕️  Pi extensions — install.sh"
+  echo "🧑⚕️  Pi config — install.sh"
   echo "──────────────────────────────────────────────"
   [ "$DRY_RUN" -eq 1 ] && warn "(DRY-RUN — nada será executado)"
 
-  resolve_agent_dir
-  log "Diretório do agente: $AGENT_DIR"
+  resolve_dirs
+  log "Fonte: $SRC_DIR"
+  log "Destino do agente: $AGENT_DIR"
   [ -n "$OS_NAME" ] && log "Sistema: $OS_NAME ($PKG_MGR)"
 
   ensure_node
   install_system_pkgs 0 bubblewrap ripgrep git
   has_cmd gh || install_system_pkgs 1 gh
+  install_config
   ensure_npm_deps
   ensure_landlock
   check_kernel
-  setup_searxng
+  check_seccomp
+  check_landlock
   check_pi
 
   echo
   log "✔ Concluído! Inicie o pi — a extensão doctor (00-doctor) valida o ambiente:"
   log "    pi   (ou /reload se já estiver aberto)"
+  print_backup_notice
   if [ "$ASSUME_YES" -eq 0 ]; then
     echo "Dica: rode /doctor dentro do pi para ver o relatório completo."
   fi

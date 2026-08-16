@@ -72,6 +72,7 @@ export async function fetchUrl(
     {
       command: ["curl", "-fsSL", "--max-time", String(FETCH_TIMEOUT_S - 30), "-o", file, url],
       cwd: dirs.fetch,
+      baseCwd: cwd,
       timeout: FETCH_TIMEOUT_S,
       signal,
     },
@@ -120,6 +121,7 @@ export async function execQuarantine(
     {
       command: ["bash", "-lc", command],
       cwd: workDir,
+      baseCwd: cwd,
       timeout: QUARANTINE_TIMEOUT_S,
       signal,
     },

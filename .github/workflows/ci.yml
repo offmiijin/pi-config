@@ -41,6 +41,8 @@ jobs:
         run: npm run test:memory
       - name: doctor (vitest)
         run: npm run test:doctor
+      - name: thinking-level (vitest)
+        run: npm run test:thinking
       - name: Typecheck dev-sandbox
         run: npm run typecheck
       - name: Doctor smoke — ambiente completo sem pendências
@@ -60,17 +62,20 @@ jobs:
           node-version: 22
       - name: Rust estável (p/ landlock-exec)
         uses: dtolnay/rust-toolchain@stable
-      - name: Roda install.sh --yes (bubblewrap, rg, git, npm ci, landlock)
+      - name: Roda install.sh --yes (copia config → ~/.pi/agent, deps, landlock)
         run: ./install.sh --yes
-      - name: Verifica artefatos gerados
+      - name: Verifica artefatos gerados em ~/.pi/agent
         run: |
-          test -d node_modules/@earendil-works/pi-coding-agent
-          test -d node_modules/typebox
-          test -x extensions/dev-sandbox/landlock-exec-x86_64
-          test -s extensions/dev-sandbox/seccomp.bpf
+          test -d ~/.pi/agent/node_modules/@earendil-works/pi-coding-agent
+          test -d ~/.pi/agent/node_modules/typebox
+          test -x ~/.pi/agent/extensions/dev-sandbox/landlock-exec-x86_64
+          test -s ~/.pi/agent/extensions/dev-sandbox/seccomp.bpf
+          test -f ~/.pi/agent/settings.json
+          test -d ~/.pi/agent/themes
+          test -d ~/.pi/agent/skills
           echo "artefatos OK"
       - name: Doctor smoke — sem pendências
-        run: npm run doctor:check
+        run: cd ~/.pi/agent && npm run doctor:check
       - name: Instala pi (mise) e valida binário
         uses: jdx/mise-action@v2
         with:
@@ -106,7 +111,8 @@ jobs:
           rm -rf /tmp/ci-copy && cp -r . /tmp/ci-copy
           docker run --rm -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
             bash -c '${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
-              test -d node_modules/@earendil-works/pi-coding-agent && \
-              test -d node_modules/typebox && \
-              test -s extensions/dev-sandbox/seccomp.bpf && \
+              test -d ~/.pi/agent/node_modules/@earendil-works/pi-coding-agent && \
+              test -d ~/.pi/agent/node_modules/typebox && \
+              test -s ~/.pi/agent/extensions/dev-sandbox/seccomp.bpf && \
+              test -f ~/.pi/agent/settings.json && \
               echo "OK: ${{ matrix.name }} — deps instaladas via pm nativo"'

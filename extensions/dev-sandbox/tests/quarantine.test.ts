@@ -250,6 +250,9 @@ describe("fetchUrl", () => {
     expect(cmd[0]).toBe("curl");
     expect(cmd).toContain(file);
     expect(cmd).toContain(urlOf(cmd) ?? "");
+    // Regressão: mounts devem ser resolvidos a partir do workspace (baseCwd),
+    // nunca do próprio dir de fetch (senão vira path aninhado).
+    expect(vi.mocked(execInProfile).mock.calls[0][1].baseCwd).toBe(cwd);
     expect(result.exitCode).toBe(0);
   });
 
@@ -284,6 +287,9 @@ describe("execQuarantine", () => {
     expect(cmd).toEqual(["bash", "-lc", "tar xf pkg.tar.gz"]);
     const copied = join(cwd, ".sandbox-cache", "runs", "run1", "pkg.tar.gz");
     expect(statSync(copied).isFile()).toBe(true);
+    // Regressão: baseCwd = workspace (mounts corretos), cwd = workdir.
+    expect(vi.mocked(execInProfile).mock.calls[0][1].baseCwd).toBe(cwd);
+    expect(vi.mocked(execInProfile).mock.calls[0][1].cwd).toBe(join(cwd, ".sandbox-cache", "runs", "run1"));
     expect(res.exitCode).toBe(0);
   });
 

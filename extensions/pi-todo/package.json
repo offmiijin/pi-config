@@ -1,0 +1,12 @@
+{
+  "name": "pi-todo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
+  }
+}
