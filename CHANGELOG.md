@@ -7,6 +7,8 @@
 - `dev-sandbox` passou a executar projetos Git em worktrees temporários descartáveis,
   com cleanup de órfãos, configuração de raiz/política e tool `sandbox_promote_changes`
   para preservar alterações explicitamente.
+- `dev-sandbox` monta metadados Git seletivamente, permitindo `status`, branches,
+  commits e push sem expor código do projeto original.
 
 ## [1.1.0] - 2026-08-16
 
