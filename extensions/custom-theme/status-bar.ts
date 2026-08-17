@@ -241,7 +241,19 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		const folderName = path.basename(ctx.cwd);
+		let folderName = path.basename(ctx.cwd);
+		let sandboxBranch = "";
+		let originalBranch = "";
+		try {
+			const metadata = JSON.parse(readFileSync(path.join(ctx.cwd, ".pi-sandbox-worktree.json"), "utf8")) as {
+				originalCwd?: string;
+				branchName?: string;
+				originalBranchName?: string;
+			};
+			if (metadata.originalCwd) folderName = path.basename(metadata.originalCwd);
+			sandboxBranch = metadata.branchName || "";
+			originalBranch = metadata.originalBranchName || "";
+		} catch {}
 		currentThinking = pi.getThinkingLevel() || "off";
 
 		const entries = ctx.sessionManager.getEntries();
@@ -291,14 +303,15 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			footerDataRef = footerData;
 
 			const renderLine = (width: number): string[] => {
-				const branch = footerData.getGitBranch() || "no-branch";
+				const branch = sandboxBranch || footerData.getGitBranch() || "no-branch";
 
 				const leftPart = [
 					theme.fg("accent", "\u{f07c}"),
 					theme.fg("accent", " " + folderName),
 					theme.fg("muted", " on "),
 					theme.fg("borderAccent", branch),
-					theme.fg("warning", " \u{3bb}"),
+					originalBranch ? theme.fg("muted", " refs ") : theme.fg("warning", " \u{3bb}"),
+					originalBranch ? theme.fg("warning", originalBranch) : "",
 				].join("");
 
 				const statuses = footerData.getExtensionStatuses();
