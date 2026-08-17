@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `pi-todo`: corrige sobreposição da tela quando a última tarefa visível falha, ocultando o motivo do erro na linha da tarefa (issue [#90](https://github.com/offmiijin/pi-config/issues/90))
+
 ### Added
 
 - `dev-sandbox` passou a executar projetos Git em worktrees temporários descartáveis,
