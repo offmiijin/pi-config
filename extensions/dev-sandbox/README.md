@@ -83,6 +83,15 @@ NÃO montado:
   Dispositivos de bloco           → sem /dev/sda
 ```
 
+## Worktree temporário
+
+Para projetos Git, sandbox cria branch temporária e worktree em `/tmp/pi-worktrees/<session-id>`.
+Somente esse worktree é montado no bubblewrap; diretório original não é exposto.
+
+Ao encerrar sessão, worktree e branch são removidos. Alterações não commitadas são
+descartadas, salvo promoção explícita via `sandbox_promote_changes`. Worktrees órfãos
+são detectados por metadata e removidos na próxima inicialização.
+
 ## Configuração
 
 ### Modos SSH
@@ -101,6 +110,11 @@ NÃO montado:
 ```json
 {
   "enabled": true,
+  "worktree": {
+    "enabled": true,
+    "root": "/tmp/pi-worktrees",
+    "cleanup": "always"
+  },
   "internet": { "enabled": true },
   "filesystem": {
     "extraWritable": [],
@@ -177,6 +191,9 @@ e exposto como `$SANDBOX_CLONE_DIR` dentro do sandbox.
 | Iniciar pi normalmente | Sandbox ativo por padrão |
 | `pi --no-sandbox` | Desabilita sandbox para esta sessão |
 | `/sandbox` | Mostra status, perfis e configuração atual |
+
+A tool `sandbox_promote_changes` copia alterações rastreadas e arquivos novos do
+worktree temporário para o projeto original. Aceita `files` para promoção seletiva.
 
 ## Perfis de isolamento (quarentena)
 

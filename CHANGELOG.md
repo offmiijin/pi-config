@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `dev-sandbox` passou a executar projetos Git em worktrees temporários descartáveis,
+  com cleanup de órfãos, configuração de raiz/política e tool `sandbox_promote_changes`
+  para preservar alterações explicitamente.
+
 ## [1.1.0] - 2026-08-16
 
 ### Added

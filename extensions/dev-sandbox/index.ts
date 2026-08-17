@@ -515,6 +515,8 @@ export default function (pi: ExtensionAPI) {
         ``,
         `Status: ativo`,
         `Workspace: ${localCwd}`,
+        `Worktree: ${session?.worktreePath ?? "desabilitado"}`,
+        `Worktree cleanup: ${config.worktree.cleanup}`,
         `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
         `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
         `Landlock: ${config.landlock.enabled ? "ativo (ABI min: " + config.landlock.minAbi + ")" : "desabilitado"}`,
