@@ -17,6 +17,8 @@ export interface SandboxSession {
   gitDir: string;
   /** Branch temporária associada à sessão. */
   branchName: string;
+  /** Branch original usada como base da sessão. */
+  originalBranchName: string;
   /** Raiz sob a qual worktrees temporários são criados. */
   worktreeRoot: string;
   /** Diretório do worktree temporário; normalmente igual a workspaceCwd. */

@@ -222,6 +222,12 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	// Guarda o último valor: o editor só existe após session_start — se o
 	// evento chegar antes, aplica quando o editor for criado.
 	let lastMemoryTotal = 0;
+	let sandboxSession: { originalCwd?: string; branchName?: string; originalBranchName?: string } = {};
+	let footerTui: TUI | null = null;
+	pi.events?.on("custom:dev-sandbox-session", (session: typeof sandboxSession) => {
+		sandboxSession = session;
+		footerTui?.requestRender(true);
+	});
 	pi.events?.on("custom:memory-stats", ({ total }: { total: number }) => {
 		lastMemoryTotal = total;
 		editorRef?.setMemoryInfo(total);
@@ -241,7 +247,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		const folderName = path.basename(ctx.cwd);
+		footerTui = null;
 		currentThinking = pi.getThinkingLevel() || "off";
 
 		const entries = ctx.sessionManager.getEntries();
@@ -289,16 +295,25 @@ export function registerStatusBar(pi: ExtensionAPI) {
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			footerDataRef = footerData;
+			footerTui = tui;
 
 			const renderLine = (width: number): string[] => {
-				const branch = footerData.getGitBranch() || "no-branch";
+				const folderName = path.basename(sandboxSession.originalCwd || ctx.cwd);
+				const sandboxBranch = sandboxSession.branchName || "";
+				const originalBranch = sandboxSession.originalBranchName || "";
+				const branch = sandboxBranch
+					? sandboxBranch.startsWith("sandbox/")
+						? `sandbox/${sandboxBranch.slice("sandbox/".length).split("-")[0]}`
+						: sandboxBranch
+					: footerData.getGitBranch() || "no-branch";
 
 				const leftPart = [
 					theme.fg("accent", "\u{f07c}"),
 					theme.fg("accent", " " + folderName),
 					theme.fg("muted", " on "),
 					theme.fg("borderAccent", branch),
-					theme.fg("warning", " \u{3bb}"),
+					originalBranch ? theme.fg("muted", " refs ") : theme.fg("warning", " \u{3bb}"),
+					originalBranch ? theme.fg("warning", originalBranch) : "",
 				].join("");
 
 				const statuses = footerData.getExtensionStatuses();

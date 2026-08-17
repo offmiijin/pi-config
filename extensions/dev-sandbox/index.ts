@@ -166,6 +166,11 @@ export default function (pi: ExtensionAPI) {
       session = createWorktree(originalCwd, config.worktree.root);
       cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
       localCwd = session.workspaceCwd;
+      pi.events?.emit("custom:dev-sandbox-session", {
+        originalCwd: session.originalCwd,
+        branchName: session.branchName,
+        originalBranchName: session.originalBranchName,
+      });
 
       // Git precisa dos metadados para status/branch/commit/push, mas o código
       // do projeto original continua fora do namespace.
