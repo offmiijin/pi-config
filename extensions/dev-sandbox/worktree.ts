@@ -8,7 +8,7 @@ import type { SandboxSession } from "./session";
 
 export const DEFAULT_WORKTREE_ROOT = "/tmp/pi-worktrees";
 const METADATA_FILE = ".pi-sandbox-worktree.json";
-type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "branchName" | "worktreePath" | "worktreeRoot" | "startedAt"> & { pid: number };
+type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "worktreePath" | "worktreeRoot" | "startedAt"> & { pid: number };
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -46,6 +46,7 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT): number {
 export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT): SandboxSession {
   const original = resolve(originalCwd);
   const gitRoot = git(original, ["rev-parse", "--show-toplevel"]);
+  const gitDir = resolve(git(original, ["rev-parse", "--git-common-dir"]));
   const sessionId = safeId();
   const worktreeRoot = resolve(root);
   const worktreePath = join(worktreeRoot, sessionId);
@@ -54,7 +55,7 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
   assertManagedPath(worktreeRoot, worktreePath);
   try {
     git(gitRoot, ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
-    const session: SandboxSession = { sessionId, originalCwd: original, workspaceCwd: worktreePath, worktreeRoot, gitRoot, branchName, worktreePath, startedAt: new Date().toISOString() };
+    const session: SandboxSession = { sessionId, originalCwd: original, workspaceCwd: worktreePath, worktreeRoot, gitRoot, gitDir, branchName, worktreePath, startedAt: new Date().toISOString() };
     writeMetadata(session);
     return session;
   } catch (error) {

@@ -167,6 +167,12 @@ export default function (pi: ExtensionAPI) {
       session = createWorktree(originalCwd, config.worktree.root);
       localCwd = session.workspaceCwd;
 
+      // Git precisa dos metadados para status/branch/commit/push, mas o código
+      // do projeto original continua fora do namespace.
+      if (!config.filesystem.extraWritable.includes(session.gitDir)) {
+        config.filesystem.extraWritable.push(session.gitDir);
+      }
+
       // Caches/quarentena persistem no projeto original, mas são montados
       // individualmente; o restante do projeto original continua inacessível.
       const persistentCaches = resolveCacheDirs(config, originalCwd);

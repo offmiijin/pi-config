@@ -13,6 +13,8 @@ export interface SandboxSession {
   originalCwd: string;
   /** Raiz do repositório Git original. */
   gitRoot: string;
+  /** Diretório administrativo Git montado seletivamente no sandbox. */
+  gitDir: string;
   /** Branch temporária associada à sessão. */
   branchName: string;
   /** Raiz sob a qual worktrees temporários são criados. */
