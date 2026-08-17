@@ -222,6 +222,10 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	// Guarda o último valor: o editor só existe após session_start — se o
 	// evento chegar antes, aplica quando o editor for criado.
 	let lastMemoryTotal = 0;
+	let sandboxSession: { originalCwd?: string; branchName?: string; originalBranchName?: string } = {};
+	pi.events?.on("custom:dev-sandbox-session", (session: typeof sandboxSession) => {
+		sandboxSession = session;
+	});
 	pi.events?.on("custom:memory-stats", ({ total }: { total: number }) => {
 		lastMemoryTotal = total;
 		editorRef?.setMemoryInfo(total);
@@ -241,9 +245,9 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		let folderName = path.basename(ctx.cwd);
-		let sandboxBranch = "";
-		let originalBranch = "";
+		let folderName = path.basename(sandboxSession.originalCwd || ctx.cwd);
+		let sandboxBranch = sandboxSession.branchName || "";
+		let originalBranch = sandboxSession.originalBranchName || "";
 		try {
 			const metadata = JSON.parse(readFileSync(path.join(ctx.cwd, ".pi-sandbox-worktree.json"), "utf8")) as {
 				originalCwd?: string;
