@@ -133,6 +133,13 @@ export interface LoadConfigOptions {
 export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
   const out = structuredClone(DEFAULT_CONFIG);
 
+  if (raw.worktree && typeof raw.worktree === "object") {
+    const wt = raw.worktree as unknown as Record<string, unknown>;
+    if (typeof wt.enabled === "boolean") out.worktree.enabled = wt.enabled;
+    if (typeof wt.root === "string" && wt.root.trim() !== "") out.worktree.root = wt.root;
+    if (wt.cleanup === "always" || wt.cleanup === "never") out.worktree.cleanup = wt.cleanup;
+  }
+
   if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
 
   if (raw.internet && typeof raw.internet.enabled === "boolean") {

@@ -11,6 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MAX_MEMORY_SEARCH_ATTEMPTS } from "../constants.ts";
 import { buildSearchPattern, searchMemories, type SearchResult } from "../memory/memory-search.ts";
 import type { IndexSearchResult } from "../memory/memory-index.ts";
+import { relFromMemoriesRoot } from "../memory/memory-index.ts";
 import { SearchSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 
@@ -88,6 +89,44 @@ export function dispatchSearch(
 		} catch (err2) {
 			const msg = (err2 as Error).message ?? String(err2);
 			throw new Error(`SQLite: ${primaryError}; rg: ${msg}`);
+		}
+	}
+}
+
+/**
+ * Registra o uso dos resultados de uma busca no .retention.sqlite
+ * (fire-and-forget). Nunca lança: falha do store degrada e segue — a busca
+ * já retornou; o registro é efeito colateral. Também faz o bump imediato do
+ * score no índice (a sessão atual enxerga a memória fresca sem esperar o
+ * próximo sweep). Dedup por path: cada memória conta uma vez por chamada.
+ */
+export function recordSearchAccesses(
+	state: ToolState,
+	entries: { path: string; memoryId: string | null }[],
+): void {
+	const store = state.retention;
+	if (!store || !store.isOpen || entries.length === 0) return;
+	const seen = new Set<string>();
+	const bumps = new Map<string, number>();
+	for (const e of entries) {
+		if (e.path.length === 0 || seen.has(e.path)) continue;
+		seen.add(e.path);
+		try {
+			const res = store.recordAccess(e.memoryId, e.path);
+			if (res.recorded) bumps.set(e.path, 1.0);
+		} catch (err) {
+			console.warn(
+				`[pi-memory] retention: falha ao registrar acesso (${e.path}): ${(err as Error).message}`,
+			);
+		}
+	}
+	if (bumps.size > 0 && state.index?.isOpen) {
+		try {
+			state.index.updateRetentionScores(bumps);
+		} catch (err) {
+			console.warn(
+				`[pi-memory] retention: bump do score no índice falhou: ${(err as Error).message}`,
+			);
 		}
 	}
 }
@@ -183,26 +222,34 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 				let engine: SearchEngine = "rg";
 				let count = 0;
 				let text = "";
+				// Resultados crus capturados pelos callbacks — registro de uso de
+				// retenção roda sobre eles (não sobre o texto formatado).
+				let indexResults: IndexSearchResult[] = [];
+				let rgResults: SearchResult[] = [];
 				if (indexReady) {
 					const dispatch = dispatchSearch(
-						() =>
-							state.index!.search({
+						() => {
+							indexResults = state.index!.search({
 								terms: params.query,
 								scope: params.scope ?? "all",
 								type: params.type,
 								minConfidence: params.min_confidence,
 								limit: params.limit,
 								projectId: state.projectId,
-							}),
-						() =>
-							searchMemories({
+							});
+							return indexResults;
+						},
+						() => {
+							rgResults = searchMemories({
 								query: buildSearchPattern(params.query),
 								scope: params.scope ?? "all",
 								type: params.type,
 								minConfidence: params.min_confidence,
 								limit: params.limit,
 								projectId: state.projectId,
-							}),
+							});
+							return rgResults;
+						},
 					);
 					engine = dispatch.engine;
 					count = dispatch.count;
@@ -214,7 +261,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 					}
 				} else {
 					// Índice indisponível → rg direto.
-					const results = searchMemories({
+					rgResults = searchMemories({
 						query: buildSearchPattern(params.query),
 						scope: params.scope ?? "all",
 						type: params.type,
@@ -222,8 +269,26 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 						limit: params.limit,
 						projectId: state.projectId,
 					});
-					count = results.length;
-					text = count > 0 ? formatRgResults(results) : "";
+					count = rgResults.length;
+					text = count > 0 ? formatRgResults(rgResults) : "";
+				}
+
+				// Uso conta apenas com resultados reais (busca vazia não registra).
+				if (count > 0) {
+					if (indexResults.length > 0) {
+						recordSearchAccesses(
+							state,
+							indexResults.map((r) => ({ path: r.path, memoryId: r.memoryId || null })),
+						);
+					} else if (rgResults.length > 0) {
+						recordSearchAccesses(
+							state,
+							rgResults.map((r) => ({
+								path: relFromMemoriesRoot(r.file),
+								memoryId: r.memoryId,
+							})),
+						);
+					}
 				}
 
 				if (count === 0) {

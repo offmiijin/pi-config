@@ -5,10 +5,11 @@
  * saveMemory compartilhado por memory_save e memory_extract.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { MEMORIES_ROOT, MEMORY_TYPES, type MemoryType } from "../constants.ts";
+import { MEMORIES_ROOT, MEMORY_TYPES, defaultRetentionPolicy, type MemoryType } from "../constants.ts";
 import { ensureFileDir } from "../session.ts";
 
 /**
@@ -451,6 +452,8 @@ export interface SaveMemoryParams {
 	summary?: string;
 	/** Ids de evidência do pipeline que embasam esta versão (frontmatter). */
 	evidence?: string[];
+	/** Política de retenção — default por tipo (_rules → protected). */
+	retention_policy?: "normal" | "protected";
 }
 
 /**
@@ -489,6 +492,7 @@ export function saveMemory(
 		supersedes,
 		summary,
 		evidence = [],
+		retention_policy,
 	} = params;
 	const today = new Date().toISOString().slice(0, 10);
 	const archived: string[] = [];
@@ -544,6 +548,12 @@ export function saveMemory(
 	// duas memórias ativas com a MESMA context key quebrariam o contrato
 	// "mesma key = mesmo arquivo" (findMemoryFile retornaria uma delas por
 	// ordem de busca, com a outra invisível para o pipeline de dedup).
+	//
+	// Identidade estável (frontmatter v3): o memory_id da versão movida é
+	// carregado — o histórico de uso no .retention.sqlite segue a memória,
+	// não o path.
+	let carriedMemoryId: string | null = null;
+	let carriedPolicy: string | null = null;
 	const existingPath = findMemoryFile(projectId, context);
 	if (existingPath && existingPath !== filePath) {
 		const existingRaw = readFileSync(existingPath, "utf-8");
@@ -556,6 +566,10 @@ export function saveMemory(
 			removeOriginalPath: existingPath,
 		});
 		archived.push(existingPath);
+		carriedMemoryId =
+			typeof existingMeta.memory_id === "string" ? existingMeta.memory_id : null;
+		carriedPolicy =
+			typeof existingMeta.retention_policy === "string" ? existingMeta.retention_policy : null;
 	}
 
 	// Snapshot consolidado: versão atual (se existir) vai para .history/ e a
@@ -575,6 +589,8 @@ export function saveMemory(
 		existingTags = Array.isArray(meta.tags) ? (meta.tags as string[]) : [];
 		existingEvidence = Array.isArray(meta.evidence) ? (meta.evidence as string[]) : [];
 		existingSummary = typeof meta.summary === "string" ? meta.summary : null;
+		if (typeof meta.memory_id === "string") carriedMemoryId = meta.memory_id;
+		if (typeof meta.retention_policy === "string") carriedPolicy = meta.retention_policy;
 		pendingArchives.push({
 			raw: existing,
 			targetPath: getHistoryPath(filePath, oldRevision),
@@ -599,6 +615,8 @@ export function saveMemory(
 		// Snapshot: confiança desta versão (quem salva decide). Decay é
 		// reaplicado depois via memory_decay quando necessário.
 		confidence,
+		memory_id: carriedMemoryId ?? randomUUID(),
+		retention_policy: retention_policy ?? carriedPolicy ?? defaultRetentionPolicy(type),
 	};
 	if (mergedTags.length > 0) metaOut.tags = mergedTags;
 	// Summary reflete o estado ATUAL: sobrescreve quando fornecido; preserva
@@ -715,4 +733,51 @@ export function migrateLegacyMemories(projectId: string): number {
 		}
 	}
 	return migrated;
+}
+
+/* ------------------------------------------------------------------ */
+/* Frontmatter v3 — identidade estável (memory_id) e política          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Atribui identidade estável (memory_id) e política de retenção a memórias
+ * que ainda não têm (frontmatter v2 → v3). Idempotente e tolerante a
+ * arquivos corrompidos. NÃO altera `updated` nem `confidence` — a migração
+ * não pode perturbar a ordenação por recência nem o estado factual.
+ *
+ * memory_id é a chave de continuidade do .retention.sqlite: se o arquivo
+ * mudar de tipo/contexto/escopo, o histórico de uso segue a memória.
+ *
+ * Retorna quantas memórias receberam metadados novos.
+ */
+export function ensureMemoryIdentities(projectId: string): number {
+	let updated = 0;
+	for (const scope of ["global", "project"] as const) {
+		for (const type of MEMORY_TYPES) {
+			const dir =
+				scope === "global"
+					? join(MEMORIES_ROOT, "_global", type)
+					: join(MEMORIES_ROOT, "projects", projectId, type);
+			if (!existsSync(dir)) continue;
+			for (const f of readdirSync(dir)) {
+				if (!f.endsWith(".md")) continue;
+				try {
+					const filePath = join(dir, f);
+					const content = readFileSync(filePath, "utf-8");
+					const { meta, body } = parseFrontmatter(content);
+					const needsId =
+						typeof meta.memory_id !== "string" || meta.memory_id.length === 0;
+					const needsPolicy = typeof meta.retention_policy !== "string";
+					if (!needsId && !needsPolicy) continue;
+					if (needsId) meta.memory_id = randomUUID();
+					if (needsPolicy) meta.retention_policy = defaultRetentionPolicy(type);
+					writeFileAtomic(filePath, formatFrontmatter(meta) + body);
+					updated++;
+				} catch {
+					// arquivo corrompido — não bloqueia a migração do restante
+				}
+			}
+		}
+	}
+	return updated;
 }

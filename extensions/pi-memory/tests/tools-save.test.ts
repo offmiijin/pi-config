@@ -49,6 +49,8 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 			cachedIndexText: null,
 			pipeline: null,
 			worker: null,
+			retention: null,
+			retentionScheduler: null,
 			index: idx,
 		};
 	}

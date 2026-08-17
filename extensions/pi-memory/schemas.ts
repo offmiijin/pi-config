@@ -46,6 +46,16 @@ export const SaveSchema = Type.Object({
 				"Sobrescreve o anterior; usado pelo memory_extract para dedup.",
 		}),
 	),
+	retention_policy: Type.Optional(
+		Type.Union([
+			Type.Literal("normal"),
+			Type.Literal("protected"),
+		], {
+			description:
+				"Política de retenção (normal = decai por desuso; protected = nunca decai). " +
+				"Default por tipo: _rules → protected, demais → normal.",
+		}),
+	),
 });
 
 export const SearchSchema = Type.Object({
@@ -83,6 +93,21 @@ export const DecaySchema = Type.Object({
 // próprio pipeline (sessionManager.getSessionFile no agent_settled) — o
 // antigo parâmetro session_file era aceito e ignorado.
 export const ExtractSchema = Type.Object({});
+
+/* ------------------------------------------------------------------ */
+/* Retenção por inatividade (decay automático por desuso)              */
+/* ------------------------------------------------------------------ */
+
+export const RetentionActionEnum = Type.Union([
+	Type.Literal("status"),
+	Type.Literal("preview"),
+	Type.Literal("run"),
+]);
+export type RetentionAction = "status" | "preview" | "run";
+
+export const RetentionSchema = Type.Object({
+	action: RetentionActionEnum,
+});
 
 /* ------------------------------------------------------------------ */
 /* Extração (Fase 3) — schema da resposta do modelo                    */
