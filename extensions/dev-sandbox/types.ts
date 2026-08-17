@@ -153,7 +153,18 @@ export interface SandboxLandlockConfig {
   minAbi: number;
 }
 
+export interface SandboxWorktreeConfig {
+  /** Habilita worktree temporário para projetos Git. */
+  enabled: boolean;
+  /** Raiz dos worktrees temporários. */
+  root: string;
+  /** Política de remoção ao encerrar a sessão. */
+  cleanup: "always" | "never";
+}
+
 export interface SandboxConfig {
+  /** Configuração do worktree temporário. */
+  worktree: SandboxWorktreeConfig;
   /** Habilita/desabilita todo o sandbox. */
   enabled: boolean;
   /** Configuração de rede. */
@@ -204,6 +215,11 @@ export interface BwrapResult {
 
 /** Config padrão — valores de fábrica. */
 export const DEFAULT_CONFIG: SandboxConfig = {
+  worktree: {
+    enabled: true,
+    root: "/tmp/pi-worktrees",
+    cleanup: "always",
+  },
   enabled: true,
   internet: {
     enabled: true,

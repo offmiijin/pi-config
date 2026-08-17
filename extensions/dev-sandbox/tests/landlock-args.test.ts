@@ -58,6 +58,7 @@ function makeConfig(over: DeepPartial<SandboxConfig> = {}): SandboxConfig {
     seccomp: { ...DEFAULT_CONFIG.seccomp, ...(over.seccomp ?? {}) },
     landlock: { ...DEFAULT_CONFIG.landlock, ...(over.landlock ?? {}) },
     profiles: { ...DEFAULT_CONFIG.profiles, ...(over.profiles ?? {}) } as SandboxProfilesConfig,
+    worktree: { ...DEFAULT_CONFIG.worktree, ...(over.worktree ?? {}) },
   };
 }
 

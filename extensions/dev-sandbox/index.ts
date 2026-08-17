@@ -56,7 +56,7 @@ import {
 } from "./portability";
 import type { SandboxConfig } from "./types";
 import type { SandboxSession } from "./session";
-import { cleanupWorktree, createWorktree } from "./worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
@@ -93,7 +93,7 @@ export default function (pi: ExtensionAPI) {
     session = null;
     if (!current) return;
     try {
-      cleanupWorktree(current);
+      if (config?.worktree.cleanup !== "never") cleanupWorktree(current);
     } catch (err) {
       console.error("[dev-sandbox] Falha ao remover worktree temporário:", err);
     }
@@ -160,7 +160,11 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Worktree temporário ───────────────────
-      session = createWorktree(originalCwd);
+      cleanupOrphanedWorktrees(config.worktree.root);
+      if (!config.worktree.enabled) {
+        throw new Error("[dev-sandbox] Worktree temporário desabilitado na configuração.");
+      }
+      session = createWorktree(originalCwd, config.worktree.root);
       localCwd = session.workspaceCwd;
 
       // Caches/quarentena persistem no projeto original, mas são montados
@@ -249,8 +253,8 @@ export default function (pi: ExtensionAPI) {
     } catch (err: any) {
       // Erro inesperado → fail-closed: nunca roda sem sandbox silenciosamente
       enabled = false;
-      config = null;
       releaseSession();
+      config = null;
       console.error("[dev-sandbox] Falha ao inicializar sandbox:", err);
       if (ctx.hasUI) {
         ctx.ui.notify(
