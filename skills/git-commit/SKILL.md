@@ -110,11 +110,12 @@ Exemplos:
 BRANCH=$(git branch --show-current)
 ```
 
-- Se for `development`, `main` ou `master`, **nunca commitar diretamente**. Criar branch feature:
+- Se for `development`, `main`, `master` ou seguir o padrão `sandbox/<session-id>`, **nunca commitar diretamente**. Criar branch feature:
   ```bash
   git checkout -b feat/descricao-<numero>
   ```
   E commitar lá.
+- Branches `sandbox/<session-id>` são temporárias e servem apenas como base do worktree isolado; commits devem ser feitos em branch feature criada a partir dela.
 - `development` é branch de integração — recebe PRs de feature branches. Nunca commitar nela.
 
 ### 2. Verificar o staged
