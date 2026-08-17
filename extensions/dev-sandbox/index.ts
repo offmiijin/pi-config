@@ -160,11 +160,11 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Worktree temporário ───────────────────
-      cleanupOrphanedWorktrees(config.worktree.root);
       if (!config.worktree.enabled) {
         throw new Error("[dev-sandbox] Worktree temporário desabilitado na configuração.");
       }
       session = createWorktree(originalCwd, config.worktree.root);
+      cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
       localCwd = session.workspaceCwd;
 
       // Git precisa dos metadados para status/branch/commit/push, mas o código

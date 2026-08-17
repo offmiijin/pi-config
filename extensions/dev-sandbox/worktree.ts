@@ -23,7 +23,7 @@ function writeMetadata(session: SandboxSession): void {
 }
 
 /** Remove worktrees antigos cujo metadata pertence a processo encerrado. */
-export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT): number {
+export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?: string): number {
   const worktreeRoot = resolve(root);
   if (!existsSync(worktreeRoot)) return 0;
   let removed = 0;
@@ -38,6 +38,22 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT): number {
       cleanupWorktree({ ...metadata, originalCwd: metadata.gitRoot, workspaceCwd: path });
       removed++;
     } catch { /* metadata inválido ou órfão não removível: não apagar cegamente */ }
+  }
+  if (gitRoot) {
+    const entries = git(gitRoot, ["worktree", "list", "--porcelain"]).split("\\n");
+    for (let i = 0; i < entries.length; i++) {
+      if (!entries[i].startsWith("worktree ")) continue;
+      const path = entries[i].slice("worktree ".length);
+      const branchLine = entries.slice(i, i + 5).find((line) => line.startsWith("branch "));
+      const branch = branchLine?.slice("branch ".length).replace("refs/heads/", "") ?? "";
+      if (!isManagedWorktreePath(path, worktreeRoot) || !branch.startsWith("sandbox/")) continue;
+      if (existsSync(join(path, METADATA_FILE))) continue;
+      try {
+        git(gitRoot, ["worktree", "remove", "--force", path]);
+        try { git(gitRoot, ["branch", "-D", branch]); } catch { /* branch já removida */ }
+        removed++;
+      } catch { /* worktree inválido: não apagar fora do Git */ }
+    }
   }
   return removed;
 }
