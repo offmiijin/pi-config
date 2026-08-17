@@ -55,6 +55,8 @@ import {
   archTriplet,
 } from "./portability";
 import type { SandboxConfig } from "./types";
+import type { SandboxSession } from "./session";
+import { cleanupWorktree, createWorktree } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
@@ -83,12 +85,27 @@ export default function (pi: ExtensionAPI) {
   /** true com opt-out explícito (--no-sandbox ou enabled:false) → tools do host. */
   let fallbackToHost = false;
   let localCwd = process.cwd();
+  let originalCwd = process.cwd();
+  let session: SandboxSession | null = null;
+
+  function releaseSession(): void {
+    const current = session;
+    session = null;
+    if (!current) return;
+    try {
+      cleanupWorktree(current);
+    } catch (err) {
+      console.error("[dev-sandbox] Falha ao remover worktree temporário:", err);
+    }
+  }
 
   // ── session_start ──────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
+    originalCwd = ctx.cwd;
     localCwd = ctx.cwd;
     enabled = false;
     config = null;
+    session = null;
     fallbackToHost = false;
 
     // --no-sandbox: opt-out explícito → tools do host
@@ -102,7 +119,7 @@ export default function (pi: ExtensionAPI) {
 
     try {
       // Config do projeto só é aplicada se o projeto for confiável
-      config = loadConfig(localCwd, { projectTrusted: ctx.isProjectTrusted?.() ?? false });
+      config = loadConfig(originalCwd, { projectTrusted: ctx.isProjectTrusted?.() ?? false });
 
       // enabled: false na configuração = opt-out explícito → tools do host
       if (!config.enabled) {
@@ -141,6 +158,17 @@ export default function (pi: ExtensionAPI) {
           "warning",
         );
       }
+
+      // ── Worktree temporário ───────────────────
+      session = createWorktree(originalCwd);
+      localCwd = session.workspaceCwd;
+
+      // Caches/quarentena persistem no projeto original, mas são montados
+      // individualmente; o restante do projeto original continua inacessível.
+      const persistentCaches = resolveCacheDirs(config, originalCwd);
+      const persistentQuarantine = resolveQuarantineDirs(config, originalCwd);
+      config.filesystem.cacheDirs = persistentCaches as unknown as typeof config.filesystem.cacheDirs;
+      config.filesystem.quarantineDirs = persistentQuarantine;
 
       // ── Seccomp BPF ───────────────────────────
       // Seleciona por arquitetura: seccomp-<arch>.bpf → seccomp.bpf (universal,
@@ -222,6 +250,7 @@ export default function (pi: ExtensionAPI) {
       // Erro inesperado → fail-closed: nunca roda sem sandbox silenciosamente
       enabled = false;
       config = null;
+      releaseSession();
       console.error("[dev-sandbox] Falha ao inicializar sandbox:", err);
       if (ctx.hasUI) {
         ctx.ui.notify(
@@ -257,7 +286,7 @@ export default function (pi: ExtensionAPI) {
       ...base,
       ...(label !== undefined ? { label } : {}),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
-        const cwd = ctx.cwd ?? localCwd;
+        const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
         if (!enabled || !config) {
           if (fallbackToHost) return makeTool(cwd).execute(toolCallId, params, signal, onUpdate, ctx);
           throw sandboxBlockedError(base.name);
@@ -331,7 +360,7 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!enabled || !config) throw quarantineBlockedError("sandbox_fetch");
-      const cwd = ctx.cwd ?? localCwd;
+      const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
       const { file, result } = await fetchUrl(config, cwd, params.url, params.output, signal);
       if (result.exitCode !== 0) {
         throw new Error(
@@ -365,7 +394,7 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!enabled || !config) throw quarantineBlockedError("sandbox_quarantine_exec");
-      const cwd = ctx.cwd ?? localCwd;
+      const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
       const result = await execQuarantine(
         config, cwd, params.command, params.workDir ?? "default", params.artifacts ?? [], signal,
       );
@@ -393,10 +422,9 @@ export default function (pi: ExtensionAPI) {
         description: "Relative workspace path to copy to (e.g. 'dist/app.js')",
       }),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (!enabled || !config) throw quarantineBlockedError("sandbox_promote");
-      const cwd = ctx.cwd ?? localCwd;
-      const target = await promoteArtifact(config, cwd, params.source, params.target);
+      const target = await promoteArtifact(config, originalCwd, params.source, params.target);
       return {
         content: [{ type: "text", text: `Promoted: ${target}` }],
         details: { target },
@@ -406,7 +434,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── user_bash (!comando e !!comando) ──────────
   pi.on("user_bash", (_event, ctx) => {
-    const cwd = ctx?.cwd ?? localCwd;
+    const cwd = session?.workspaceCwd ?? ctx?.cwd ?? localCwd;
     if (enabled && config) {
       return { operations: createBashOps(config, cwd) };
     }
@@ -428,7 +456,7 @@ export default function (pi: ExtensionAPI) {
   // ── before_agent_start ────────────────────────
   pi.on("before_agent_start", (event, ctx) => {
     if (!enabled || !config) return;
-    const cwd = ctx?.cwd ?? localCwd;
+    const cwd = session?.workspaceCwd ?? ctx?.cwd ?? localCwd;
     const caches = resolveCacheDirs(config, cwd);
     const sandboxNote =
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
@@ -488,6 +516,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     enabled = false;
     config = null;
+    releaseSession();
+    localCwd = originalCwd;
     fallbackToHost = false;
   });
 }
