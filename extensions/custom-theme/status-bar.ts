@@ -301,7 +301,11 @@ export function registerStatusBar(pi: ExtensionAPI) {
 				const folderName = path.basename(sandboxSession.originalCwd || ctx.cwd);
 				const sandboxBranch = sandboxSession.branchName || "";
 				const originalBranch = sandboxSession.originalBranchName || "";
-				const branch = sandboxBranch || footerData.getGitBranch() || "no-branch";
+				const branch = sandboxBranch
+					? sandboxBranch.startsWith("sandbox/")
+						? `sandbox/${sandboxBranch.slice("sandbox/".length).split("-")[0]}`
+						: sandboxBranch
+					: footerData.getGitBranch() || "no-branch";
 
 				const leftPart = [
 					theme.fg("accent", "\u{f07c}"),
