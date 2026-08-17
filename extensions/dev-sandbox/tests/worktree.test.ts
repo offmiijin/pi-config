@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupWorktree, createWorktree } from "../worktree";
+import { cleanupWorktree, createWorktree, promoteWorktreeChanges } from "../worktree";
 import type { SandboxSession } from "../session";
 
 const sessions: SandboxSession[] = [];
@@ -40,6 +40,20 @@ describe("worktree", () => {
     expect(session.branchName).toMatch(/^sandbox\//);
     expect(readFileSync(join(session.workspaceCwd, "file.txt"), "utf8")).toBe("original\n");
     expect(git(session.workspaceCwd, ["branch", "--show-current"])).toBe(session.branchName);
+  });
+
+  it("promove alterações rastreadas e untracked", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    writeFileSync(join(session.workspaceCwd, "file.txt"), "promoted\n");
+    writeFileSync(join(session.workspaceCwd, "new.txt"), "new\n");
+
+    promoteWorktreeChanges(session);
+
+    expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("promoted\n");
+    expect(readFileSync(join(original, "new.txt"), "utf8")).toBe("new\n");
   });
 
   it("remove worktree e branch de forma idempotente", () => {

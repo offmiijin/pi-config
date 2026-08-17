@@ -56,7 +56,7 @@ import {
 } from "./portability";
 import type { SandboxConfig } from "./types";
 import type { SandboxSession } from "./session";
-import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree } from "./worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
@@ -433,6 +433,20 @@ export default function (pi: ExtensionAPI) {
         content: [{ type: "text", text: `Promoted: ${target}` }],
         details: { target },
       };
+    },
+  });
+
+  pi.registerTool({
+    name: "sandbox_promote_changes",
+    label: "Sandbox Promote Changes",
+    description: "Promotes tracked and untracked changes from temporary worktree to original project.",
+    parameters: Type.Object({
+      files: Type.Optional(Type.Array(Type.String({ description: "Relative file paths; omit to promote all changes" }))),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      if (!enabled || !config || !session) throw quarantineBlockedError("sandbox_promote_changes");
+      const files = promoteWorktreeChanges(session, params.files ?? []);
+      return { content: [{ type: "text", text: `Promoted: ${files.join(", ")}` }], details: { files } };
     },
   });
 

@@ -1,9 +1,9 @@
 /** Criação, remoção e recuperação de worktrees temporários. */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { SandboxSession } from "./session";
 
 export const DEFAULT_WORKTREE_ROOT = "/tmp/pi-worktrees";
@@ -70,4 +70,33 @@ export function cleanupWorktree(session: SandboxSession): void {
   try { git(session.gitRoot, ["branch", "-D", session.branchName]); } catch { /* já removida */ }
   rmSync(session.worktreePath, { recursive: true, force: true });
 }
+function validateRelativeFile(file: string): string {
+  const clean = file.trim();
+  if (!clean || clean.startsWith("/") || clean.split("/").includes("..")) {
+    throw new Error(`[dev-sandbox] Caminho inválido para promoção: ${file}`);
+  }
+  return clean;
+}
+
+/** Promove alterações rastreadas e arquivos untracked ao projeto original. */
+export function promoteWorktreeChanges(session: SandboxSession, files: string[] = []): string[] {
+  const selected = files.map(validateRelativeFile);
+  const trackedArgs = ["diff", "--binary", "HEAD", "--", ...(selected.length ? selected : ["."])];
+  const patch = execFileSync("git", trackedArgs, { cwd: session.worktreePath, encoding: "buffer" });
+  if (patch.length) execFileSync("git", ["apply", "--binary", "-"], { cwd: session.originalCwd, input: patch, stdio: ["pipe", "pipe", "pipe"] });
+
+  const untracked = git(session.worktreePath, ["ls-files", "--others", "--exclude-standard", "--", ...(selected.length ? selected : ["."])])
+    .split("\n").filter((file) => Boolean(file) && file !== METADATA_FILE).map(validateRelativeFile);
+  for (const file of untracked) {
+    const source = join(session.worktreePath, file);
+    const target = join(session.originalCwd, file);
+    if (resolve(target) !== session.originalCwd && !resolve(target).startsWith(session.originalCwd + sep)) {
+      throw new Error(`[dev-sandbox] Destino de promoção fora do projeto: ${file}`);
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(source, target, { recursive: true, force: true });
+  }
+  return [...(selected.length ? selected : ["alterações rastreadas"]), ...untracked];
+}
+
 export function isManagedWorktreePath(path: string, root = DEFAULT_WORKTREE_ROOT): boolean { return resolve(path).startsWith(resolve(root) + "/"); }
