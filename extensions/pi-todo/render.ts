@@ -25,10 +25,9 @@ export function statusColor(status: TodoStatus): "muted" | "warning" | "success"
 	}
 }
 
-/** Linha formatada: `● texto (motivo)` com cores do tema atual. */
+/** Linha formatada: `● texto` com cores do tema atual. */
 export function renderTodoLine(item: TodoItem, theme: Theme): string {
 	const dot = theme.fg(statusColor(item.status), TODO_DOT);
 	const text = item.status === "done" ? theme.fg("muted", item.text) : theme.fg("text", item.text);
-	const reason = item.status === "error" && item.error ? ` ${theme.fg("dim", `(${item.error})`)}` : "";
-	return `${dot} ${text}${reason}`;
+	return `${dot} ${text}`;
 }
