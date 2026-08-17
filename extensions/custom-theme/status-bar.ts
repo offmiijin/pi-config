@@ -223,8 +223,10 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	// evento chegar antes, aplica quando o editor for criado.
 	let lastMemoryTotal = 0;
 	let sandboxSession: { originalCwd?: string; branchName?: string; originalBranchName?: string } = {};
+	let footerTui: TUI | null = null;
 	pi.events?.on("custom:dev-sandbox-session", (session: typeof sandboxSession) => {
 		sandboxSession = session;
+		footerTui?.requestRender(true);
 	});
 	pi.events?.on("custom:memory-stats", ({ total }: { total: number }) => {
 		lastMemoryTotal = total;
@@ -245,19 +247,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		let folderName = path.basename(sandboxSession.originalCwd || ctx.cwd);
-		let sandboxBranch = sandboxSession.branchName || "";
-		let originalBranch = sandboxSession.originalBranchName || "";
-		try {
-			const metadata = JSON.parse(readFileSync(path.join(ctx.cwd, ".pi-sandbox-worktree.json"), "utf8")) as {
-				originalCwd?: string;
-				branchName?: string;
-				originalBranchName?: string;
-			};
-			if (metadata.originalCwd) folderName = path.basename(metadata.originalCwd);
-			sandboxBranch = metadata.branchName || "";
-			originalBranch = metadata.originalBranchName || "";
-		} catch {}
+		footerTui = null;
 		currentThinking = pi.getThinkingLevel() || "off";
 
 		const entries = ctx.sessionManager.getEntries();
@@ -305,8 +295,12 @@ export function registerStatusBar(pi: ExtensionAPI) {
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			footerDataRef = footerData;
+			footerTui = tui;
 
 			const renderLine = (width: number): string[] => {
+				const folderName = path.basename(sandboxSession.originalCwd || ctx.cwd);
+				const sandboxBranch = sandboxSession.branchName || "";
+				const originalBranch = sandboxSession.originalBranchName || "";
 				const branch = sandboxBranch || footerData.getGitBranch() || "no-branch";
 
 				const leftPart = [
