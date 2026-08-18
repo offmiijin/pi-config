@@ -736,6 +736,7 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
  */
 function buildIsolationArgs(
   config: SandboxConfig,
+  cwd: string,
   rwDirs: string[],
   shareNet: boolean,
   cacheDirs: Record<string, string> = {},
@@ -824,7 +825,7 @@ function buildFetchArgs(config: SandboxConfig, cwd: string): string[] {
   const dirs = resolveQuarantineDirs(config, cwd);
   // Respeita o kill-switch global de rede (internet.enabled).
   const shareNet = config.internet.enabled && (config.profiles?.fetch?.network ?? true);
-  return buildIsolationArgs(config, [dirs.fetch], shareNet);
+  return buildIsolationArgs(config, cwd, [dirs.fetch], shareNet);
 }
 
 /** Perfil quarantine: sem rede, escrita em runs/ e caches persistentes. */
@@ -832,7 +833,7 @@ function buildQuarantineArgs(config: SandboxConfig, cwd: string): string[] {
   const dirs = resolveQuarantineDirs(config, cwd);
   const caches = resolveCacheDirs(config, cwd);
   const shareNet = config.internet.enabled && (config.profiles?.quarantine?.network ?? false);
-  return buildIsolationArgs(config, [dirs.runs], shareNet, caches);
+  return buildIsolationArgs(config, cwd, [dirs.runs], shareNet, caches);
 }
 
 /**
