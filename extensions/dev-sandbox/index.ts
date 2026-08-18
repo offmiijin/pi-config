@@ -60,6 +60,7 @@ import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorkt
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
+import { cleanupSandboxCaches } from "./cache-cleanup";
 import { Type } from "typebox";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
@@ -184,6 +185,10 @@ export default function (pi: ExtensionAPI) {
       const persistentQuarantine = resolveQuarantineDirs(config, originalCwd);
       config.filesystem.cacheDirs = persistentCaches as unknown as typeof config.filesystem.cacheDirs;
       config.filesystem.quarantineDirs = persistentQuarantine;
+      const cleanup = cleanupSandboxCaches(persistentCaches, persistentQuarantine);
+      if (cleanup.removed > 0) {
+        console.info(`[dev-sandbox] Limpeza de caches: ${cleanup.removed} entrada(s) removida(s).`);
+      }
 
       // ── Seccomp BPF ───────────────────────────
       // Seleciona por arquitetura: seccomp-<arch>.bpf → seccomp.bpf (universal,
