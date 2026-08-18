@@ -122,20 +122,26 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     expect(b.stdout.toString()).toContain("build");
   });
 
-  it("quarantine: cache pip e venv persistem separadamente", async () => {
+  it("quarantine: caches de ferramentas e venv persistem separadamente", async () => {
     const cwd = fixture();
     const dirs = resolveQuarantineDirs(config, cwd);
+    const npmCache = join(cwd, ".sandbox-cache", "npm");
     const pipCache = join(cwd, ".sandbox-cache", "pip");
+    const clonesCache = join(cwd, ".sandbox-cache", "clones");
 
     const first = await execInProfile(config, {
       command: ["bash", "-lc", [
         "set -eu",
+        'test "$NPM_CONFIG_CACHE" = ' + JSON.stringify(npmCache),
         'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        'test "$SANDBOX_CLONE_DIR" = ' + JSON.stringify(clonesCache),
         "python3 -m venv .venv",
         "test -x .venv/bin/python",
         'test "$(.venv/bin/python -m pip cache dir)" = "$PIP_CACHE_DIR"',
-        'mkdir -p "$PIP_CACHE_DIR/issue-97"',
-        'echo cached > "$PIP_CACHE_DIR/issue-97/marker"',
+        'mkdir -p "$NPM_CONFIG_CACHE/issue-97" "$PIP_CACHE_DIR/issue-97" "$SANDBOX_CLONE_DIR/issue-97"',
+        'echo npm-cached > "$NPM_CONFIG_CACHE/issue-97/marker"',
+        'echo pip-cached > "$PIP_CACHE_DIR/issue-97/marker"',
+        'echo clone-cached > "$SANDBOX_CLONE_DIR/issue-97/marker"',
       ].join("\n")],
       cwd: dirs.runs,
       baseCwd: cwd,
@@ -145,9 +151,13 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const second = await execInProfile(config, {
       command: ["bash", "-lc", [
         "set -eu",
+        'test "$NPM_CONFIG_CACHE" = ' + JSON.stringify(npmCache),
         'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        'test "$SANDBOX_CLONE_DIR" = ' + JSON.stringify(clonesCache),
         "test -x .venv/bin/python",
-        'test "$(cat \"$PIP_CACHE_DIR/issue-97/marker\")" = cached',
+        'test "$(cat \"$NPM_CONFIG_CACHE/issue-97/marker\")" = npm-cached',
+        'test "$(cat \"$PIP_CACHE_DIR/issue-97/marker\")" = pip-cached',
+        'test "$(cat \"$SANDBOX_CLONE_DIR/issue-97/marker\")" = clone-cached',
         'test "$(.venv/bin/python -c \'import sys; print(sys.prefix)\')" != "$PIP_CACHE_DIR"',
       ].join("\n")],
       cwd: dirs.runs,

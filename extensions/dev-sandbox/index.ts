@@ -499,7 +499,7 @@ export default function (pi: ExtensionAPI) {
       "Download/run external code through the quarantine profiles:\n" +
       "- sandbox_fetch: download a file/URL (network ON, NO access to the project).\n" +
       "- sandbox_quarantine_exec: install (npm/pip) or run downloaded code (NO network, NO project " +
-      "access, writes only under .sandbox-cache/runs/<work> and pip cache).\n" +
+      "access, writes only under .sandbox-cache/runs/<work> and configured caches).\n" +
       "- sandbox_promote: copy ONE specific artifact from runs/ back into the project — explicit, " +
       "the only way out.\n" +
       "Use normal bash only for project work.";

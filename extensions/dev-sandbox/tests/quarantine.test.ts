@@ -151,14 +151,20 @@ describe("buildBwrapArgs — perfil quarantine", () => {
     expect(binds.filter((b) => b === cwd)).toHaveLength(0);
   });
 
-  it("monta cache pip persistente e define PIP_CACHE_DIR", () => {
+  it("monta caches persistentes e define variáveis das ferramentas", () => {
     const cwd = fixture();
     const args = buildBwrapArgs(makeConfig(), cwd, "quarantine");
     const env = setenvMap(args);
-    const pipCache = join(cwd, ".sandbox-cache", "pip");
+    const caches = {
+      npm: join(cwd, ".sandbox-cache", "npm"),
+      pip: join(cwd, ".sandbox-cache", "pip"),
+      clones: join(cwd, ".sandbox-cache", "clones"),
+    };
 
-    expect(flagValues(args, "--bind")).toContain(pipCache);
-    expect(env.get("PIP_CACHE_DIR")).toBe(pipCache);
+    expect(flagValues(args, "--bind")).toEqual(expect.arrayContaining(Object.values(caches)));
+    expect(env.get("NPM_CONFIG_CACHE")).toBe(caches.npm);
+    expect(env.get("PIP_CACHE_DIR")).toBe(caches.pip);
+    expect(env.get("SANDBOX_CLONE_DIR")).toBe(caches.clones);
     expect(flagValues(args, "--bind").filter((b) => b === cwd)).toHaveLength(0);
   });
 
@@ -199,7 +205,11 @@ describe("buildBwrapArgs — landlock por perfil", () => {
     const full = wrapWithLandlock(args, ["echo", "x"], makeConfig(), cwd, "quarantine");
     const rw = rwValues(full);
     expect(rw).toContain(join(cwd, ".sandbox-cache", "runs"));
-    expect(rw).toContain(join(cwd, ".sandbox-cache", "pip"));
+    expect(rw).toEqual(expect.arrayContaining([
+      join(cwd, ".sandbox-cache", "npm"),
+      join(cwd, ".sandbox-cache", "pip"),
+      join(cwd, ".sandbox-cache", "clones"),
+    ]));
     expect(rw).not.toContain(cwd);
   });
 });

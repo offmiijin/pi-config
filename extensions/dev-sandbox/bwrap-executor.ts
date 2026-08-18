@@ -373,7 +373,7 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string, profile: SandboxPr
  * O parâmetro `profile` seleciona o perfil de isolamento:
  *   - "normal"      → comportamento atual (workspace rw, rede, SSH, caches)
  *   - "fetch"       → rede + escrita só em .sandbox-cache/fetch, sem workspace
- *   - "quarantine"  → sem rede, escrita em runs e cache pip, sem workspace
+ *   - "quarantine"  → sem rede, escrita em runs e caches configurados, sem workspace
  *
  * A parte cacheada é estática (mounts, capabilities, env). A varredura de
  * denyFilePatterns roda a cada chamada (apenas no perfil normal) e os binds
@@ -785,12 +785,12 @@ function buildFetchArgs(config: SandboxConfig, cwd: string): string[] {
   return buildIsolationArgs(config, [dirs.fetch], shareNet);
 }
 
-/** Perfil quarantine: sem rede, escrita em runs/ e cache pip persistente. */
+/** Perfil quarantine: sem rede, escrita em runs/ e caches persistentes. */
 function buildQuarantineArgs(config: SandboxConfig, cwd: string): string[] {
   const dirs = resolveQuarantineDirs(config, cwd);
   const caches = resolveCacheDirs(config, cwd);
   const shareNet = config.internet.enabled && (config.profiles?.quarantine?.network ?? false);
-  return buildIsolationArgs(config, [dirs.runs], shareNet, { pip: caches.pip });
+  return buildIsolationArgs(config, [dirs.runs], shareNet, caches);
 }
 
 /**
@@ -889,7 +889,7 @@ function buildLandlockArgs(
     const dirs = resolveQuarantineDirs(config, cwd);
     rwPaths.push(profile === "fetch" ? dirs.fetch : dirs.runs);
     if (profile === "quarantine") {
-      rwPaths.push(resolveCacheDirs(config, cwd).pip);
+      rwPaths.push(...Object.values(resolveCacheDirs(config, cwd)));
     }
     for (const p of rwPaths) args.push("--allow-rw", p);
 

@@ -205,7 +205,7 @@ perfis de isolamento dedicados:
 |---|---|---|---|
 | `normal` | host | rw | projeto |
 | `fetch` | ✅ | ❌ | `.sandbox-cache/fetch` |
-| `quarantine` | ❌ | ❌ | `.sandbox-cache/runs/<work>` + `.sandbox-cache/pip` |
+| `quarantine` | ❌ | ❌ | `.sandbox-cache/runs/<work>` + caches configurados |
 
 Fluxo:
 
@@ -241,8 +241,9 @@ Configuração de perfis (global ou `.pi/sandbox.json`):
 
 Caches npm (`NPM_CONFIG_CACHE`), pip (`PIP_CACHE_DIR`) e clones de
 repositórios (`SANDBOX_CLONE_DIR`) são persistidos em `.sandbox-cache/`
-dentro do projeto. O perfil `quarantine` monta o cache pip em
-`$PIP_CACHE_DIR`; o workspace inteiro continua inacessível.
+dentro do projeto. O perfil `quarantine` monta os caches configurados
+(`NPM_CONFIG_CACHE`, `PIP_CACHE_DIR` e `SANDBOX_CLONE_DIR`); o workspace
+inteiro continua inacessível.
 Adicione ao `.gitignore`:
 
 ```gitignore
