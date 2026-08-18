@@ -205,15 +205,21 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
       const prof = p as Record<string, unknown>;
       const target = out.profiles[name];
       if (typeof prof.enabled === "boolean") target.enabled = prof.enabled;
-      // workspace de fetch/quarantine é SEMPRE "none" (invariante de
-      // quarentena) — não há como liberar acesso ao projeto por perfil.
+      // Perfis de quarentena nunca recebem workspace, SSH ou rede implícitos.
       if (name === "normal") {
         const ws = normalizeWorkspaceMode(prof.workspace);
         if (ws !== undefined) target.workspace = ws;
-      }
-      if (typeof prof.network === "boolean") target.network = prof.network;
-      if (prof.ssh === "agent" || prof.ssh === "mount" || prof.ssh === "none") {
-        target.ssh = prof.ssh;
+        if (typeof prof.network === "boolean") target.network = prof.network;
+        if (prof.ssh === "agent" || prof.ssh === "mount" || prof.ssh === "none") {
+          target.ssh = prof.ssh;
+        }
+      } else {
+        target.workspace = "none";
+        target.ssh = "none";
+        if (name === "fetch" && typeof prof.network === "boolean") {
+          target.network = prof.network;
+        }
+        if (name === "quarantine") target.network = false;
       }
     }
   }

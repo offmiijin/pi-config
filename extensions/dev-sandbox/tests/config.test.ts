@@ -333,6 +333,18 @@ describe("sanitizeConfig", () => {
     expect(DEFAULT_CONFIG.filesystem.quarantineDirs).toEqual({ fetch: "", runs: "" });
   });
 
+  it("quarentena força workspace, SSH e rede inseguros para valores seguros", () => {
+    const agentDir = writeGlobal(JSON.stringify({ profiles: {
+      fetch: { workspace: "rw", network: true, ssh: "agent" },
+      quarantine: { workspace: "rw", network: true, ssh: "mount" },
+    }}));
+    state.agentDir = agentDir;
+    const cfg = loadConfig("/cwd/proj");
+
+    expect(cfg.profiles.fetch).toMatchObject({ workspace: "none", network: true, ssh: "none" });
+    expect(cfg.profiles.quarantine).toEqual({ enabled: true, workspace: "none", network: false, ssh: "none" });
+  });
+
   it("workspace de fetch/quarantine é SEMPRE none (invariante); normal aceita formas verbosas", () => {
     const agentDir = writeGlobal('{"profiles": {"fetch": {"workspace": "rw"}, "normal": {"workspace": "readonly"}}}');
     state.agentDir = agentDir;

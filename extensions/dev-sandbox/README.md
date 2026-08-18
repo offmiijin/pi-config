@@ -85,12 +85,17 @@ NÃO montado:
 
 ## Worktree temporário
 
-Para projetos Git, sandbox cria branch temporária e worktree em `/tmp/pi-worktrees/<session-id>`.
-Somente esse worktree é montado no bubblewrap; diretório original não é exposto.
+Para projetos Git limpos, sandbox cria branch temporária e worktree em `/tmp/pi-worktrees/<session-id>`.
+Somente esse worktree é montado no bubblewrap; diretório original não é exposto. Projetos
+com alterações locais são recusados para evitar perder estado; faça commit ou stash antes.
+Sessões iniciadas dentro de `/tmp/pi-worktrees` também são recusadas para impedir worktrees
+aninhados.
 
 Ao encerrar sessão, worktree e branch são removidos. Alterações não commitadas são
 descartadas, salvo promoção explícita via `sandbox_promote_changes`. Worktrees órfãos
-são detectados por metadata e removidos na próxima inicialização.
+usam lease renovado a cada 10 segundos e só são removidos após 60 segundos sem renovação;
+PID isolado não é usado como única prova de que sessão morreu. Promoções validam caminhos
+reais e recusam symlinks que apontem para fora do projeto.
 
 ## Configuração
 
@@ -235,7 +240,8 @@ Configuração de perfis (global ou `.pi/sandbox.json`):
 
 - `workspace` de fetch/quarantine é SEMPRE `"none"` — invariante de
   quarentena: não há como liberar acesso ao projeto nesses perfis.
-- `network` do fetch respeita o kill-switch global `internet.enabled`.
+- `fetch` pode usar rede conforme seu perfil e o kill-switch global `internet.enabled`.
+- `quarantine` é sempre offline e sem SSH, mesmo que configuração tente habilitar esses recursos.
 - Diretórios vazios (`""`) = `.sandbox-cache/fetch` e `.sandbox-cache/runs`
   (criados com `0o700`).
 
@@ -280,13 +286,47 @@ O Python do sistema precisa fornecer `venv`/`ensurepip`. Como a quarentena
 não possui rede, baixe wheels ou fontes com `sandbox_fetch` e passe-os como
 artefatos para `sandbox_quarantine_exec`.
 
+### Bootstrap de dependências do projeto
+
+Para projeto confiável, use `sandbox_install_dependencies`. A tool executa
+`npm ci --ignore-scripts` (ou `npm install --ignore-scripts` sem lockfile) no
+worktree atual, usando o cache npm persistente. Como worktrees são temporários,
+repita a instalação após reiniciar a sessão; o cache evita baixar tudo de novo.
+
+O bash bloqueia instalações e execução implícita de pacotes externos (`npm install`,
+`npx`, `pnpm dlx`, `pip install`, `cargo install`, entre outros). Testes Vitest locais
+continuam permitidos com `vitest run` ou `npx --no-install vitest run`.
+
+### Bootstrap offline de dependências
+
+Cache vazio não é preenchido automaticamente pela quarentena. Fluxo seguro:
+
+1. `sandbox_fetch` baixa wheel, `.tgz` ou fonte para a área de fetch.
+2. `sandbox_quarantine_exec` recebe o arquivo em `artifacts`.
+3. O comando instala o arquivo localmente, sem habilitar rede:
+
+```bash
+# npm
+npm install ./pacote.tgz
+
+# pip
+python -m pip install ./pacote.whl
+```
+
+Quando `npm` ou `pip` falhar por cache ausente (`ENOTCACHED`, `no matching
+distribution`, etc.), `sandbox_quarantine_exec` retorna orientação desse fluxo
+no resultado. Dependências transitivas também precisam estar disponíveis como
+artefatos ou no cache persistente.
+
 ## Testes
 
 Suíte vitest na extensão (unit + integração):
 
 ```bash
 cd extensions/dev-sandbox
-npx vitest run
+vitest run
+# ou, sem download implícito:
+npx --no-install vitest run
 ```
 
 - **Unit** (~107): `buildBwrapArgs` (mounts, whitelist de env, deny scan),
@@ -339,8 +379,7 @@ Arch, openSUSE, Alpine/musl) sem configuração extra:
 - Linux apenas (bwrap depende de namespaces do kernel)
 - Cada tool call cria/destrói um namespace (~30ms overhead)
 - `/tmp` é efêmero entre comandos (use `.sandbox-cache/` para persistência)
-- `npm install` com scripts de lifecycle executa dentro do sandbox
-  (seguro porque home real inacessível)
+- `sandbox_install_dependencies` usa `--ignore-scripts`; instalações arbitrárias no bash são bloqueadas
 - Perfis de quarentena usam PATH mínimo (`/usr/local/bin:/usr/bin:/bin`) e
   HOME efêmero (`/tmp`): toolchains via mise NÃO são montados. Para usar
   node/python/pip dentro de fetch/quarantine, instale no sistema

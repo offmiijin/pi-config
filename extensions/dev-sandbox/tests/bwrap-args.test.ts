@@ -246,7 +246,7 @@ describe("buildBwrapArgs — flags base e mounts", () => {
 // ─── PATH sob HOME ────────────────────────────────────────────
 
 describe("buildBwrapArgs — PATH sob HOME", () => {
-  it("monta diretórios do PATH sob HOME agrupando pais (ex: ~/.local)", () => {
+  it("monta somente diretórios necessários do PATH sob HOME", () => {
     const home = fixtureHome();
     process.env.HOME = home;
     const localBin = join(home, ".local", "bin");
@@ -254,9 +254,9 @@ describe("buildBwrapArgs — PATH sob HOME", () => {
     process.env.PATH = `${localBin}:${originalPath}`;
     const args = buildBwrapArgs(makeConfig(), uniqCwd());
     const ro = roBindPairs(args);
-    // Sobe até ~/.local (pai de bin) — não monta bin isolado
-    expect(ro).toContainEqual([join(home, ".local"), join(home, ".local")]);
-    expect(ro).not.toContainEqual([localBin, localBin]);
+    // Monta bin exato — não expõe ~/.local inteiro.
+    expect(ro).toContainEqual([localBin, localBin]);
+    expect(ro).not.toContainEqual([join(home, ".local"), join(home, ".local")]);
   });
 
   it("PATH sempre inclui /usr/local/bin, /usr/bin e /bin", () => {

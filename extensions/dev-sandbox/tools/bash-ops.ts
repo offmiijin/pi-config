@@ -28,18 +28,24 @@ const BLOCKED_INSTALL_MSG =
  * fetch/quarantine, nunca no bash normal (workspace montado read-write).
  */
 const BLOCKED_INSTALL_PATTERNS: RegExp[] = [
-  // Gerenciadores de pacote — instalação
-  /\bnpm\s+(install|i|ci|add)\b/,
-  /\byarn\s+(add|install)\b/,
-  /\bpnpm\s+(add|install)\b/,
-  /\bpip[0-9]*\s+install\b/,
-  /\bpython[0-9.]*\s+-m\s+pip\s+install\b/,
+  // Gerenciadores de pacote — instalação/execução de pacote externo.
+  /\bnpm\s+(install|i|ci|add|exec)\b/i,
+  /\byarn\s+(add|install|dlx)\b/i,
+  /\bpnpm\s+(add|install|dlx)\b/i,
+  /\bbunx\b/i,
+  /\bnpx\b(?!\s+--no-install\b)/i,
+  /\bpip[0-9]*\s+install\b/i,
+  /\bpython[0-9.]*\s+-m\s+pip\s+install\b/i,
+  /\bpipx\s+install\b/i,
+  /\buv\s+pip\s+install\b/i,
+  /\bcargo\s+install\b/i,
+  /\bgo\s+install\b/i,
   // Download + pipe direto para shell
-  /\bcurl\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/,
-  /\bwget\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/,
+  /\bcurl\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/i,
+  /\bwget\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/i,
   // Bash/sh/source de subshell com download
-  /\b(ba)?sh\s+<\(\s*(curl|wget)\b/,
-  /(?<![\w.])(source|\.)\s+<\(\s*(curl|wget)\b/,
+  /\b(ba)?sh\s+<\(\s*(curl|wget)\b/i,
+  /(?<![\w.])(source|\.)\s+<\(\s*(curl|wget)\b/i,
 ];
 
 /** Detecta comando de instalação/execução externa bloqueado. Exportado para testes. */

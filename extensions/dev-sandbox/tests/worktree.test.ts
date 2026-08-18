@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupWorktree, createWorktree, promoteWorktreeChanges } from "../worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges } from "../worktree";
 import type { SandboxSession } from "../session";
 
 const sessions: SandboxSession[] = [];
@@ -28,6 +28,38 @@ afterEach(() => {
 });
 
 describe("worktree", () => {
+  it("recusa criar worktree aninhado na área gerenciada", () => {
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const original = join(root, "project");
+    git(root, ["init", "-q", original]);
+
+    expect(() => createWorktree(original, root)).toThrow(/worktree aninhado/);
+  });
+
+  it("recusa projeto original com alterações locais", () => {
+    const original = repo();
+    writeFileSync(join(original, "file.txt"), "dirty\n");
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+
+    expect(() => createWorktree(original, root)).toThrow(/alterações locais/);
+  });
+
+  it("preserva subdiretório original dentro do worktree", () => {
+    const rootRepo = repo();
+    const original = join(rootRepo, "src");
+    mkdirSync(original, { recursive: true });
+    writeFileSync(join(original, "main.ts"), "original\n");
+    git(rootRepo, ["add", "."]);
+    git(rootRepo, ["commit", "-qm", "src"]);
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+
+    expect(session.workspaceSubdir).toBe("src");
+    expect(session.workspaceCwd).toBe(join(session.worktreePath, "src"));
+    expect(readFileSync(join(session.workspaceCwd, "main.ts"), "utf8")).toBe("original\n");
+  });
+
   it("cria worktree temporário em branch própria", () => {
     const original = repo();
     const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
@@ -42,6 +74,23 @@ describe("worktree", () => {
     expect(git(session.workspaceCwd, ["branch", "--show-current"])).toBe(session.branchName);
   });
 
+  it("preserva worktree com lease fresco mesmo com PID invisível", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+
+    const metadataPath = join(session.worktreePath, ".pi-sandbox-worktree.json");
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as { pid: number };
+    metadata.pid = 999999999;
+    writeFileSync(metadataPath, JSON.stringify(metadata));
+    const now = new Date();
+    utimesSync(metadataPath, now, now);
+
+    expect(cleanupOrphanedWorktrees(root, original)).toBe(0);
+    expect(existsSync(session.worktreePath)).toBe(true);
+  });
+
   it("promove alterações rastreadas e untracked", () => {
     const original = repo();
     const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
@@ -54,6 +103,18 @@ describe("worktree", () => {
 
     expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("promoted\n");
     expect(readFileSync(join(original, "new.txt"), "utf8")).toBe("new\n");
+  });
+
+  it("bloqueia promoção de untracked que escapa por symlink", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    const outside = mkdtempSync(join(tmpdir(), "dev-sandbox-outside-"));
+    symlinkSync(outside, join(session.worktreePath, "redirect"));
+    writeFileSync(join(outside, "secret.txt"), "secret\n");
+
+    expect(() => promoteWorktreeChanges(session)).toThrow(/Origem de promoção/);
   });
 
   it("remove worktree e branch de forma idempotente", () => {

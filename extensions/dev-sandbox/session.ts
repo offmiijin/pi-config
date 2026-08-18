@@ -23,6 +23,8 @@ export interface SandboxSession {
   worktreeRoot: string;
   /** Diretório do worktree temporário; normalmente igual a workspaceCwd. */
   worktreePath: string;
+  /** Subdiretório do repositório originalmente aberto pelo usuário. */
+  workspaceSubdir: string;
   /** Workspace efetivo usado pelas tools dentro do sandbox. */
   workspaceCwd: string;
   /** Momento de criação da sessão, em ISO 8601. */

@@ -36,6 +36,20 @@ export function validateQuarantinePath(baseDir: string, subPath: string): string
   return resolved;
 }
 
+function assertRealPathInside(baseDir: string, target: string, label: string): void {
+  const baseReal = realpathSync(baseDir);
+  let existing = resolve(target);
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  const realExisting = realpathSync(existing);
+  if (realExisting !== baseReal && !realExisting.startsWith(baseReal + sep)) {
+    throw new Error(`[dev-sandbox] ${label} escapa da área permitida: ${target}`);
+  }
+}
+
 /**
  * Baixa `url` (http/https) para o diretório de fetch usando o perfil "fetch":
  * rede ligada, SEM acesso ao workspace. Retorna o path absoluto do arquivo
@@ -159,10 +173,12 @@ export async function promoteArtifact(
   }
 
   const target = validateQuarantinePath(cwd, targetRel);
+  assertRealPathInside(cwd, target, "Destino de promoção");
   const targetParent = dirname(target);
   if (targetParent !== cwd) {
     mkdirSync(targetParent, { recursive: true });
   }
+  assertRealPathInside(cwd, target, "Destino de promoção");
   cpSync(realSrc, target, { recursive: true });
   return target;
 }

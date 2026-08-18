@@ -22,6 +22,25 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   createGrepTool: () => ({ name: "grep", execute: vi.fn() }),
 }));
 
+vi.mock("../worktree", () => ({
+  cleanupOrphanedWorktrees: vi.fn(),
+  cleanupWorktree: vi.fn(),
+  createWorktree: vi.fn((originalCwd: string, worktreeRoot: string) => ({
+    sessionId: "test-session",
+    originalCwd,
+    workspaceCwd: originalCwd,
+    workspaceSubdir: "",
+    gitRoot: originalCwd,
+    gitDir: `${originalCwd}/.git`,
+    branchName: "sandbox/test-session",
+    originalBranchName: "main",
+    worktreeRoot,
+    worktreePath: `${worktreeRoot}/test-session`,
+    startedAt: new Date().toISOString(),
+  })),
+  promoteWorktreeChanges: vi.fn(() => []),
+}));
+
 vi.mock("../config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config")>();
   return {

@@ -358,6 +358,18 @@ describe("promoteArtifact", () => {
     await expect(promoteArtifact(makeConfig(), cwd, "default/out.js", "../escape")).rejects.toThrow(/fora/);
   });
 
+  it("bloqueia destino que escapa por symlink intermediário", async () => {
+    const cwd = fixture();
+    const outside = fixture();
+    symlinkSync(outside, join(cwd, "redirect"));
+    const runDir = join(cwd, ".sandbox-cache", "runs", "default");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "out.js"), "// ok");
+
+    await expect(promoteArtifact(makeConfig(), cwd, "default/out.js", "redirect/out.js"))
+      .rejects.toThrow(/Destino de promoção/);
+  });
+
   it("bloqueia symlink que escapa de runs", async () => {
     const cwd = fixture();
     const runDir = join(cwd, ".sandbox-cache", "runs", "default");
