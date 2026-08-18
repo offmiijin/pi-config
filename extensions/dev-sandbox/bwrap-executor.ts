@@ -973,9 +973,7 @@ function buildLandlockArgs(
       LANDLOCK_EXEC_SANDBOX_PATH,
       "--min-abi", String(config.landlock.minAbi),
     ];
-    const roPaths = ["/usr", "/bin", "/lib"];
-    if (existsSync("/lib64")) roPaths.push("/lib64");
-    roPaths.push("/etc", "/proc");
+    const roPaths = [...resolveSystemPaths().roDirs, "/etc", "/proc"];
     for (const p of roPaths) args.push("--allow-ro", p);
 
     const rwPaths = ["/tmp", "/run", "/dev"];
@@ -997,10 +995,7 @@ function buildLandlockArgs(
   ];
 
   // ── Read-only paths ──────────────────────
-  const roPaths = ["/usr", "/bin", "/lib"];
-  if (existsSync("/lib64")) roPaths.push("/lib64");
-  roPaths.push("/etc");
-  roPaths.push("/proc");
+  const roPaths = [...resolveSystemPaths().roDirs, "/etc", "/proc"];
 
   // Documentação do pi
   const piDocs = findPiDocsDir(home);
