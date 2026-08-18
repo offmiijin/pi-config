@@ -165,6 +165,7 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
 export function cleanupWorktree(session: SandboxSession): void {
   assertManagedPath(session.worktreeRoot, session.worktreePath);
   assertNotActiveWorktree(session.worktreePath);
+  restoreWorktreePreview(session);
   stopLease(session.worktreePath);
   if (existsSync(session.worktreePath)) { try { git(session.gitRoot, ["worktree", "remove", "--force", session.worktreePath]); } catch { rmSync(session.worktreePath, { recursive: true, force: true }); } }
   try { git(session.gitRoot, ["branch", "-D", session.branchName]); } catch { /* já removida */ }
@@ -305,6 +306,22 @@ export function promoteWorktreePreview(session: SandboxSession, files: string[] 
   if (state.files.size) previewStates.set(session.sessionId, state);
   else previewStates.delete(session.sessionId);
   return changed;
+}
+
+/** Restaura snapshot do último preview e limpa seu estado. */
+export function restoreWorktreePreview(session: SandboxSession): string[] {
+  const state = previewStates.get(session.sessionId);
+  if (!state) return [];
+  const files = [...state.files.keys()];
+  for (const file of files) {
+    const entry = state.files.get(file)!;
+    if (fileFingerprint(join(session.gitRoot, file)) !== entry.promotedFingerprint) {
+      throw new Error(`[dev-sandbox] Arquivo promovido foi alterado no projeto original: ${file}`);
+    }
+  }
+  for (const file of files) restoreSnapshot(session, file, state.files.get(file)!.snapshot);
+  previewStates.delete(session.sessionId);
+  return files;
 }
 
 export function isManagedWorktreePath(path: string, root = DEFAULT_WORKTREE_ROOT): boolean { return resolve(path).startsWith(resolve(root) + "/"); }

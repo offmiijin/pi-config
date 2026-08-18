@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges, promoteWorktreePreview } from "../worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges, promoteWorktreePreview, restoreWorktreePreview } from "../worktree";
 import type { SandboxSession } from "../session";
 
 const sessions: SandboxSession[] = [];
@@ -137,6 +137,35 @@ describe("worktree", () => {
 
     expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("segundo\n");
     expect(existsSync(join(original, "new.txt"))).toBe(false);
+  });
+
+  it("restaura preview, incluindo arquivo novo", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    writeFileSync(join(session.workspaceCwd, "file.txt"), "preview\n");
+    writeFileSync(join(session.workspaceCwd, "new.txt"), "new\n");
+    promoteWorktreePreview(session);
+
+    const files = restoreWorktreePreview(session);
+
+    expect(files).toEqual(expect.arrayContaining(["file.txt", "new.txt"]));
+    expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("original\n");
+    expect(existsSync(join(original, "new.txt"))).toBe(false);
+  });
+
+  it("recusa restaurar quando branch original mudou após preview", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    writeFileSync(join(session.workspaceCwd, "file.txt"), "preview\n");
+    promoteWorktreePreview(session);
+    writeFileSync(join(original, "file.txt"), "alteração externa\n");
+
+    expect(() => restoreWorktreePreview(session)).toThrow(/alterado no projeto original/);
+    writeFileSync(join(original, "file.txt"), "preview\n");
   });
 
   it("bloqueia promoção de untracked que escapa por symlink", () => {
