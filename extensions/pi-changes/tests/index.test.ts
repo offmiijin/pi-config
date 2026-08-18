@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import registerChanges from "../index.ts";
+import registerChanges, { shouldTogglePanel } from "../index.ts";
 
 describe("extensão pi-changes", () => {
+	it("ignora repetições do Alt+D enquanto a tecla permanece pressionada", () => {
+		expect(shouldTogglePanel("\x1bd", 1000, 0)).toBe(true);
+		expect(shouldTogglePanel("\x1bd", 1100, 1000)).toBe(false);
+		// Kitty: D + Alt, evento de repetição (:2u).
+		expect(shouldTogglePanel("\x1b[100;3:2u", 2000, 0)).toBe(false);
+	});
+
 	it("intercepta Alt+D pelo terminal antes do editor", async () => {
 		const handlers: Record<string, (event: any, ctx: any) => unknown> = {};
 		let inputListener: ((data: string) => unknown) | undefined;

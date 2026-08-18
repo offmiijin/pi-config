@@ -1,15 +1,21 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { isKeyRepeat, Key, matchesKey } from "@earendil-works/pi-tui";
 import { collectChanges } from "./git.ts";
 import { ChangesPanel } from "./panel.ts";
 
 const REFRESH_INTERVAL_MS = 1500;
+const TOGGLE_DEBOUNCE_MS = 250;
+
+export function shouldTogglePanel(data: string, now: number, lastToggleAt: number): boolean {
+	return matchesKey(data, Key.alt("d")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
+}
 
 export default function (pi: ExtensionAPI): void {
 	let activePanel: ChangesPanel | null = null;
 	let closeActivePanel: (() => void) | null = null;
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
 	let openingPanel = false;
+	let lastToggleAt = Number.NEGATIVE_INFINITY;
 	let removeTerminalInputListener: (() => void) | undefined;
 
 	const loadChanges = (ctx: ExtensionContext) =>
@@ -74,7 +80,12 @@ export default function (pi: ExtensionAPI): void {
 
 		removeTerminalInputListener = ctx.ui.onTerminalInput((data) => {
 			if (!matchesKey(data, Key.alt("d"))) return;
-			void openPanel(ctx);
+			const now = Date.now();
+			if (shouldTogglePanel(data, now, lastToggleAt)) {
+				lastToggleAt = now;
+				void openPanel(ctx);
+			}
+			// Consome também repetições para que o editor nunca execute deleteWordForward.
 			return { consume: true };
 		});
 	});
