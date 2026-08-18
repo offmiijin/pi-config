@@ -37,7 +37,7 @@ export interface SandboxFilesystemConfig {
   quarantineDirs: SandboxQuarantineDirsConfig;
 }
 
-/** Diretórios de cache persistentes (npm, pip, clones de repositórios). */
+/** Diretórios de cache de ferramentas (npm, pip e clones de repositórios). */
 export interface SandboxCacheDirsConfig {
   /** Cache do npm (env NPM_CONFIG_CACHE). Vazio = .sandbox-cache/npm. */
   npm: string;
@@ -45,7 +45,7 @@ export interface SandboxCacheDirsConfig {
   pip: string;
   /**
    * Diretório para clonar repositórios remotos (env SANDBOX_CLONE_DIR).
-   * Persiste entre comandos — /tmp NÃO persiste. Vazio = .sandbox-cache/clones.
+   * Persiste entre comandos na sessão — /tmp NÃO persiste. Vazio = .sandbox-cache/clones.
    */
   clones: string;
 }

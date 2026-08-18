@@ -699,9 +699,9 @@ function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd
     }
   }
 
-  // ── Caches persistentes (npm, pip, clones) ────────────
-  // Cria os diretórios no host (visíveis no sandbox via bind do $PWD)
-  // e expõe as variáveis de ambiente para as ferramentas (npm, pip, git).
+  // ── Caches de ferramentas (npm, pip, clones) ─────────
+  // Cria os diretórios no host e expõe as variáveis de ambiente para as
+  // ferramentas (npm, pip, git); caches fora do workspace recebem bind próprio.
   const cacheDirs = resolveCacheDirs(config, workspaceRoot);
   for (const [name, dir] of Object.entries(cacheDirs)) {
     validateConfiguredDir(dir, workspaceRoot, `cache ${name}`);
@@ -729,6 +729,14 @@ function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd
         }
       }
     }
+  }
+
+  // A quarentena fica no worktree para permanecer específica da sessão,
+  // mas seus resultados não devem aparecer no perfil normal. O perfil
+  // quarantine recebe runs por bind explícito; aqui mascaramos apenas runs.
+  const quarantineDirs = resolveQuarantineDirs(config, workspaceRoot);
+  if (isPathInside(workspaceRoot, quarantineDirs.runs) && quarantineDirs.runs !== workspaceRoot) {
+    args.push("--tmpfs", quarantineDirs.runs);
   }
 
   // ── Capabilities ──────────────────────────────

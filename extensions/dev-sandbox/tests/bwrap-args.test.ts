@@ -454,6 +454,14 @@ describe("buildBwrapArgs — cacheDirs", () => {
     expect(flagValues(args, "--bind").filter((v) => v === ext)).toHaveLength(1);
     expect(flagValues(args, "--dir")).not.toContain(ext);
   });
+
+  it("perfil normal mascara runs, mas mantém fetch visível no worktree", () => {
+    const cwd = fixtureProj();
+    const args = buildBwrapArgs(makeConfig(), cwd);
+    const tmpfs = flagValues(args, "--tmpfs");
+    expect(tmpfs).toContain(join(cwd, ".sandbox-cache", "runs"));
+    expect(tmpfs).not.toContain(join(cwd, ".sandbox-cache", "fetch"));
+  });
 });
 
 // ─── Whitelist de env vars (SEGURANÇA) ────────────────────────
