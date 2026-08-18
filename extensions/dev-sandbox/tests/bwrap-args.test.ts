@@ -210,6 +210,13 @@ describe("buildBwrapArgs — flags base e mounts", () => {
     ).not.toContain("--share-net");
   });
 
+  it("respeita rede e SSH do perfil normal", () => {
+    const cfg = makeConfig({ profiles: { normal: { network: false, ssh: "none" } } });
+    const args = buildBwrapArgs(cfg, "/w/profile-normal");
+    expect(args).not.toContain("--share-net");
+    expect(args).not.toContain("SSH_AUTH_SOCK");
+  });
+
   it("monta skills do agente (ro)", () => {
     const home = fixtureHome();
     process.env.HOME = home;

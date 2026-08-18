@@ -501,8 +501,15 @@ function buildProfileArgs(
  * host, SSH, caches, whitelist de env. A parte estática independe do
  * estado atual dos arquivos no workspace — o resultado é cacheado.
  */
+function normalSshMode(config: SandboxConfig): SandboxConfig["ssh"]["mode"] {
+  const profileMode = config.profiles?.normal?.ssh;
+  if (config.ssh.mode !== "agent") return config.ssh.mode;
+  return profileMode ?? config.ssh.mode;
+}
+
 function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd): string[] {
   const home = process.env.HOME || "/root";
+  const sshMode = normalSshMode(config);
   const args: string[] = [
     "--unshare-all",
     "--die-with-parent",
@@ -582,12 +589,12 @@ function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd
   args.push("--bind", workspaceRoot, workspaceRoot);
 
   // Rede do host
-  if (config.internet.enabled) {
+  if (config.internet.enabled && (config.profiles?.normal?.network ?? true)) {
     args.push("--share-net");
   }
 
   // SSH — modo agent / mount / none
-  if (config.ssh.mode === "agent") {
+  if (sshMode === "agent") {
     // ── SSH Agent Socket ──────────────────────────
     // As chaves privadas NUNCA entram no sandbox.
     // Apenas o socket do ssh-agent é montado para solicitar assinaturas.
@@ -641,7 +648,7 @@ function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd
       }
       args.push("--ro-bind", sshConfig, sshConfig);
     }
-  } else if (config.ssh.mode === "mount") {
+  } else if (sshMode === "mount") {
     // Comportamento legado: monta ~/.ssh inteiro read-only
     const sshDir = join(home, ".ssh");
     if (existsSync(sshDir)) {
@@ -1039,7 +1046,7 @@ function buildLandlockArgs(
   }
 
   // SSH agent socket dir (precisa de rw para comunicação bidirecional)
-  if (config.ssh.mode === "agent") {
+  if (normalSshMode(config) === "agent") {
     const sock = process.env.SSH_AUTH_SOCK;
     if (sock) {
       try {
