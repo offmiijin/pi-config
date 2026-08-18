@@ -40,6 +40,7 @@ import {
   resetLandlockAbiCache,
 } from "../bwrap-executor";
 import { DEFAULT_CONFIG, type SandboxConfig, type SandboxFilesystemConfig, type SandboxProfilesConfig } from "../types";
+import { resolveSystemPaths } from "../portability";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -207,6 +208,19 @@ describe("wrapWithLandlock", () => {
     const result = wrapWithLandlock(["--unshare-all"], ["echo", "x"], cfg, proj);
     const idx = result.indexOf("--min-abi");
     expect(result[idx + 1]).toBe("5");
+  });
+
+  it("allowlist RO acompanha paths de sistema detectados", () => {
+    process.env.HOME = fixtureHome();
+    const proj = fixtureProj();
+    const result = wrapWithLandlock([], ["echo", "x"], makeConfig(), proj);
+    const start = result.indexOf("--allow-ro");
+    const end = result.indexOf("--allow-rw");
+    const roPaths: string[] = [];
+    for (let i = start; i < end; i++) {
+      if (result[i] === "--allow-ro") roPaths.push(result[i + 1]);
+    }
+    expect(roPaths).toEqual(expect.arrayContaining(resolveSystemPaths().roDirs));
   });
 });
 

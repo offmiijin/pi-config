@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `dev-sandbox`: monta a raiz completa do worktree para projetos abertos em subdiretórios e corrige a limpeza de worktrees órfãos registrados no Git.
+- `dev-sandbox`: respeita `cleanup: "never"`, rejeita caches/quarentenas que sobreponham o workspace e alinha as opções do perfil normal ao executor.
+- `dev-sandbox`: amplia allowlist Landlock com paths de sistema detectados para manter compatibilidade com Nix e ambientes multilib.
 - `dev-sandbox`: impede remoção do worktree ativo e criação de worktrees aninhados durante cleanup e testes.
 - `dev-sandbox`: substitui detecção baseada somente em PID por lease renovável entre namespaces, preserva cwd relativo/subdiretórios Git e recusa projetos com alterações locais.
 - `dev-sandbox`: valida caminhos reais em promoções e bloqueia symlinks que escapem do worktree ou projeto original.

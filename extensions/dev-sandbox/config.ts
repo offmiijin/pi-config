@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { getAgentDir, CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import type { SandboxConfig, SandboxWorkspaceMode } from "./types";
+import type { SandboxConfig } from "./types";
 import { DEFAULT_CONFIG, PROFILE_NAMES } from "./types";
 
 // ── Detecção de SO ────────────────────────────────────────────────────
@@ -101,19 +101,6 @@ export function normalizeSshConfig(raw: unknown): unknown {
     return copy;
   }
   return raw;
-}
-
-/**
- * Normaliza a escrita do modo de workspace de um perfil.
- * Aceita formas verbosas (legado/usuário): "read-write"/"writable" → "rw",
- * "readonly"/"read-only" → "ro". Valores canônicos passam intactos.
- * Valor inválido → undefined (sanitização volta ao default).
- */
-export function normalizeWorkspaceMode(v: unknown): SandboxWorkspaceMode | undefined {
-  if (v === "rw" || v === "ro" || v === "none") return v;
-  if (v === "read-write" || v === "writable") return "rw";
-  if (v === "readonly" || v === "read-only") return "ro";
-  return undefined;
 }
 
 /** Opções de carregamento da configuração. */
@@ -207,8 +194,8 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
       if (typeof prof.enabled === "boolean") target.enabled = prof.enabled;
       // Perfis de quarentena nunca recebem workspace, SSH ou rede implícitos.
       if (name === "normal") {
-        const ws = normalizeWorkspaceMode(prof.workspace);
-        if (ws !== undefined) target.workspace = ws;
+        // O perfil normal sempre precisa de workspace RW para as tools do agente.
+        target.workspace = "rw";
         if (typeof prof.network === "boolean") target.network = prof.network;
         if (prof.ssh === "agent" || prof.ssh === "mount" || prof.ssh === "none") {
           target.ssh = prof.ssh;

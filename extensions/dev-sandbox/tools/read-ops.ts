@@ -6,12 +6,14 @@ import type { ReadOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
 import { execInSandbox } from "../bwrap-executor";
 
-export function createReadOps(config: SandboxConfig, cwd: string): ReadOperations {
+export function createReadOps(config: SandboxConfig, cwd: string, workspaceRoot = cwd): ReadOperations {
+  const workspace = workspaceRoot !== cwd ? { workspaceRoot } : {};
   return {
     async readFile(filePath) {
       const { stdout, stderr, exitCode } = await execInSandbox(config, {
         command: ["cat", filePath],
         cwd,
+        ...workspace,
       });
       if (exitCode !== 0) {
         throw new Error(stderr || `Falha ao ler ${filePath}`);
@@ -25,6 +27,7 @@ export function createReadOps(config: SandboxConfig, cwd: string): ReadOperation
       const { exitCode } = await execInSandbox(config, {
         command: ["test", "-f", filePath],
         cwd,
+        ...workspace,
       });
       if (exitCode !== 0) {
         throw new Error(`Arquivo não acessível: ${filePath}`);
@@ -36,6 +39,7 @@ export function createReadOps(config: SandboxConfig, cwd: string): ReadOperation
         const { stdout } = await execInSandbox(config, {
           command: ["file", "--mime-type", "-b", filePath],
           cwd,
+          ...workspace,
         });
         const mime = stdout.toString().trim();
         const mimeMap: Record<string, string> = {

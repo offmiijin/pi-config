@@ -127,7 +127,7 @@ const GrepParamsSchema = Type.Object({
 
 type GrepParams = Static<typeof GrepParamsSchema>;
 
-export function createGrepTool(cwd: string, config: SandboxConfig) {
+export function createGrepTool(cwd: string, config: SandboxConfig, workspaceRoot = cwd) {
   return {
     name: "grep",
     label: "Grep",
@@ -203,6 +203,7 @@ export function createGrepTool(cwd: string, config: SandboxConfig) {
       const { stdout, stderr, exitCode } = await execInSandbox(config, {
         command: ["bash", "-c", script, "_", ...rgArgs],
         cwd: searchCwd,
+        ...(workspaceRoot !== searchCwd ? { workspaceRoot } : {}),
         signal,
       });
 
