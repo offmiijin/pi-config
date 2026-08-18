@@ -9,7 +9,7 @@
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync, chmodSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult, SandboxProfileName } from "./types";
 import { resolveSystemPaths } from "./portability";
 
@@ -260,20 +260,58 @@ const CACHE_ENV_VARS: Record<string, string> = {
   clones: "SANDBOX_CLONE_DIR",
 };
 
+function isPathInside(base: string, target: string): boolean {
+  const rel = relative(resolve(base), resolve(target));
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel));
+}
+
+/**
+ * Verifica caminho configurado localmente sem seguir para fora do workspace.
+ * Caminhos absolutos fora do workspace continuam permitidos explicitamente.
+ */
+function validateConfiguredDir(value: string, cwd: string, label: string): string {
+  const target = isAbsolute(value) ? resolve(value) : resolve(cwd, value);
+  const local = !isAbsolute(value) || isPathInside(cwd, target);
+  if (!local) return target;
+
+  if (!isPathInside(cwd, target)) {
+    throw new Error(`[dev-sandbox] ${label} escapa do workspace: ${value}`);
+  }
+
+  // Confere ancestral existente para detectar symlink em caminho criado depois.
+  let existing = target;
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  try {
+    const realCwd = realpathSync(cwd);
+    const realExisting = realpathSync(existing);
+    if (!isPathInside(realCwd, realExisting)) {
+      throw new Error(`[dev-sandbox] ${label} usa symlink fora do workspace: ${value}`);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("[dev-sandbox]")) throw err;
+    // Caminho ainda não criado: será validado no bind após mkdir.
+  }
+
+  return target;
+}
+
 /**
  * Resolve os caminhos reais dos diretórios de cache.
  * - Vazio "" → <cwd>/.sandbox-cache/<nome>
- * - Relativo  → resolvido contra cwd
+ * - Relativo  → resolvido contra cwd; escape do workspace é rejeitado
  * - Absoluto  → mantido (deve ser montado — ver buildBwrapArgs)
+ * - Symlink local apontando para fora do workspace é rejeitado
  */
 export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<string, string> {
   const cfg = (config.filesystem.cacheDirs ?? {}) as unknown as Record<string, string>;
   const out: Record<string, string> = {};
   for (const [name, defaultRel] of Object.entries(CACHE_DIR_DEFAULTS)) {
     const v = cfg[name];
-    if (!v) out[name] = join(cwd, defaultRel);
-    else if (v.startsWith("/")) out[name] = v;
-    else out[name] = join(cwd, v);
+    out[name] = validateConfiguredDir(v || defaultRel, cwd, `cache ${name}`);
   }
   return out;
 }
@@ -289,17 +327,16 @@ const QUARANTINE_DIR_DEFAULTS: Record<"fetch" | "runs", string> = {
 /**
  * Resolve os caminhos reais dos diretórios de quarentena.
  * - Vazio "" → <cwd>/.sandbox-cache/<nome>
- * - Relativo → resolvido contra cwd
+ * - Relativo → resolvido contra cwd; escape do workspace é rejeitado
  * - Absoluto → mantido (deve ser montado — ver buildIsolationArgs)
+ * - Symlink local apontando para fora do workspace é rejeitado
  */
 export function resolveQuarantineDirs(config: SandboxConfig, cwd: string): { fetch: string; runs: string } {
   const cfg = (config.filesystem.quarantineDirs ?? {}) as unknown as Record<string, string>;
   const out: Record<string, string> = {};
   for (const [name, defaultRel] of Object.entries(QUARANTINE_DIR_DEFAULTS)) {
     const v = cfg[name];
-    if (!v) out[name] = join(cwd, defaultRel);
-    else if (v.startsWith("/")) out[name] = v;
-    else out[name] = join(cwd, v);
+    out[name] = validateConfiguredDir(v || defaultRel, cwd, `quarentena ${name}`);
   }
   return out as { fetch: string; runs: string };
 }
@@ -373,7 +410,7 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string, profile: SandboxPr
  * O parâmetro `profile` seleciona o perfil de isolamento:
  *   - "normal"      → comportamento atual (workspace rw, rede, SSH, caches)
  *   - "fetch"       → rede + escrita só em .sandbox-cache/fetch, sem workspace
- *   - "quarantine"  → sem rede, escrita só em .sandbox-cache/runs, sem workspace
+ *   - "quarantine"  → sem rede, escrita em runs e caches configurados, sem workspace
  *
  * A parte cacheada é estática (mounts, capabilities, env). A varredura de
  * denyFilePatterns roda a cada chamada (apenas no perfil normal) e os binds
@@ -620,12 +657,14 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
   // e expõe as variáveis de ambiente para as ferramentas (npm, pip, git).
   const cacheDirs = resolveCacheDirs(config, cwd);
   for (const [name, dir] of Object.entries(cacheDirs)) {
+    validateConfiguredDir(dir, cwd, `cache ${name}`);
     try {
       mkdirSync(dir, { recursive: true });
     } catch {
       // Degradação segura: segue sem criar
     }
 
+    validateConfiguredDir(dir, cwd, `cache ${name}`);
     const envVar = CACHE_ENV_VARS[name];
     if (envVar) {
       args.push("--setenv", envVar, dir);
@@ -687,14 +726,21 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
  * Base comum dos perfis de quarentena (fetch/quarantine).
  *
  * NUNCA monta o workspace do projeto: apenas o sistema read-only
- * (--ro-bind) e os diretórios de quarentena RW passados em `rwDirs`.
+ * (--ro-bind), os diretórios de quarentena RW passados em `rwDirs` e
+ * caches explicitamente passados em `cacheDirs`.
  * Sem HOME real, sem SSH, sem .gitconfig, sem skills, sem PATH sob HOME.
- * Env é mínima (--clearenv + PATH/HOME/USER fixos).
+ * Env é mínima (--clearenv + PATH/HOME/USER fixos + caches configurados).
  *
  * `shareNet`: true → --share-net (fetch); false → sem rede (quarantine),
  * já isolada pelo --unshare-all.
  */
-function buildIsolationArgs(config: SandboxConfig, rwDirs: string[], shareNet: boolean): string[] {
+function buildIsolationArgs(
+  config: SandboxConfig,
+  cwd: string,
+  rwDirs: string[],
+  shareNet: boolean,
+  cacheDirs: Record<string, string> = {},
+): string[] {
   const args: string[] = [
     "--unshare-all",
     "--die-with-parent",
@@ -733,10 +779,26 @@ function buildIsolationArgs(config: SandboxConfig, rwDirs: string[], shareNet: b
     args.push("--tmpfs", deny);
   }
 
-  // ── Diretórios de quarentena — RW exclusivos ──
+  // ── Diretórios de quarentena e caches — RW explícitos ──
   for (const dir of rwDirs) {
+    validateConfiguredDir(dir, cwd, "diretório de quarentena");
     ensureQuarantineDir(dir);
+    validateConfiguredDir(dir, cwd, "diretório de quarentena");
+  }
+  for (const [name, dir] of Object.entries(cacheDirs)) {
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      // Degradação segura — o bind falha e bloqueia a execução.
+    }
+    validateConfiguredDir(dir, cwd, `cache ${name}`);
+  }
+  for (const dir of [...new Set([...rwDirs, ...Object.values(cacheDirs)])]) {
     args.push("--bind", dir, dir);
+  }
+  for (const [name, dir] of Object.entries(cacheDirs)) {
+    const envVar = CACHE_ENV_VARS[name];
+    if (envVar) args.push("--setenv", envVar, dir);
   }
 
   // ── Rede ──────────────────────────────────
@@ -763,14 +825,15 @@ function buildFetchArgs(config: SandboxConfig, cwd: string): string[] {
   const dirs = resolveQuarantineDirs(config, cwd);
   // Respeita o kill-switch global de rede (internet.enabled).
   const shareNet = config.internet.enabled && (config.profiles?.fetch?.network ?? true);
-  return buildIsolationArgs(config, [dirs.fetch], shareNet);
+  return buildIsolationArgs(config, cwd, [dirs.fetch], shareNet);
 }
 
-/** Perfil quarantine: sem rede, escrita só em .sandbox-cache/runs. */
+/** Perfil quarantine: sem rede, escrita em runs/ e caches persistentes. */
 function buildQuarantineArgs(config: SandboxConfig, cwd: string): string[] {
   const dirs = resolveQuarantineDirs(config, cwd);
+  const caches = resolveCacheDirs(config, cwd);
   const shareNet = config.internet.enabled && (config.profiles?.quarantine?.network ?? false);
-  return buildIsolationArgs(config, [dirs.runs], shareNet);
+  return buildIsolationArgs(config, cwd, [dirs.runs], shareNet, caches);
 }
 
 /**
@@ -854,7 +917,7 @@ function buildLandlockArgs(
   profile: SandboxProfileName = "normal",
 ): string[] {
   // ── Perfis de quarentena (fetch/quarantine) ─────────────
-  // Sistema RO + diretório de quarentena RW. NUNCA o workspace.
+  // Sistema RO + diretórios explícitos RW. NUNCA o workspace.
   if (profile !== "normal") {
     const args: string[] = [
       LANDLOCK_EXEC_SANDBOX_PATH,
@@ -868,6 +931,9 @@ function buildLandlockArgs(
     const rwPaths = ["/tmp", "/run", "/dev"];
     const dirs = resolveQuarantineDirs(config, cwd);
     rwPaths.push(profile === "fetch" ? dirs.fetch : dirs.runs);
+    if (profile === "quarantine") {
+      rwPaths.push(...Object.values(resolveCacheDirs(config, cwd)));
+    }
     for (const p of rwPaths) args.push("--allow-rw", p);
 
     args.push("--");
@@ -1101,8 +1167,9 @@ export function execInSandbox(
  * Validações:
  *   - perfil existe e está habilitado na configuração;
  *   - perfil NÃO expõe o workspace ("rw") — exclusivo para quarentena.
- * Os diretórios de quarentena são criados (0o700) automaticamente
- * durante a construção dos args (buildIsolationArgs).
+ * Os diretórios de quarentena são criados (0o700) e os caches configurados
+ * são criados automaticamente durante a construção dos args
+ * (buildIsolationArgs).
  */
 export function execInProfile(
   config: SandboxConfig,

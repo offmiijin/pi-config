@@ -164,8 +164,10 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 | `clones` | `.sandbox-cache/clones` | `SANDBOX_CLONE_DIR` — diretório p/ clonar repositórios |
 
 Valor vazio (`""`) = padrão dentro do workspace. Caminho relativo é resolvido
-contra o workspace. Caminho absoluto fora do workspace é bind-montado
-read-write se existir no host (use `extraWritable` para garantir persistência).
+contra o workspace; escapes (`../`) são rejeitados. Symlinks locais que apontam
+para fora do workspace também são rejeitados. Caminho absoluto fora do workspace
+é permitido explicitamente e bind-montado read-write se existir no host (use
+`extraWritable` para garantir persistência).
 
 ### Clonando repositórios
 
@@ -205,7 +207,7 @@ perfis de isolamento dedicados:
 |---|---|---|---|
 | `normal` | host | rw | projeto |
 | `fetch` | ✅ | ❌ | `.sandbox-cache/fetch` |
-| `quarantine` | ❌ | ❌ | `.sandbox-cache/runs/<work>` |
+| `quarantine` | ❌ | ❌ | `.sandbox-cache/runs/<work>` + caches configurados |
 
 Fluxo:
 
@@ -241,12 +243,42 @@ Configuração de perfis (global ou `.pi/sandbox.json`):
 
 Caches npm (`NPM_CONFIG_CACHE`), pip (`PIP_CACHE_DIR`) e clones de
 repositórios (`SANDBOX_CLONE_DIR`) são persistidos em `.sandbox-cache/`
-dentro do projeto.
+dentro do projeto. O perfil `quarantine` monta os caches configurados
+(`NPM_CONFIG_CACHE`, `PIP_CACHE_DIR` e `SANDBOX_CLONE_DIR`); o workspace
+inteiro continua inacessível.
 Adicione ao `.gitignore`:
 
 ```gitignore
 .sandbox-cache/
 ```
+
+### Limpeza automática
+
+Na inicialização de cada sessão, o sandbox remove artefatos sem atividade há
+mais de 30 dias. Arquivos antigos de caches npm/pip são podados internamente;
+clones, downloads e workdirs de quarentena são removidos como unidades
+inteiras. Conteúdo recente é preservado.
+
+### Python em quarentena
+
+Use `workDir` para manter o ambiente virtual entre chamadas. O venv fica no
+workdir persistente e nunca no diretório de cache pip:
+
+```text
+.sandbox-cache/runs/python-env/.venv  # ambiente virtual
+.sandbox-cache/pip/                   # cache de pacotes
+```
+
+Exemplo de comando dentro de `sandbox_quarantine_exec`:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install <pacote>
+```
+
+O Python do sistema precisa fornecer `venv`/`ensurepip`. Como a quarentena
+não possui rede, baixe wheels ou fontes com `sandbox_fetch` e passe-os como
+artefatos para `sandbox_quarantine_exec`.
 
 ## Testes
 

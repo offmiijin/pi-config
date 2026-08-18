@@ -60,6 +60,7 @@ import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorkt
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
+import { cleanupSandboxCaches } from "./cache-cleanup";
 import { Type } from "typebox";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
@@ -184,6 +185,10 @@ export default function (pi: ExtensionAPI) {
       const persistentQuarantine = resolveQuarantineDirs(config, originalCwd);
       config.filesystem.cacheDirs = persistentCaches as unknown as typeof config.filesystem.cacheDirs;
       config.filesystem.quarantineDirs = persistentQuarantine;
+      const cleanup = cleanupSandboxCaches(persistentCaches, persistentQuarantine);
+      if (cleanup.removed > 0) {
+        console.info(`[dev-sandbox] Limpeza de caches: ${cleanup.removed} entrada(s) removida(s).`);
+      }
 
       // ── Seccomp BPF ───────────────────────────
       // Seleciona por arquitetura: seccomp-<arch>.bpf → seccomp.bpf (universal,
@@ -499,7 +504,7 @@ export default function (pi: ExtensionAPI) {
       "Download/run external code through the quarantine profiles:\n" +
       "- sandbox_fetch: download a file/URL (network ON, NO access to the project).\n" +
       "- sandbox_quarantine_exec: install (npm/pip) or run downloaded code (NO network, NO project " +
-      "access, writes only under .sandbox-cache/runs/<work>).\n" +
+      "access, writes only under .sandbox-cache/runs/<work> and configured caches).\n" +
       "- sandbox_promote: copy ONE specific artifact from runs/ back into the project — explicit, " +
       "the only way out.\n" +
       "Use normal bash only for project work.";

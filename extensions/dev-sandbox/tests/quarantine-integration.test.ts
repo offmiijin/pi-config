@@ -40,9 +40,11 @@ config.landlock.enabled = false;
 let nestedBwrapWorks = false;
 if (bwrapAvailable) {
   try {
+    const probeCwd = fixture();
     const probe = await execInProfile(config, {
       command: ["echo", "probe"],
-      cwd: resolveQuarantineDirs(config, fixture()).fetch,
+      cwd: resolveQuarantineDirs(config, probeCwd).fetch,
+      baseCwd: probeCwd,
     }, "fetch");
     nestedBwrapWorks = probe.exitCode === 0;
   } catch {
@@ -59,6 +61,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const res = await execInProfile(config, {
       command: ["bash", "-lc", `cat "${join(cwd, "sentinel.txt")}"`],
       cwd: dirs.fetch,
+      baseCwd: cwd,
     }, "fetch");
     expect(res.exitCode).not.toBe(0);
   });
@@ -71,6 +74,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const res = await execInProfile(config, {
       command: ["bash", "-lc", `echo hacked > "${join(cwd, "sentinel.txt")}"`],
       cwd: dirs.fetch,
+      baseCwd: cwd,
     }, "fetch");
     expect(res.exitCode).not.toBe(0);
     expect(readFileSync(join(cwd, "sentinel.txt"), "utf8")).toBe("MUST_NOT_LEAK");
@@ -85,6 +89,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const read = await execInProfile(config, {
       command: ["bash", "-lc", `cat "${join(cwd, "sentinel.txt")}"`],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(read.exitCode).not.toBe(0);
 
@@ -92,6 +97,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const net = await execInProfile(config, {
       command: ["bash", "-lc", "curl -m 3 -s https://example.com || echo CURLE_$?"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(net.exitCode).toBe(0);
     expect(net.stdout.toString()).toContain("CURLE_");
@@ -104,14 +110,60 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const a = await execInProfile(config, {
       command: ["bash", "-lc", "echo build > out.txt"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(a.exitCode).toBe(0);
 
     const b = await execInProfile(config, {
       command: ["bash", "-lc", "cat out.txt"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(b.stdout.toString()).toContain("build");
+  });
+
+  it("quarantine: caches de ferramentas e venv persistem separadamente", async () => {
+    const cwd = fixture();
+    const dirs = resolveQuarantineDirs(config, cwd);
+    const npmCache = join(cwd, ".sandbox-cache", "npm");
+    const pipCache = join(cwd, ".sandbox-cache", "pip");
+    const clonesCache = join(cwd, ".sandbox-cache", "clones");
+
+    const first = await execInProfile(config, {
+      command: ["bash", "-lc", [
+        "set -eu",
+        'test "$NPM_CONFIG_CACHE" = ' + JSON.stringify(npmCache),
+        'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        'test "$SANDBOX_CLONE_DIR" = ' + JSON.stringify(clonesCache),
+        "python3 -m venv .venv",
+        "test -x .venv/bin/python",
+        'test "$(.venv/bin/python -m pip cache dir)" = "$PIP_CACHE_DIR"',
+        'mkdir -p "$NPM_CONFIG_CACHE/issue-97" "$PIP_CACHE_DIR/issue-97" "$SANDBOX_CLONE_DIR/issue-97"',
+        'echo npm-cached > "$NPM_CONFIG_CACHE/issue-97/marker"',
+        'echo pip-cached > "$PIP_CACHE_DIR/issue-97/marker"',
+        'echo clone-cached > "$SANDBOX_CLONE_DIR/issue-97/marker"',
+      ].join("\n")],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(first.exitCode).toBe(0);
+
+    const second = await execInProfile(config, {
+      command: ["bash", "-lc", [
+        "set -eu",
+        'test "$NPM_CONFIG_CACHE" = ' + JSON.stringify(npmCache),
+        'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        'test "$SANDBOX_CLONE_DIR" = ' + JSON.stringify(clonesCache),
+        "test -x .venv/bin/python",
+        'test "$(cat \"$NPM_CONFIG_CACHE/issue-97/marker\")" = npm-cached',
+        'test "$(cat \"$PIP_CACHE_DIR/issue-97/marker\")" = pip-cached',
+        'test "$(cat \"$SANDBOX_CLONE_DIR/issue-97/marker\")" = clone-cached',
+        'test "$(.venv/bin/python -c \'import sys; print(sys.prefix)\')" != "$PIP_CACHE_DIR"',
+      ].join("\n")],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(second.exitCode).toBe(0);
   });
 
   it("promote: copia artefato da quarentena para o workspace", async () => {
@@ -121,6 +173,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     await execInProfile(config, {
       command: ["bash", "-lc", "echo dist > out.txt"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
 
     const target = await promoteArtifact(config, cwd, "out.txt", "dist/out.txt");

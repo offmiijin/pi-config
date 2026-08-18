@@ -92,7 +92,7 @@ export const PROFILE_NAMES: SandboxProfileName[] = ["normal", "fetch", "quaranti
  *   (escrita só em .sandbox-cache/fetch). `workspace` é SEMPRE "none"
  *   (invariante de quarentena — sanitização força o valor).
  * - "quarantine": executa código externo SEM rede e SEM acesso ao
- *   workspace (escrita só em .sandbox-cache/runs).
+ *   workspace (escrita em .sandbox-cache/runs e nos caches configurados).
  */
 export interface SandboxProfileConfig {
   /** Habilita/desabilita o perfil — tools recusam uso se desabilitado. */
