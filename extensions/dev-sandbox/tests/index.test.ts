@@ -34,6 +34,7 @@ vi.mock("../worktree", () => ({
     gitDir: `${originalCwd}/.git`,
     branchName: "sandbox/test-session",
     originalBranchName: "main",
+    baseCommit: "base-commit",
     worktreeRoot,
     worktreePath: `${worktreeRoot}/test-session`,
     startedAt: new Date().toISOString(),

@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, existsSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges } from "../worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges, promoteWorktreePreview } from "../worktree";
 import type { SandboxSession } from "../session";
 
 const sessions: SandboxSession[] = [];
@@ -103,6 +103,40 @@ describe("worktree", () => {
 
     expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("promoted\n");
     expect(readFileSync(join(original, "new.txt"), "utf8")).toBe("new\n");
+  });
+
+  it("promove preview com alterações commitadas e untracked", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    writeFileSync(join(session.workspaceCwd, "file.txt"), "committed\n");
+    git(session.workspaceCwd, ["add", "file.txt"]);
+    git(session.workspaceCwd, ["commit", "-qm", "sandbox"]);
+    writeFileSync(join(session.workspaceCwd, "new.txt"), "new\n");
+
+    const files = promoteWorktreePreview(session);
+
+    expect(files).toEqual(expect.arrayContaining(["file.txt", "new.txt"]));
+    expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("committed\n");
+    expect(readFileSync(join(original, "new.txt"), "utf8")).toBe("new\n");
+  });
+
+  it("atualiza preview repetido e remove arquivo revertido no worktree", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    writeFileSync(join(session.workspaceCwd, "file.txt"), "primeiro\n");
+    writeFileSync(join(session.workspaceCwd, "new.txt"), "new\n");
+    promoteWorktreePreview(session);
+
+    writeFileSync(join(session.workspaceCwd, "file.txt"), "segundo\n");
+    rmSync(join(session.workspaceCwd, "new.txt"));
+    promoteWorktreePreview(session);
+
+    expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("segundo\n");
+    expect(existsSync(join(original, "new.txt"))).toBe(false);
   });
 
   it("bloqueia promoção de untracked que escapa por symlink", () => {

@@ -1,8 +1,8 @@
 /** Criação, remoção e recuperação de worktrees temporários. */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { SandboxSession } from "./session";
 
@@ -11,7 +11,7 @@ const METADATA_FILE = ".pi-sandbox-worktree.json";
 export const WORKTREE_LEASE_INTERVAL_MS = 10_000;
 export const WORKTREE_LEASE_STALE_MS = 60_000;
 const activeLeases = new Map<string, NodeJS.Timeout>();
-type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "originalBranchName" | "worktreePath" | "worktreeRoot" | "workspaceSubdir" | "workspaceCwd" | "startedAt"> & { pid: number };
+type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "originalBranchName" | "baseCommit" | "worktreePath" | "worktreeRoot" | "workspaceSubdir" | "workspaceCwd" | "startedAt"> & { pid: number };
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -102,7 +102,7 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
     } catch { /* metadata inválido ou órfão não removível: não apagar cegamente */ }
   }
   if (gitRoot) {
-    const entries = git(gitRoot, ["worktree", "list", "--porcelain"]).split("\\n");
+    const entries = git(gitRoot, ["worktree", "list", "--porcelain"]).split("\n");
     for (let i = 0; i < entries.length; i++) {
       if (!entries[i].startsWith("worktree ")) continue;
       const path = entries[i].slice("worktree ".length);
@@ -144,13 +144,14 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
   const sessionId = safeId();
   const worktreePath = join(worktreeRoot, sessionId);
   const originalBranchName = git(gitRoot, ["branch", "--show-current"]);
+  const baseCommit = git(original, ["rev-parse", "HEAD"]);
   const branchName = `sandbox/${sessionId}`;
   mkdirSync(worktreeRoot, { recursive: true, mode: 0o700 });
   assertManagedPath(worktreeRoot, worktreePath);
   try {
     git(gitRoot, ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
     const workspaceCwd = workspaceSubdir ? join(worktreePath, workspaceSubdir) : worktreePath;
-    const session: SandboxSession = { sessionId, originalCwd: original, workspaceSubdir, workspaceCwd, worktreeRoot, gitRoot, gitDir, branchName, originalBranchName, worktreePath, startedAt: new Date().toISOString() };
+    const session: SandboxSession = { sessionId, originalCwd: original, workspaceSubdir, workspaceCwd, worktreeRoot, gitRoot, gitDir, branchName, originalBranchName, baseCommit, worktreePath, startedAt: new Date().toISOString() };
     writeMetadata(session);
     startLease(session.worktreePath);
     return session;
@@ -191,10 +192,68 @@ function assertRealPathInside(base: string, target: string, label: string): void
   }
 }
 
-/** Promove alterações rastreadas e arquivos untracked ao projeto original. */
-export function promoteWorktreeChanges(session: SandboxSession, files: string[] = []): string[] {
-  const selected = files.map(validateRelativeFile);
-  const trackedArgs = ["diff", "--binary", "HEAD", "--", ...(selected.length ? selected : ["."])];
+interface PreviewSnapshot {
+  existed: boolean;
+  content?: Buffer;
+  mode?: number;
+}
+
+interface PreviewFileState {
+  snapshot: PreviewSnapshot;
+  promotedFingerprint: string;
+}
+
+interface PreviewState {
+  files: Map<string, PreviewFileState>;
+}
+
+const previewStates = new Map<string, PreviewState>();
+
+function selectedPath(path: string, selected: string[]): boolean {
+  return selected.length === 0 || selected.some((file) => path === file || path.startsWith(file + "/"));
+}
+
+function fileFingerprint(path: string): string {
+  if (!existsSync(path)) return "missing";
+  const stat = lstatSync(path);
+  if (!stat.isFile()) return `non-file:${stat.mode}`;
+  return `${stat.mode & 0o777}:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+}
+
+function captureOriginalFile(session: SandboxSession, file: string): PreviewSnapshot {
+  const target = join(session.gitRoot, file);
+  assertRealPathInside(session.gitRoot, target, "Destino de promoção");
+  if (!existsSync(target)) return { existed: false };
+  const stat = lstatSync(target);
+  if (!stat.isFile()) throw new Error(`[dev-sandbox] Destino de promoção não é arquivo: ${file}`);
+  return { existed: true, content: readFileSync(target), mode: stat.mode & 0o777 };
+}
+
+function restoreSnapshot(session: SandboxSession, file: string, snapshot: PreviewSnapshot): void {
+  const target = join(session.gitRoot, file);
+  assertRealPathInside(session.gitRoot, target, "Destino de restauração");
+  if (!snapshot.existed) {
+    rmSync(target, { recursive: true, force: true });
+    return;
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, snapshot.content ?? Buffer.alloc(0));
+  chmodSync(target, snapshot.mode ?? 0o644);
+}
+
+function changedWorktreeFiles(session: SandboxSession, selected: string[]): string[] {
+  const pathspec = selected.length ? selected : ["."];
+  const tracked = execFileSync("git", ["diff", "--name-only", "-z", "--no-renames", session.baseCommit, "--", ...pathspec], {
+    cwd: session.worktreePath,
+    encoding: "buffer",
+  }).toString().split(String.fromCharCode(0)).filter(Boolean).map(validateRelativeFile);
+  const untracked = git(session.worktreePath, ["ls-files", "--others", "--exclude-standard", "--", ...pathspec])
+    .split("\n").filter((file) => Boolean(file) && file !== METADATA_FILE).map(validateRelativeFile);
+  return [...new Set([...tracked, ...untracked])];
+}
+
+function applyWorktreeChanges(session: SandboxSession, selected: string[]): string[] {
+  const trackedArgs = ["diff", "--binary", session.baseCommit, "--", ...(selected.length ? selected : ["."])];
   const patch = execFileSync("git", trackedArgs, { cwd: session.worktreePath, encoding: "buffer" });
   if (patch.length) execFileSync("git", ["apply", "--binary", "-"], { cwd: session.gitRoot, input: patch, stdio: ["pipe", "pipe", "pipe"] });
 
@@ -210,6 +269,42 @@ export function promoteWorktreeChanges(session: SandboxSession, files: string[] 
     cpSync(realpathSync(source), target, { recursive: true, force: true });
   }
   return [...(selected.length ? selected : ["alterações rastreadas"]), ...untracked];
+}
+
+/** Promove alterações rastreadas e arquivos untracked ao projeto original. */
+export function promoteWorktreeChanges(session: SandboxSession, files: string[] = []): string[] {
+  return applyWorktreeChanges(session, files.map(validateRelativeFile));
+}
+
+/** Aplica alterações do worktree e registra snapshot para restauração posterior. */
+export function promoteWorktreePreview(session: SandboxSession, files: string[] = []): string[] {
+  const selected = files.map(validateRelativeFile);
+  const changed = changedWorktreeFiles(session, selected);
+  const state = previewStates.get(session.sessionId) ?? { files: new Map<string, PreviewFileState>() };
+  const previous = [...state.files.keys()].filter((file) => selectedPath(file, selected));
+  const reconcile = [...new Set([...previous, ...changed])];
+
+  for (const file of reconcile) {
+    const current = state.files.get(file);
+    if (current && fileFingerprint(join(session.gitRoot, file)) !== current.promotedFingerprint) {
+      throw new Error(`[dev-sandbox] Arquivo promovido foi alterado no projeto original: ${file}`);
+    }
+    if (!current) state.files.set(file, { snapshot: captureOriginalFile(session, file), promotedFingerprint: "" });
+  }
+  for (const file of previous) restoreSnapshot(session, file, state.files.get(file)!.snapshot);
+
+  applyWorktreeChanges(session, selected);
+  for (const file of previous) {
+    if (!changed.includes(file)) state.files.delete(file);
+  }
+  for (const file of changed) {
+    const entry = state.files.get(file) ?? { snapshot: captureOriginalFile(session, file), promotedFingerprint: "" };
+    entry.promotedFingerprint = fileFingerprint(join(session.gitRoot, file));
+    state.files.set(file, entry);
+  }
+  if (state.files.size) previewStates.set(session.sessionId, state);
+  else previewStates.delete(session.sessionId);
+  return changed;
 }
 
 export function isManagedWorktreePath(path: string, root = DEFAULT_WORKTREE_ROOT): boolean { return resolve(path).startsWith(resolve(root) + "/"); }
