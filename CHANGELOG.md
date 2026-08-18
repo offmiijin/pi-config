@@ -13,6 +13,7 @@
 - `dev-sandbox`: reforça quarentena offline, fail-closed para Landlock obrigatório e invalidação do cache de argumentos após mudanças de isolamento.
 - `dev-sandbox`: amplia bloqueio de instalação/execução externa sem bloquear `vitest run` ou `npx --no-install vitest`.
 - `dev-sandbox`: persiste caches npm, pip e clones na quarentena, limpa artefatos sem atividade há mais de 30 dias e rejeita caminhos com traversal ou symlinks fora do workspace (issue [#97](https://github.com/offmiijin/pi-config/issues/97))
+- `dev-sandbox`: mantém caches npm/pip persistentes no projeto original, isola clones, `fetch/` e `runs/` no worktree temporário, mascara `runs/` no perfil normal e corrige a acessibilidade dos arquivos do `web_fetch` (issue [#103](https://github.com/offmiijin/pi-config/issues/103))
 - `custom-theme`/`dev-sandbox`: exibe diretório original, branch sandbox abreviado e branch original no footer durante sessões isoladas.
 - `pi-todo`: corrige sobreposição da tela quando a última tarefa visível falha, ocultando o motivo do erro na linha da tarefa (issue [#90](https://github.com/offmiijin/pi-config/issues/90))
 
