@@ -604,9 +604,9 @@ export default function (pi: ExtensionAPI) {
   // ── session_shutdown ──────────────────────────
   pi.on("session_shutdown", () => {
     enabled = false;
-    config = null;
     projectTrusted = false;
     releaseSession();
+    config = null;
     localCwd = originalCwd;
     fallbackToHost = false;
   });

@@ -57,6 +57,7 @@ vi.mock("../config", async (importOriginal) => {
 });
 
 import extension from "../index";
+import { cleanupWorktree } from "../worktree";
 import { DEFAULT_CONFIG } from "../types";
 
 interface FakeCtx {
@@ -87,6 +88,7 @@ beforeEach(() => {
   state.bwrapAvailable = true;
   state.loadConfigCalls = [];
   state.loadConfigReturn = null;
+  vi.mocked(cleanupWorktree).mockClear();
 });
 
 describe("index — orquestração", () => {
@@ -166,6 +168,19 @@ describe("index — orquestração", () => {
 
     const res = handlers.get("before_agent_start")!({ systemPrompt: "base" }, { cwd: process.cwd() });
     expect(res).toBeUndefined();
+  });
+
+  it("session_shutdown respeita cleanup never", async () => {
+    state.loadConfigReturn = {
+      ...structuredClone(DEFAULT_CONFIG),
+      worktree: { ...structuredClone(DEFAULT_CONFIG.worktree), cleanup: "never" },
+    };
+    const { pi, handlers } = fakePi();
+    extension(pi as never);
+    await handlers.get("session_start")!({}, fakeCtx());
+    handlers.get("session_shutdown")!({}, {});
+
+    expect(cleanupWorktree).not.toHaveBeenCalled();
   });
 
   it("sem bwrap: sandbox desabilitado com notify de erro", async () => {
