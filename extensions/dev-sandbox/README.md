@@ -91,11 +91,11 @@ com alterações locais são recusados para evitar perder estado; faça commit o
 Sessões iniciadas dentro de `/tmp/pi-worktrees` também são recusadas para impedir worktrees
 aninhados.
 
-Ao encerrar sessão, worktree e branch são removidos. Alterações não commitadas são
-descartadas, salvo promoção explícita via `sandbox_promote_changes`. Worktrees órfãos
-usam lease renovado a cada 10 segundos e só são removidos após 60 segundos sem renovação;
-PID isolado não é usado como única prova de que sessão morreu. Promoções validam caminhos
-reais e recusam symlinks que apontem para fora do projeto.
+Ao encerrar sessão, o último preview é restaurado antes da remoção do worktree e da branch.
+Alterações do worktree são descartadas depois disso. Worktrees órfãos usam lease renovado a
+cada 10 segundos e só são removidos após 60 segundos sem renovação; PID isolado não é usado
+como única prova de que sessão morreu. Promoções validam caminhos reais e recusam symlinks
+que apontem para fora do projeto.
 
 ## Configuração
 
@@ -198,9 +198,12 @@ e exposto como `$SANDBOX_CLONE_DIR` dentro do sandbox.
 | Iniciar pi normalmente | Sandbox ativo por padrão |
 | `pi --no-sandbox` | Desabilita sandbox para esta sessão |
 | `/sandbox` | Mostra status, perfis e configuração atual |
+| `/promote-preview` | Aplica alterações do worktree no projeto original para live preview |
+| `/promote-restore` | Restaura estado original após o último preview |
 
-A tool `sandbox_promote_changes` copia alterações rastreadas e arquivos novos do
-worktree temporário para o projeto original. Aceita `files` para promoção seletiva.
+As tools `sandbox_promote_preview` e `sandbox_promote_restore` oferecem as mesmas ações
+ao modelo. Preview salva snapshot dos arquivos afetados, aceita `files` para promoção
+seletiva e recusa restore se o projeto original tiver sido alterado externamente.
 
 ## Perfis de isolamento (quarentena)
 

@@ -34,11 +34,13 @@ vi.mock("../worktree", () => ({
     gitDir: `${originalCwd}/.git`,
     branchName: "sandbox/test-session",
     originalBranchName: "main",
+    baseCommit: "base-commit",
     worktreeRoot,
     worktreePath: `${worktreeRoot}/test-session`,
     startedAt: new Date().toISOString(),
   })),
-  promoteWorktreeChanges: vi.fn(() => []),
+  promoteWorktreePreview: vi.fn(() => []),
+  restoreWorktreePreview: vi.fn(() => []),
 }));
 
 vi.mock("../config", async (importOriginal) => {
@@ -122,6 +124,23 @@ describe("index — orquestração", () => {
     const msg = calls.find((m) => m.includes("Caches:"))!;
     expect(msg).toContain("Clones:");
     expect(msg).toContain(".sandbox-cache/clones");
+  });
+
+  it("registra tools e comandos de preview e restore", async () => {
+    const { pi, handlers, tools, commands } = fakePi();
+    extension(pi as never);
+    const ctx = fakeCtx();
+    ctx.hasUI = true;
+    await handlers.get("session_start")!({}, ctx);
+
+    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "sandbox_promote_preview",
+      "sandbox_promote_restore",
+    ]));
+    await commands.get("promote-preview")!.handler("", ctx);
+    await commands.get("promote-restore")!.handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Preview promovido"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Preview restaurado"), "info");
   });
 
   it("--no-sandbox: tools usam fallback original", async () => {

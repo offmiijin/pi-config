@@ -19,6 +19,8 @@ export interface SandboxSession {
   branchName: string;
   /** Branch original usada como base da sessão. */
   originalBranchName: string;
+  /** Commit usado como base para comparar alterações da sessão. */
+  baseCommit: string;
   /** Raiz sob a qual worktrees temporários são criados. */
   worktreeRoot: string;
   /** Diretório do worktree temporário; normalmente igual a workspaceCwd. */
