@@ -276,13 +276,6 @@ Adicione ao `.gitignore`:
 .sandbox-cache/
 ```
 
-### Limpeza automática
-
-Na inicialização de cada sessão, o sandbox remove artefatos sem atividade há
-mais de 30 dias. Arquivos antigos de caches npm/pip são podados internamente;
-clones, downloads e workdirs de quarentena são removidos como unidades
-inteiras. Conteúdo recente é preservado.
-
 ### Python em quarentena
 
 Use `workDir` para manter o ambiente virtual entre chamadas. O venv fica no

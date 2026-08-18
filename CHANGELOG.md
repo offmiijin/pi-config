@@ -27,6 +27,10 @@
 - `dev-sandbox` monta metadados Git seletivamente, permitindo `status`, branches,
   commits e push sem expor código do projeto original.
 
+### Removed
+
+- `dev-sandbox`: remove a limpeza automática de caches por inatividade após 30 dias; caches persistentes agora permanecem até remoção manual.
+
 ## [1.1.0] - 2026-08-16
 
 ### Added
