@@ -56,7 +56,7 @@ import {
 } from "./portability";
 import type { SandboxConfig } from "./types";
 import type { SandboxSession } from "./session";
-import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges } from "./worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreePreview, restoreWorktreePreview } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs, execInSandbox } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
@@ -501,16 +501,28 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "sandbox_promote_changes",
-    label: "Sandbox Promote Changes",
-    description: "Promotes tracked and untracked changes from temporary worktree to original project.",
+    name: "sandbox_promote_preview",
+    label: "Sandbox Promote Preview",
+    description: "Promotes temporary worktree changes to the original project for live preview. Saves a snapshot for restore.",
     parameters: Type.Object({
-      files: Type.Optional(Type.Array(Type.String({ description: "Relative file paths; omit to promote all changes" }))),
+      files: Type.Optional(Type.Array(Type.String({ description: "Relative file paths; omit to preview all changes" }))),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      if (!enabled || !config || !session) throw quarantineBlockedError("sandbox_promote_changes");
-      const files = promoteWorktreeChanges(session, params.files ?? []);
-      return { content: [{ type: "text", text: `Promoted: ${files.join(", ")}` }], details: { files } };
+      if (!enabled || !config || !session) throw quarantineBlockedError("sandbox_promote_preview");
+      const files = promoteWorktreePreview(session, params.files ?? []);
+      return { content: [{ type: "text", text: `Preview promoted: ${files.join(", ")}` }], details: { files } };
+    },
+  });
+
+  pi.registerTool({
+    name: "sandbox_promote_restore",
+    label: "Sandbox Promote Restore",
+    description: "Restores original project files changed by the latest sandbox preview. Refuses external modifications.",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+      if (!enabled || !config || !session) throw quarantineBlockedError("sandbox_promote_restore");
+      const files = restoreWorktreePreview(session);
+      return { content: [{ type: "text", text: `Preview restored: ${files.join(", ") || "nothing"}` }], details: { files } };
     },
   });
 
@@ -597,6 +609,38 @@ export default function (pi: ExtensionAPI) {
       ];
 
       ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("promote-preview", {
+    description: "Promove alterações do worktree para preview no projeto original",
+    handler: async (_args, ctx) => {
+      if (!enabled || !config || !session) {
+        ctx.ui.notify("Preview indisponível: sandbox ou sessão não está ativo.", "error");
+        return;
+      }
+      try {
+        const files = promoteWorktreePreview(session);
+        ctx.ui.notify(`Preview promovido: ${files.join(", ") || "nenhuma alteração"}`, "info");
+      } catch (error) {
+        ctx.ui.notify(`Falha ao promover preview: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("promote-restore", {
+    description: "Restaura alterações aplicadas pelo último preview",
+    handler: async (_args, ctx) => {
+      if (!enabled || !config || !session) {
+        ctx.ui.notify("Restore indisponível: sandbox ou sessão não está ativo.", "error");
+        return;
+      }
+      try {
+        const files = restoreWorktreePreview(session);
+        ctx.ui.notify(`Preview restaurado: ${files.join(", ") || "nada para restaurar"}`, "info");
+      } catch (error) {
+        ctx.ui.notify(`Falha ao restaurar preview: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
     },
   });
 
