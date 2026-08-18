@@ -180,6 +180,18 @@ describe("worktree", () => {
     expect(() => promoteWorktreeChanges(session)).toThrow(/Origem de promoção/);
   });
 
+  it("restaura preview automaticamente antes de remover worktree", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    writeFileSync(join(session.workspaceCwd, "file.txt"), "temporary\n");
+    promoteWorktreePreview(session);
+
+    cleanupWorktree(session);
+
+    expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("original\n");
+  });
+
   it("remove worktree e branch de forma idempotente", () => {
     const original = repo();
     const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
