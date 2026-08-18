@@ -1,13 +1,16 @@
 /** Criação, remoção e recuperação de worktrees temporários. */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import type { SandboxSession } from "./session";
 
 export const DEFAULT_WORKTREE_ROOT = "/tmp/pi-worktrees";
 const METADATA_FILE = ".pi-sandbox-worktree.json";
+export const WORKTREE_LEASE_INTERVAL_MS = 10_000;
+export const WORKTREE_LEASE_STALE_MS = 60_000;
+const activeLeases = new Map<string, NodeJS.Timeout>();
 type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "originalBranchName" | "worktreePath" | "worktreeRoot" | "startedAt"> & { pid: number };
 
 function git(cwd: string, args: string[]): string {
@@ -35,9 +38,44 @@ function assertNotActiveWorktree(path: string): void {
     throw new Error(`[dev-sandbox] Recusa remover worktree ativo: ${path}`);
   }
 }
+function metadataPath(worktreePath: string): string {
+  return join(worktreePath, METADATA_FILE);
+}
+
 function writeMetadata(session: SandboxSession): void {
   const metadata: WorktreeMetadata = { ...session, pid: process.pid };
-  writeFileSync(join(session.worktreePath, METADATA_FILE), JSON.stringify(metadata, null, 2) + "\n", { mode: 0o600 });
+  writeFileSync(metadataPath(session.worktreePath), JSON.stringify(metadata, null, 2) + "\n", { mode: 0o600 });
+}
+
+function refreshLease(worktreePath: string): void {
+  const now = new Date();
+  try {
+    utimesSync(metadataPath(worktreePath), now, now);
+  } catch {
+    // O worktree será tratado como órfão somente após o lease expirar.
+  }
+}
+
+function startLease(worktreePath: string): void {
+  refreshLease(worktreePath);
+  const timer = setInterval(() => refreshLease(worktreePath), WORKTREE_LEASE_INTERVAL_MS);
+  timer.unref();
+  activeLeases.set(worktreePath, timer);
+}
+
+function stopLease(worktreePath: string): void {
+  const timer = activeLeases.get(worktreePath);
+  if (!timer) return;
+  clearInterval(timer);
+  activeLeases.delete(worktreePath);
+}
+
+function hasFreshLease(worktreePath: string, now = Date.now()): boolean {
+  try {
+    return now - statSync(metadataPath(worktreePath)).mtimeMs < WORKTREE_LEASE_STALE_MS;
+  } catch {
+    return false;
+  }
 }
 
 /** Remove worktrees antigos cujo metadata pertence a processo encerrado. */
@@ -49,10 +87,11 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
     if (!entry.isDirectory()) continue;
     const path = join(worktreeRoot, entry.name);
     try {
-      const metadata = JSON.parse(readFileSync(join(path, METADATA_FILE), "utf8")) as WorktreeMetadata;
+      const metadata = JSON.parse(readFileSync(metadataPath(path), "utf8")) as WorktreeMetadata;
       assertManagedPath(worktreeRoot, metadata.worktreePath);
       if (metadata.worktreeRoot !== worktreeRoot || metadata.pid === process.pid) continue;
       if (pathsOverlap(metadata.worktreePath, process.cwd())) continue;
+      if (hasFreshLease(path)) continue;
       try { process.kill(metadata.pid, 0); continue; } catch (error: any) { if (error?.code === "EPERM") continue; if (error?.code !== "ESRCH") continue; }
       cleanupWorktree({ ...metadata, originalCwd: metadata.gitRoot, workspaceCwd: path });
       removed++;
@@ -98,6 +137,7 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
     git(gitRoot, ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
     const session: SandboxSession = { sessionId, originalCwd: original, workspaceCwd: worktreePath, worktreeRoot, gitRoot, gitDir, branchName, originalBranchName, worktreePath, startedAt: new Date().toISOString() };
     writeMetadata(session);
+    startLease(session.worktreePath);
     return session;
   } catch (error) {
     rmSync(worktreePath, { recursive: true, force: true });
@@ -109,6 +149,7 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
 export function cleanupWorktree(session: SandboxSession): void {
   assertManagedPath(session.worktreeRoot, session.worktreePath);
   assertNotActiveWorktree(session.worktreePath);
+  stopLease(session.worktreePath);
   if (existsSync(session.worktreePath)) { try { git(session.gitRoot, ["worktree", "remove", "--force", session.worktreePath]); } catch { rmSync(session.worktreePath, { recursive: true, force: true }); } }
   try { git(session.gitRoot, ["branch", "-D", session.branchName]); } catch { /* já removida */ }
   rmSync(session.worktreePath, { recursive: true, force: true });

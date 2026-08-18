@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupWorktree, createWorktree, promoteWorktreeChanges } from "../worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges } from "../worktree";
 import type { SandboxSession } from "../session";
 
 const sessions: SandboxSession[] = [];
@@ -48,6 +48,23 @@ describe("worktree", () => {
     expect(session.branchName).toMatch(/^sandbox\//);
     expect(readFileSync(join(session.workspaceCwd, "file.txt"), "utf8")).toBe("original\n");
     expect(git(session.workspaceCwd, ["branch", "--show-current"])).toBe(session.branchName);
+  });
+
+  it("preserva worktree com lease fresco mesmo com PID invisível", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+
+    const metadataPath = join(session.worktreePath, ".pi-sandbox-worktree.json");
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as { pid: number };
+    metadata.pid = 999999999;
+    writeFileSync(metadataPath, JSON.stringify(metadata));
+    const now = new Date();
+    utimesSync(metadataPath, now, now);
+
+    expect(cleanupOrphanedWorktrees(root, original)).toBe(0);
+    expect(existsSync(session.worktreePath)).toBe(true);
   });
 
   it("promove alterações rastreadas e untracked", () => {
