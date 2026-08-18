@@ -373,7 +373,7 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string, profile: SandboxPr
  * O parâmetro `profile` seleciona o perfil de isolamento:
  *   - "normal"      → comportamento atual (workspace rw, rede, SSH, caches)
  *   - "fetch"       → rede + escrita só em .sandbox-cache/fetch, sem workspace
- *   - "quarantine"  → sem rede, escrita só em .sandbox-cache/runs, sem workspace
+ *   - "quarantine"  → sem rede, escrita em runs e cache pip, sem workspace
  *
  * A parte cacheada é estática (mounts, capabilities, env). A varredura de
  * denyFilePatterns roda a cada chamada (apenas no perfil normal) e os binds
@@ -687,14 +687,20 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
  * Base comum dos perfis de quarentena (fetch/quarantine).
  *
  * NUNCA monta o workspace do projeto: apenas o sistema read-only
- * (--ro-bind) e os diretórios de quarentena RW passados em `rwDirs`.
+ * (--ro-bind), os diretórios de quarentena RW passados em `rwDirs` e
+ * caches explicitamente passados em `cacheDirs`.
  * Sem HOME real, sem SSH, sem .gitconfig, sem skills, sem PATH sob HOME.
- * Env é mínima (--clearenv + PATH/HOME/USER fixos).
+ * Env é mínima (--clearenv + PATH/HOME/USER fixos + caches configurados).
  *
  * `shareNet`: true → --share-net (fetch); false → sem rede (quarantine),
  * já isolada pelo --unshare-all.
  */
-function buildIsolationArgs(config: SandboxConfig, rwDirs: string[], shareNet: boolean): string[] {
+function buildIsolationArgs(
+  config: SandboxConfig,
+  rwDirs: string[],
+  shareNet: boolean,
+  cacheDirs: Record<string, string> = {},
+): string[] {
   const args: string[] = [
     "--unshare-all",
     "--die-with-parent",
@@ -733,10 +739,23 @@ function buildIsolationArgs(config: SandboxConfig, rwDirs: string[], shareNet: b
     args.push("--tmpfs", deny);
   }
 
-  // ── Diretórios de quarentena — RW exclusivos ──
+  // ── Diretórios de quarentena e caches — RW explícitos ──
   for (const dir of rwDirs) {
     ensureQuarantineDir(dir);
+  }
+  for (const dir of Object.values(cacheDirs)) {
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      // Degradação segura — o bind falha e bloqueia a execução.
+    }
+  }
+  for (const dir of [...new Set([...rwDirs, ...Object.values(cacheDirs)])]) {
     args.push("--bind", dir, dir);
+  }
+  for (const [name, dir] of Object.entries(cacheDirs)) {
+    const envVar = CACHE_ENV_VARS[name];
+    if (envVar) args.push("--setenv", envVar, dir);
   }
 
   // ── Rede ──────────────────────────────────
@@ -766,11 +785,12 @@ function buildFetchArgs(config: SandboxConfig, cwd: string): string[] {
   return buildIsolationArgs(config, [dirs.fetch], shareNet);
 }
 
-/** Perfil quarantine: sem rede, escrita só em .sandbox-cache/runs. */
+/** Perfil quarantine: sem rede, escrita em runs/ e cache pip persistente. */
 function buildQuarantineArgs(config: SandboxConfig, cwd: string): string[] {
   const dirs = resolveQuarantineDirs(config, cwd);
+  const caches = resolveCacheDirs(config, cwd);
   const shareNet = config.internet.enabled && (config.profiles?.quarantine?.network ?? false);
-  return buildIsolationArgs(config, [dirs.runs], shareNet);
+  return buildIsolationArgs(config, [dirs.runs], shareNet, { pip: caches.pip });
 }
 
 /**
@@ -854,7 +874,7 @@ function buildLandlockArgs(
   profile: SandboxProfileName = "normal",
 ): string[] {
   // ── Perfis de quarentena (fetch/quarantine) ─────────────
-  // Sistema RO + diretório de quarentena RW. NUNCA o workspace.
+  // Sistema RO + diretórios explícitos RW. NUNCA o workspace.
   if (profile !== "normal") {
     const args: string[] = [
       LANDLOCK_EXEC_SANDBOX_PATH,
@@ -868,6 +888,9 @@ function buildLandlockArgs(
     const rwPaths = ["/tmp", "/run", "/dev"];
     const dirs = resolveQuarantineDirs(config, cwd);
     rwPaths.push(profile === "fetch" ? dirs.fetch : dirs.runs);
+    if (profile === "quarantine") {
+      rwPaths.push(resolveCacheDirs(config, cwd).pip);
+    }
     for (const p of rwPaths) args.push("--allow-rw", p);
 
     args.push("--");
@@ -1101,8 +1124,9 @@ export function execInSandbox(
  * Validações:
  *   - perfil existe e está habilitado na configuração;
  *   - perfil NÃO expõe o workspace ("rw") — exclusivo para quarentena.
- * Os diretórios de quarentena são criados (0o700) automaticamente
- * durante a construção dos args (buildIsolationArgs).
+ * Os diretórios de quarentena são criados (0o700) e os caches configurados
+ * são criados automaticamente durante a construção dos args
+ * (buildIsolationArgs).
  */
 export function execInProfile(
   config: SandboxConfig,

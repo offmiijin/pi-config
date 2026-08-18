@@ -205,7 +205,7 @@ perfis de isolamento dedicados:
 |---|---|---|---|
 | `normal` | host | rw | projeto |
 | `fetch` | ✅ | ❌ | `.sandbox-cache/fetch` |
-| `quarantine` | ❌ | ❌ | `.sandbox-cache/runs/<work>` |
+| `quarantine` | ❌ | ❌ | `.sandbox-cache/runs/<work>` + `.sandbox-cache/pip` |
 
 Fluxo:
 
@@ -241,12 +241,34 @@ Configuração de perfis (global ou `.pi/sandbox.json`):
 
 Caches npm (`NPM_CONFIG_CACHE`), pip (`PIP_CACHE_DIR`) e clones de
 repositórios (`SANDBOX_CLONE_DIR`) são persistidos em `.sandbox-cache/`
-dentro do projeto.
+dentro do projeto. O perfil `quarantine` monta o cache pip em
+`$PIP_CACHE_DIR`; o workspace inteiro continua inacessível.
 Adicione ao `.gitignore`:
 
 ```gitignore
 .sandbox-cache/
 ```
+
+### Python em quarentena
+
+Use `workDir` para manter o ambiente virtual entre chamadas. O venv fica no
+workdir persistente e nunca no diretório de cache pip:
+
+```text
+.sandbox-cache/runs/python-env/.venv  # ambiente virtual
+.sandbox-cache/pip/                   # cache de pacotes
+```
+
+Exemplo de comando dentro de `sandbox_quarantine_exec`:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install <pacote>
+```
+
+O Python do sistema precisa fornecer `venv`/`ensurepip`. Como a quarentena
+não possui rede, baixe wheels ou fontes com `sandbox_fetch` e passe-os como
+artefatos para `sandbox_quarantine_exec`.
 
 ## Testes
 

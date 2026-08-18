@@ -151,6 +151,17 @@ describe("buildBwrapArgs — perfil quarantine", () => {
     expect(binds.filter((b) => b === cwd)).toHaveLength(0);
   });
 
+  it("monta cache pip persistente e define PIP_CACHE_DIR", () => {
+    const cwd = fixture();
+    const args = buildBwrapArgs(makeConfig(), cwd, "quarantine");
+    const env = setenvMap(args);
+    const pipCache = join(cwd, ".sandbox-cache", "pip");
+
+    expect(flagValues(args, "--bind")).toContain(pipCache);
+    expect(env.get("PIP_CACHE_DIR")).toBe(pipCache);
+    expect(flagValues(args, "--bind").filter((b) => b === cwd)).toHaveLength(0);
+  });
+
   it("env mínima igual ao fetch", () => {
     const cwd = fixture();
     const env = setenvMap(buildBwrapArgs(makeConfig(), cwd, "quarantine"));
@@ -188,6 +199,7 @@ describe("buildBwrapArgs — landlock por perfil", () => {
     const full = wrapWithLandlock(args, ["echo", "x"], makeConfig(), cwd, "quarantine");
     const rw = rwValues(full);
     expect(rw).toContain(join(cwd, ".sandbox-cache", "runs"));
+    expect(rw).toContain(join(cwd, ".sandbox-cache", "pip"));
     expect(rw).not.toContain(cwd);
   });
 });

@@ -40,9 +40,11 @@ config.landlock.enabled = false;
 let nestedBwrapWorks = false;
 if (bwrapAvailable) {
   try {
+    const probeCwd = fixture();
     const probe = await execInProfile(config, {
       command: ["echo", "probe"],
-      cwd: resolveQuarantineDirs(config, fixture()).fetch,
+      cwd: resolveQuarantineDirs(config, probeCwd).fetch,
+      baseCwd: probeCwd,
     }, "fetch");
     nestedBwrapWorks = probe.exitCode === 0;
   } catch {
@@ -59,6 +61,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const res = await execInProfile(config, {
       command: ["bash", "-lc", `cat "${join(cwd, "sentinel.txt")}"`],
       cwd: dirs.fetch,
+      baseCwd: cwd,
     }, "fetch");
     expect(res.exitCode).not.toBe(0);
   });
@@ -71,6 +74,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const res = await execInProfile(config, {
       command: ["bash", "-lc", `echo hacked > "${join(cwd, "sentinel.txt")}"`],
       cwd: dirs.fetch,
+      baseCwd: cwd,
     }, "fetch");
     expect(res.exitCode).not.toBe(0);
     expect(readFileSync(join(cwd, "sentinel.txt"), "utf8")).toBe("MUST_NOT_LEAK");
@@ -85,6 +89,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const read = await execInProfile(config, {
       command: ["bash", "-lc", `cat "${join(cwd, "sentinel.txt")}"`],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(read.exitCode).not.toBe(0);
 
@@ -92,6 +97,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const net = await execInProfile(config, {
       command: ["bash", "-lc", "curl -m 3 -s https://example.com || echo CURLE_$?"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(net.exitCode).toBe(0);
     expect(net.stdout.toString()).toContain("CURLE_");
@@ -104,14 +110,50 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const a = await execInProfile(config, {
       command: ["bash", "-lc", "echo build > out.txt"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(a.exitCode).toBe(0);
 
     const b = await execInProfile(config, {
       command: ["bash", "-lc", "cat out.txt"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
     expect(b.stdout.toString()).toContain("build");
+  });
+
+  it("quarantine: cache pip e venv persistem separadamente", async () => {
+    const cwd = fixture();
+    const dirs = resolveQuarantineDirs(config, cwd);
+    const pipCache = join(cwd, ".sandbox-cache", "pip");
+
+    const first = await execInProfile(config, {
+      command: ["bash", "-lc", [
+        "set -eu",
+        'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        "python3 -m venv .venv",
+        "test -x .venv/bin/python",
+        'test "$(.venv/bin/python -m pip cache dir)" = "$PIP_CACHE_DIR"',
+        'mkdir -p "$PIP_CACHE_DIR/issue-97"',
+        'echo cached > "$PIP_CACHE_DIR/issue-97/marker"',
+      ].join("\n")],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(first.exitCode).toBe(0);
+
+    const second = await execInProfile(config, {
+      command: ["bash", "-lc", [
+        "set -eu",
+        'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        "test -x .venv/bin/python",
+        'test "$(cat \"$PIP_CACHE_DIR/issue-97/marker\")" = cached',
+        'test "$(.venv/bin/python -c \'import sys; print(sys.prefix)\')" != "$PIP_CACHE_DIR"',
+      ].join("\n")],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(second.exitCode).toBe(0);
   });
 
   it("promote: copia artefato da quarentena para o workspace", async () => {
@@ -121,6 +163,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     await execInProfile(config, {
       command: ["bash", "-lc", "echo dist > out.txt"],
       cwd: dirs.runs,
+      baseCwd: cwd,
     }, "quarantine");
 
     const target = await promoteArtifact(config, cwd, "out.txt", "dist/out.txt");
