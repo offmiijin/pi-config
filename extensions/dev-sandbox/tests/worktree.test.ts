@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, existsSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, symlinkSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -89,6 +89,18 @@ describe("worktree", () => {
 
     expect(cleanupOrphanedWorktrees(root, original)).toBe(0);
     expect(existsSync(session.worktreePath)).toBe(true);
+  });
+
+  it("remove registro Git órfão sem metadata", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    rmSync(join(session.worktreePath, ".pi-sandbox-worktree.json"));
+
+    expect(cleanupOrphanedWorktrees(root, original)).toBe(1);
+    expect(existsSync(session.worktreePath)).toBe(false);
+    expect(git(original, ["branch", "--list", session.branchName])).toBe("");
   });
 
   it("promove alterações rastreadas e untracked", () => {
