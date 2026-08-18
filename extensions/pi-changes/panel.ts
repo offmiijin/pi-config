@@ -69,7 +69,8 @@ export class ChangesPanel implements Component {
 	}
 
 	setSnapshot(snapshot: ChangesSnapshot): void {
-		const selectedPath = this.snapshot.files[this.selectedIndex]?.path;
+		const previousFile = this.snapshot.files[this.selectedIndex];
+		const selectedPath = previousFile?.path;
 		this.snapshot = snapshot;
 		const nextIndex = selectedPath
 			? snapshot.files.findIndex((file) => file.path === selectedPath)
@@ -77,7 +78,11 @@ export class ChangesPanel implements Component {
 		this.selectedIndex = nextIndex >= 0
 			? nextIndex
 			: Math.min(this.selectedIndex, Math.max(0, snapshot.files.length - 1));
-		this.diffOffset = 0;
+
+		const nextFile = snapshot.files[this.selectedIndex];
+		if (!previousFile || !nextFile || previousFile.path !== nextFile.path || previousFile.diff !== nextFile.diff) {
+			this.diffOffset = 0;
+		}
 		this.tui.requestRender();
 	}
 
