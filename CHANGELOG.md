@@ -15,6 +15,7 @@
 
 ### Added
 
+- `dev-sandbox`: adiciona `sandbox_promote_preview`/`sandbox_promote_restore` e os comandos `/promote-preview`/`/promote-restore`, com snapshot seguro para live preview e restauração do projeto original.
 - `dev-sandbox`: bootstrap seguro de dependências npm no worktree confiável com `npm ci/install --ignore-scripts` e cache persistente.
 - `dev-sandbox` passou a executar projetos Git em worktrees temporários descartáveis,
   com cleanup de órfãos, configuração de raiz/política e tool `sandbox_promote_changes`
