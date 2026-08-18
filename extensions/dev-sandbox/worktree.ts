@@ -16,7 +16,26 @@ type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
+
+function gitRootOrNull(cwd: string): string | null {
+  try {
+    return resolve(git(cwd, ["rev-parse", "--show-toplevel"]));
+  } catch (error: any) {
+    const stderr = String(error?.stderr ?? "");
+    if (error?.status === 128 && /not a git repository|não é um repositório git/i.test(stderr)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function safeId(): string { return randomUUID().replace(/[^a-zA-Z0-9-]/g, ""); }
+
+/** Retorna se o diretório pertence a um repositório Git. */
+export function isGitRepository(cwd: string): boolean {
+  return gitRootOrNull(resolve(cwd)) !== null;
+}
+
 function isPathWithin(base: string, target: string): boolean {
   const basePath = resolve(base);
   const targetPath = resolve(target);
@@ -120,16 +139,38 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
   return removed;
 }
 
-/** Cria worktree temporário em branch própria baseado no HEAD atual. */
+/**
+ * Cria worktree temporário em branch própria baseado no HEAD atual.
+ *
+ * Projetos sem Git não podem usar worktree. Nesse caso, a própria raiz
+ * aberta pelo usuário é usada como workspace do sandbox; nenhuma operação
+ * Git ou limpeza de worktree é tentada.
+ */
 export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT): SandboxSession {
   const original = resolve(originalCwd);
   const worktreeRoot = resolve(root);
+  const gitRoot = gitRootOrNull(original);
+  if (!gitRoot) {
+    return {
+      sessionId: safeId(),
+      originalCwd: original,
+      workspaceSubdir: "",
+      workspaceCwd: original,
+      worktreeRoot,
+      gitRoot: "",
+      gitDir: "",
+      branchName: "",
+      originalBranchName: "",
+      baseCommit: "",
+      worktreePath: original,
+      startedAt: new Date().toISOString(),
+    };
+  }
   if (isPathWithin(worktreeRoot, original)) {
     throw new Error(
       `[dev-sandbox] Não é seguro criar worktree aninhado dentro da área gerenciada: ${original}`,
     );
   }
-  const gitRoot = resolve(git(original, ["rev-parse", "--show-toplevel"]));
   const gitDirValue = git(original, ["rev-parse", "--git-common-dir"]);
   const gitDir = resolve(gitRoot, gitDirValue);
   const workspaceSubdir = relative(gitRoot, original);
@@ -163,6 +204,9 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
 
 /** Remove worktree e branch criados por createWorktree. Seguro repetir. */
 export function cleanupWorktree(session: SandboxSession): void {
+  // Projetos sem Git usam a raiz original diretamente e não criam recursos
+  // temporários para remover.
+  if (!session.gitRoot || !session.branchName) return;
   assertManagedPath(session.worktreeRoot, session.worktreePath);
   assertNotActiveWorktree(session.worktreePath);
   restoreWorktreePreview(session);
@@ -274,11 +318,17 @@ function applyWorktreeChanges(session: SandboxSession, selected: string[]): stri
 
 /** Promove alterações rastreadas e arquivos untracked ao projeto original. */
 export function promoteWorktreeChanges(session: SandboxSession, files: string[] = []): string[] {
+  if (!session.gitRoot || !session.branchName) {
+    throw new Error("[dev-sandbox] Promoção indisponível: o projeto não possui um worktree Git.");
+  }
   return applyWorktreeChanges(session, files.map(validateRelativeFile));
 }
 
 /** Aplica alterações do worktree e registra snapshot para restauração posterior. */
 export function promoteWorktreePreview(session: SandboxSession, files: string[] = []): string[] {
+  if (!session.gitRoot || !session.branchName) {
+    throw new Error("[dev-sandbox] Preview indisponível: o projeto não possui um worktree Git.");
+  }
   const selected = files.map(validateRelativeFile);
   const changed = changedWorktreeFiles(session, selected);
   const state = previewStates.get(session.sessionId) ?? { files: new Map<string, PreviewFileState>() };

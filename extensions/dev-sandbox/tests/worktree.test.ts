@@ -28,6 +28,20 @@ afterEach(() => {
 });
 
 describe("worktree", () => {
+  it("usa a raiz original como sandbox quando o projeto não tem Git", () => {
+    const original = mkdtempSync(join(tmpdir(), "dev-sandbox-no-git-"));
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+
+    expect(session.workspaceCwd).toBe(original);
+    expect(session.worktreePath).toBe(original);
+    expect(session.gitRoot).toBe("");
+    expect(session.branchName).toBe("");
+    expect(() => cleanupWorktree(session)).not.toThrow();
+    expect(existsSync(original)).toBe(true);
+  });
+
   it("recusa criar worktree aninhado na área gerenciada", () => {
     const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
     const original = join(root, "project");
