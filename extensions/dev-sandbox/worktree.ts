@@ -1,7 +1,7 @@
 /** Criação, remoção e recuperação de worktrees temporários. */
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { SandboxSession } from "./session";
@@ -177,6 +177,20 @@ function validateRelativeFile(file: string): string {
   return clean;
 }
 
+function assertRealPathInside(base: string, target: string, label: string): void {
+  const baseReal = realpathSync(base);
+  let existing = resolve(target);
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  const realExisting = realpathSync(existing);
+  if (realExisting !== baseReal && !realExisting.startsWith(baseReal + sep)) {
+    throw new Error(`[dev-sandbox] ${label} escapa da área permitida: ${target}`);
+  }
+}
+
 /** Promove alterações rastreadas e arquivos untracked ao projeto original. */
 export function promoteWorktreeChanges(session: SandboxSession, files: string[] = []): string[] {
   const selected = files.map(validateRelativeFile);
@@ -189,11 +203,11 @@ export function promoteWorktreeChanges(session: SandboxSession, files: string[] 
   for (const file of untracked) {
     const source = join(session.worktreePath, file);
     const target = join(session.gitRoot, file);
-    if (resolve(target) !== session.gitRoot && !resolve(target).startsWith(session.gitRoot + sep)) {
-      throw new Error(`[dev-sandbox] Destino de promoção fora do projeto: ${file}`);
-    }
+    assertRealPathInside(session.worktreePath, source, "Origem de promoção");
+    assertRealPathInside(session.gitRoot, target, "Destino de promoção");
     mkdirSync(dirname(target), { recursive: true });
-    cpSync(source, target, { recursive: true, force: true });
+    assertRealPathInside(session.gitRoot, target, "Destino de promoção");
+    cpSync(realpathSync(source), target, { recursive: true, force: true });
   }
   return [...(selected.length ? selected : ["alterações rastreadas"]), ...untracked];
 }

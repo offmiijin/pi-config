@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -103,6 +103,18 @@ describe("worktree", () => {
 
     expect(readFileSync(join(original, "file.txt"), "utf8")).toBe("promoted\n");
     expect(readFileSync(join(original, "new.txt"), "utf8")).toBe("new\n");
+  });
+
+  it("bloqueia promoção de untracked que escapa por symlink", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    const outside = mkdtempSync(join(tmpdir(), "dev-sandbox-outside-"));
+    symlinkSync(outside, join(session.worktreePath, "redirect"));
+    writeFileSync(join(outside, "secret.txt"), "secret\n");
+
+    expect(() => promoteWorktreeChanges(session)).toThrow(/Origem de promoção/);
   });
 
   it("remove worktree e branch de forma idempotente", () => {
