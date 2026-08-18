@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `dev-sandbox`: persiste caches npm, pip e clones na quarentena, limpa artefatos sem atividade há mais de 30 dias e rejeita caminhos com traversal ou symlinks fora do workspace (issue [#97](https://github.com/offmiijin/pi-config/issues/97))
 - `custom-theme`/`dev-sandbox`: exibe diretório original, branch sandbox abreviado e branch original no footer durante sessões isoladas.
 - `pi-todo`: corrige sobreposição da tela quando a última tarefa visível falha, ocultando o motivo do erro na linha da tarefa (issue [#90](https://github.com/offmiijin/pi-config/issues/90))
 
@@ -37,7 +38,7 @@
 - `web_agent` passa a distinguir downloads binários no estado da pesquisa (ícone ⬇️ + rótulo "binário" nas Pages Fetched)
 - PDFs baixados pelo `web_fetch` ganham extração de texto via `pdftotext` (poppler-utils): texto salvo como `<nome>.txt` ao lado do `.pdf`, legível pelo agente; fallback silencioso (nota no resultado) quando o binário está ausente; detecção por magic bytes `%PDF-` cobre content-type genérico
 - Download de binários no `web_fetch` ganha orçamento estendido (60s vs 15s do HTML) — PDFs grandes/servidores lentos não estouram mais o timeout (ex.: manual dos Correios, 3.6MB ≈ 20s)
-- Nota de quarentena no system prompt (dev-sandbox) passa a listar o critério de decisão dos perfis: `sandbox_fetch` para download (rede, sem acesso ao projeto), `sandbox_quarantine_exec` para instalar/executar código externo (sem rede, sem projeto, escrita só em `.sandbox-cache/runs/<work>`), `sandbox_promote` como única saída de artefatos para o projeto
+- Nota de quarentena no system prompt (dev-sandbox) passa a listar o critério de decisão dos perfis: `sandbox_fetch` para download (rede, sem acesso ao projeto), `sandbox_quarantine_exec` para instalar/executar código externo (sem rede, sem projeto, escrita em `.sandbox-cache/runs/<work>` e caches configurados), `sandbox_promote` como única saída de artefatos para o projeto
 - Exibição do `/pi-config-changelog` passa a renderizar markdown colorido (tema do pi) com scroll, em vez de texto plano
 - Extensão `commands-hub.ts` renomeada para `thinking-level.ts` (comando `/thinking` inalterado)
 - `/thinking` passa a derivar os níveis de thinking suportados do modelo ativo via `thinkingLevelMap` (inclui nível `max`; oculta e invalida níveis não suportados, ex.: deepseek v4 só high/max)
