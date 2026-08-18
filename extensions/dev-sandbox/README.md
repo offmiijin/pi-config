@@ -280,6 +280,27 @@ O Python do sistema precisa fornecer `venv`/`ensurepip`. Como a quarentena
 não possui rede, baixe wheels ou fontes com `sandbox_fetch` e passe-os como
 artefatos para `sandbox_quarantine_exec`.
 
+### Bootstrap offline de dependências
+
+Cache vazio não é preenchido automaticamente pela quarentena. Fluxo seguro:
+
+1. `sandbox_fetch` baixa wheel, `.tgz` ou fonte para a área de fetch.
+2. `sandbox_quarantine_exec` recebe o arquivo em `artifacts`.
+3. O comando instala o arquivo localmente, sem habilitar rede:
+
+```bash
+# npm
+npm install ./pacote.tgz
+
+# pip
+python -m pip install ./pacote.whl
+```
+
+Quando `npm` ou `pip` falhar por cache ausente (`ENOTCACHED`, `no matching
+distribution`, etc.), `sandbox_quarantine_exec` retorna orientação desse fluxo
+no resultado. Dependências transitivas também precisam estar disponíveis como
+artefatos ou no cache persistente.
+
 ## Testes
 
 Suíte vitest na extensão (unit + integração):

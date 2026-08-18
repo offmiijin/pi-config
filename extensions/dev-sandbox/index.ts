@@ -61,6 +61,7 @@ import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
 import { cleanupSandboxCaches } from "./cache-cleanup";
+import { dependencyBootstrapHint } from "./dependency-bootstrap";
 import { Type } from "typebox";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
@@ -402,6 +403,7 @@ export default function (pi: ExtensionAPI) {
       "Works in .sandbox-cache/runs/<workDir> (persists between calls). Optionally copies artifacts " +
       "from the fetch directory (sandbox_fetch) into the work dir before running. " +
       "Use to install (npm/pip), run tests, or execute downloaded code safely. " +
+      "For empty package caches, use sandbox_fetch and pass downloaded wheels/tarballs via artifacts. " +
       "The exit code is returned in details; non-zero exit does not throw — inspect the output.",
     parameters: Type.Object({
       command: Type.String({ description: "Shell command to run (bash -lc)" }),
@@ -420,10 +422,17 @@ export default function (pi: ExtensionAPI) {
       );
       const out = result.stdout.toString();
       const err = result.stderr;
-      const text = [out, err, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
+      const output = [out, err].filter(Boolean).join("\n");
+      const bootstrapHint = dependencyBootstrapHint(params.command, output);
+      const text = [output, bootstrapHint, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: text || "(no output)" }],
-        details: { exitCode: result.exitCode, timedOut: result.timedOut, aborted: result.aborted },
+        details: {
+          exitCode: result.exitCode,
+          timedOut: result.timedOut,
+          aborted: result.aborted,
+          bootstrapHint: Boolean(bootstrapHint),
+        },
       };
     },
   });
