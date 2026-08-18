@@ -143,6 +143,15 @@ describe("buildBwrapArgs — flags base e mounts", () => {
     expect(binds).toContain(cwd);
   });
 
+  it("monta raiz completa quando cwd é subdiretório do worktree", () => {
+    const root = fixtureProj();
+    const subdir = join(root, "src");
+    mkdirSync(subdir);
+    const args = buildBwrapArgs(makeConfig(), subdir, "normal", root);
+    expect(flagValues(args, "--bind")).toContain(root);
+    expect(flagValues(args, "--bind")).not.toContain(subdir);
+  });
+
   it("cria HOME vazio antes das montagens", () => {
     const home = fixtureHome();
     process.env.HOME = home;
@@ -199,6 +208,13 @@ describe("buildBwrapArgs — flags base e mounts", () => {
     expect(
       buildBwrapArgs(makeConfig({ internet: { enabled: false } }), "/w/p"),
     ).not.toContain("--share-net");
+  });
+
+  it("respeita rede e SSH do perfil normal", () => {
+    const cfg = makeConfig({ profiles: { normal: { network: false, ssh: "none" } } });
+    const args = buildBwrapArgs(cfg, "/w/profile-normal");
+    expect(args).not.toContain("--share-net");
+    expect(args).not.toContain("SSH_AUTH_SOCK");
   });
 
   it("monta skills do agente (ro)", () => {

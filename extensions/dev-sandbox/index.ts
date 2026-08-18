@@ -301,7 +301,7 @@ export default function (pi: ExtensionAPI) {
    */
   function sandboxTool<TTool extends ToolDefinition<any, any, any>>(
     makeTool: (cwd: string) => TTool,
-    makeSandboxed: (config: SandboxConfig, cwd: string) => TTool,
+    makeSandboxed: (config: SandboxConfig, cwd: string, workspaceRoot: string) => TTool,
     label?: string,
   ): TTool {
     const base = makeTool(localCwd);
@@ -314,7 +314,8 @@ export default function (pi: ExtensionAPI) {
           if (fallbackToHost) return makeTool(cwd).execute(toolCallId, params, signal, onUpdate, ctx);
           throw sandboxBlockedError(base.name);
         }
-        return makeSandboxed(config, cwd).execute(toolCallId, params, signal, onUpdate, ctx);
+        const workspaceRoot = session?.worktreePath ?? cwd;
+        return makeSandboxed(config, cwd, workspaceRoot).execute(toolCallId, params, signal, onUpdate, ctx);
       },
     };
   }
@@ -323,39 +324,39 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool(sandboxTool(
     (cwd) => createReadTool(cwd),
-    (config, cwd) => createReadTool(cwd, { operations: createReadOps(config, cwd) }),
+    (config, cwd, workspaceRoot) => createReadTool(cwd, { operations: createReadOps(config, cwd, workspaceRoot) }),
   ));
 
   pi.registerTool(sandboxTool(
     (cwd) => createWriteTool(cwd),
-    (config, cwd) => createWriteTool(cwd, { operations: createWriteOps(config, cwd) }),
+    (config, cwd, workspaceRoot) => createWriteTool(cwd, { operations: createWriteOps(config, cwd, workspaceRoot) }),
   ));
 
   pi.registerTool(sandboxTool(
     (cwd) => createEditTool(cwd),
-    (config, cwd) => createEditTool(cwd, { operations: createEditOps(config, cwd) }),
+    (config, cwd, workspaceRoot) => createEditTool(cwd, { operations: createEditOps(config, cwd, workspaceRoot) }),
   ));
 
   // ── Bash tool unificado com bwrap operations ──
   pi.registerTool(sandboxTool(
     (cwd) => createBashTool(cwd),
-    (config, cwd) => createBashTool(cwd, { operations: createBashOps(config, cwd) }),
+    (config, cwd, workspaceRoot) => createBashTool(cwd, { operations: createBashOps(config, cwd, workspaceRoot) }),
     "bash (sandboxed)",
   ));
 
   pi.registerTool(sandboxTool(
     (cwd) => createFindTool(cwd),
-    (config, cwd) => createFindTool(cwd, { operations: createFindOps(config, cwd) }),
+    (config, cwd, workspaceRoot) => createFindTool(cwd, { operations: createFindOps(config, cwd, workspaceRoot) }),
   ));
 
   pi.registerTool(sandboxTool(
     (cwd) => createLsTool(cwd),
-    (config, cwd) => createLsTool(cwd, { operations: createLsOps(config, cwd) }),
+    (config, cwd, workspaceRoot) => createLsTool(cwd, { operations: createLsOps(config, cwd, workspaceRoot) }),
   ));
 
   pi.registerTool(sandboxTool(
     (cwd) => createGrepToolSdk(cwd),
-    (config, cwd) => createGrepTool(cwd, config),
+    (config, cwd, workspaceRoot) => createGrepTool(cwd, config, workspaceRoot),
   ));
 
   // ── Instalação segura de dependências ─────────
@@ -377,7 +378,7 @@ export default function (pi: ExtensionAPI) {
       const plan = createNpmInstallPlan(cwd);
       const result = await execInSandbox(
         config,
-        { command: plan.command, cwd, timeout: 900, signal },
+        { command: plan.command, cwd, workspaceRoot: session?.worktreePath, timeout: 900, signal },
         "normal",
       );
       const output = [result.stdout.toString(), result.stderr].filter(Boolean).join("\n");
@@ -518,7 +519,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("user_bash", (_event, ctx) => {
     const cwd = session?.workspaceCwd ?? ctx?.cwd ?? localCwd;
     if (enabled && config) {
-      return { operations: createBashOps(config, cwd) };
+      return { operations: createBashOps(config, cwd, session?.worktreePath ?? cwd) };
     }
     // Opt-out explícito → comportamento padrão do pi
     if (fallbackToHost) return;
@@ -603,9 +604,9 @@ export default function (pi: ExtensionAPI) {
   // ── session_shutdown ──────────────────────────
   pi.on("session_shutdown", () => {
     enabled = false;
-    config = null;
     projectTrusted = false;
     releaseSession();
+    config = null;
     localCwd = originalCwd;
     fallbackToHost = false;
   });

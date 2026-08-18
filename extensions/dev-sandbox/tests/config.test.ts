@@ -345,13 +345,13 @@ describe("sanitizeConfig", () => {
     expect(cfg.profiles.quarantine).toEqual({ enabled: true, workspace: "none", network: false, ssh: "none" });
   });
 
-  it("workspace de fetch/quarantine é SEMPRE none (invariante); normal aceita formas verbosas", () => {
+  it("workspace de quarentena é none e normal permanece RW", () => {
     const agentDir = writeGlobal('{"profiles": {"fetch": {"workspace": "rw"}, "normal": {"workspace": "readonly"}}}');
     state.agentDir = agentDir;
     const cfg = loadConfig("/cwd/proj");
     expect(cfg.profiles.fetch.workspace).toBe("none");
     expect(cfg.profiles.quarantine.workspace).toBe("none");
-    expect(cfg.profiles.normal.workspace).toBe("ro");
+    expect(cfg.profiles.normal.workspace).toBe("rw");
   });
 
   it("perfil com campos inválidos volta ao default", () => {

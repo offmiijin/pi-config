@@ -102,7 +102,7 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
     } catch { /* metadata inválido ou órfão não removível: não apagar cegamente */ }
   }
   if (gitRoot) {
-    const entries = git(gitRoot, ["worktree", "list", "--porcelain"]).split("\\n");
+    const entries = git(gitRoot, ["worktree", "list", "--porcelain"]).split("\n");
     for (let i = 0; i < entries.length; i++) {
       if (!entries[i].startsWith("worktree ")) continue;
       const path = entries[i].slice("worktree ".length);

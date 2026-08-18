@@ -11,9 +11,9 @@ import type { SandboxConfig } from "../types";
 import { createReadOps } from "./read-ops";
 import { createWriteOps } from "./write-ops";
 
-export function createEditOps(config: SandboxConfig, cwd: string): EditOperations {
-  const readOps = createReadOps(config, cwd);
-  const writeOps = createWriteOps(config, cwd);
+export function createEditOps(config: SandboxConfig, cwd: string, workspaceRoot = cwd): EditOperations {
+  const readOps = createReadOps(config, cwd, workspaceRoot);
+  const writeOps = createWriteOps(config, cwd, workspaceRoot);
   return {
     readFile: readOps.readFile,
     writeFile: writeOps.writeFile,

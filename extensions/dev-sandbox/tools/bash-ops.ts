@@ -70,7 +70,7 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
   }
 }
 
-export function createBashOps(config: SandboxConfig, cwd: string): BashOperations {
+export function createBashOps(config: SandboxConfig, cwd: string, workspaceRoot = cwd): BashOperations {
   return {
     async exec(command, cmdCwd, { onData, signal, timeout, env }) {
       // Sinal já abortado antes do spawn → nem cria o processo
@@ -84,7 +84,7 @@ export function createBashOps(config: SandboxConfig, cwd: string): BashOperation
         throw new Error(BLOCKED_INSTALL_MSG);
       }
 
-      let args = buildBwrapArgs(config, cwd);
+      let args = buildBwrapArgs(config, cwd, "normal", workspaceRoot);
 
       // ── Seccomp BPF ────────────────────────
       const bpfFd = openSeccompFd(config);
@@ -103,7 +103,7 @@ export function createBashOps(config: SandboxConfig, cwd: string): BashOperation
 
       // ── Landlock + comando ────────────────
       // bash -lc carrega profile e tem job control
-      args = wrapWithLandlock(args, ["bash", "-lc", command], config, cwd);
+      args = wrapWithLandlock(args, ["bash", "-lc", command], config, cwd, "normal", workspaceRoot);
 
       return new Promise((resolve, reject) => {
         // stdio: stdin, stdout, stderr + opcionalmente FD 3 (BPF)

@@ -6,7 +6,8 @@ import type { WriteOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
 import { execInSandbox } from "../bwrap-executor";
 
-export function createWriteOps(config: SandboxConfig, cwd: string): WriteOperations {
+export function createWriteOps(config: SandboxConfig, cwd: string, workspaceRoot = cwd): WriteOperations {
+  const workspace = workspaceRoot !== cwd ? { workspaceRoot } : {};
   return {
     async writeFile(filePath, content) {
       const { stderr, exitCode } = await execInSandbox(config, {
@@ -16,6 +17,7 @@ export function createWriteOps(config: SandboxConfig, cwd: string): WriteOperati
           "_", filePath,
         ],
         cwd,
+        ...workspace,
         stdin: content,
       });
       if (exitCode !== 0) {
@@ -27,6 +29,7 @@ export function createWriteOps(config: SandboxConfig, cwd: string): WriteOperati
       const { stderr, exitCode } = await execInSandbox(config, {
         command: ["mkdir", "-p", dirPath],
         cwd,
+        ...workspace,
       });
       if (exitCode !== 0) {
         throw new Error(stderr || `Falha ao criar diretório ${dirPath}`);
