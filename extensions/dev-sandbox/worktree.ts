@@ -14,8 +14,26 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 function safeId(): string { return randomUUID().replace(/[^a-zA-Z0-9-]/g, ""); }
+function isPathWithin(base: string, target: string): boolean {
+  const basePath = resolve(base);
+  const targetPath = resolve(target);
+  return targetPath === basePath || targetPath.startsWith(basePath + sep);
+}
+
+function pathsOverlap(first: string, second: string): boolean {
+  return isPathWithin(first, second) || isPathWithin(second, first);
+}
+
 function assertManagedPath(root: string, path: string): void {
-  if (!resolve(path).startsWith(resolve(root) + "/")) throw new Error(`[dev-sandbox] Worktree fora da área gerenciada: ${path}`);
+  if (!isPathWithin(root, path) || resolve(path) === resolve(root)) {
+    throw new Error(`[dev-sandbox] Worktree fora da área gerenciada: ${path}`);
+  }
+}
+
+function assertNotActiveWorktree(path: string): void {
+  if (pathsOverlap(path, process.cwd())) {
+    throw new Error(`[dev-sandbox] Recusa remover worktree ativo: ${path}`);
+  }
 }
 function writeMetadata(session: SandboxSession): void {
   const metadata: WorktreeMetadata = { ...session, pid: process.pid };
@@ -34,6 +52,7 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
       const metadata = JSON.parse(readFileSync(join(path, METADATA_FILE), "utf8")) as WorktreeMetadata;
       assertManagedPath(worktreeRoot, metadata.worktreePath);
       if (metadata.worktreeRoot !== worktreeRoot || metadata.pid === process.pid) continue;
+      if (pathsOverlap(metadata.worktreePath, process.cwd())) continue;
       try { process.kill(metadata.pid, 0); continue; } catch (error: any) { if (error?.code === "EPERM") continue; if (error?.code !== "ESRCH") continue; }
       cleanupWorktree({ ...metadata, originalCwd: metadata.gitRoot, workspaceCwd: path });
       removed++;
@@ -61,10 +80,15 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
 /** Cria worktree temporário em branch própria baseado no HEAD atual. */
 export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT): SandboxSession {
   const original = resolve(originalCwd);
+  const worktreeRoot = resolve(root);
+  if (isPathWithin(worktreeRoot, original)) {
+    throw new Error(
+      `[dev-sandbox] Não é seguro criar worktree aninhado dentro da área gerenciada: ${original}`,
+    );
+  }
   const gitRoot = git(original, ["rev-parse", "--show-toplevel"]);
   const gitDir = resolve(git(original, ["rev-parse", "--git-common-dir"]));
   const sessionId = safeId();
-  const worktreeRoot = resolve(root);
   const worktreePath = join(worktreeRoot, sessionId);
   const originalBranchName = git(gitRoot, ["branch", "--show-current"]);
   const branchName = `sandbox/${sessionId}`;
@@ -84,6 +108,7 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
 /** Remove worktree e branch criados por createWorktree. Seguro repetir. */
 export function cleanupWorktree(session: SandboxSession): void {
   assertManagedPath(session.worktreeRoot, session.worktreePath);
+  assertNotActiveWorktree(session.worktreePath);
   if (existsSync(session.worktreePath)) { try { git(session.gitRoot, ["worktree", "remove", "--force", session.worktreePath]); } catch { rmSync(session.worktreePath, { recursive: true, force: true }); } }
   try { git(session.gitRoot, ["branch", "-D", session.branchName]); } catch { /* já removida */ }
   rmSync(session.worktreePath, { recursive: true, force: true });

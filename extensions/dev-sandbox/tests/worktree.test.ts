@@ -28,6 +28,14 @@ afterEach(() => {
 });
 
 describe("worktree", () => {
+  it("recusa criar worktree aninhado na área gerenciada", () => {
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const original = join(root, "project");
+    git(root, ["init", "-q", original]);
+
+    expect(() => createWorktree(original, root)).toThrow(/worktree aninhado/);
+  });
+
   it("cria worktree temporário em branch própria", () => {
     const original = repo();
     const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
