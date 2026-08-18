@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { SandboxSession } from "./session";
 
 export const DEFAULT_WORKTREE_ROOT = "/tmp/pi-worktrees";
@@ -11,7 +11,7 @@ const METADATA_FILE = ".pi-sandbox-worktree.json";
 export const WORKTREE_LEASE_INTERVAL_MS = 10_000;
 export const WORKTREE_LEASE_STALE_MS = 60_000;
 const activeLeases = new Map<string, NodeJS.Timeout>();
-type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "originalBranchName" | "worktreePath" | "worktreeRoot" | "startedAt"> & { pid: number };
+type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "originalBranchName" | "worktreePath" | "worktreeRoot" | "workspaceSubdir" | "workspaceCwd" | "startedAt"> & { pid: number };
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -93,7 +93,11 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
       if (pathsOverlap(metadata.worktreePath, process.cwd())) continue;
       if (hasFreshLease(path)) continue;
       try { process.kill(metadata.pid, 0); continue; } catch (error: any) { if (error?.code === "EPERM") continue; if (error?.code !== "ESRCH") continue; }
-      cleanupWorktree({ ...metadata, originalCwd: metadata.gitRoot, workspaceCwd: path });
+      cleanupWorktree({
+        ...metadata,
+        originalCwd: join(metadata.gitRoot, metadata.workspaceSubdir ?? ""),
+        workspaceCwd: metadata.workspaceCwd ?? path,
+      });
       removed++;
     } catch { /* metadata inválido ou órfão não removível: não apagar cegamente */ }
   }
@@ -125,8 +129,18 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
       `[dev-sandbox] Não é seguro criar worktree aninhado dentro da área gerenciada: ${original}`,
     );
   }
-  const gitRoot = git(original, ["rev-parse", "--show-toplevel"]);
-  const gitDir = resolve(git(original, ["rev-parse", "--git-common-dir"]));
+  const gitRoot = resolve(git(original, ["rev-parse", "--show-toplevel"]));
+  const gitDirValue = git(original, ["rev-parse", "--git-common-dir"]);
+  const gitDir = resolve(gitRoot, gitDirValue);
+  const workspaceSubdir = relative(gitRoot, original);
+  if (workspaceSubdir.startsWith("..") || resolve(gitRoot, workspaceSubdir) !== original) {
+    throw new Error(`[dev-sandbox] CWD fora da raiz Git: ${original}`);
+  }
+  if (git(original, ["status", "--porcelain", "--untracked-files=all"])) {
+    throw new Error(
+      `[dev-sandbox] O projeto original possui alterações locais. Faça commit ou stash antes de iniciar o sandbox: ${original}`,
+    );
+  }
   const sessionId = safeId();
   const worktreePath = join(worktreeRoot, sessionId);
   const originalBranchName = git(gitRoot, ["branch", "--show-current"]);
@@ -135,7 +149,8 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
   assertManagedPath(worktreeRoot, worktreePath);
   try {
     git(gitRoot, ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
-    const session: SandboxSession = { sessionId, originalCwd: original, workspaceCwd: worktreePath, worktreeRoot, gitRoot, gitDir, branchName, originalBranchName, worktreePath, startedAt: new Date().toISOString() };
+    const workspaceCwd = workspaceSubdir ? join(worktreePath, workspaceSubdir) : worktreePath;
+    const session: SandboxSession = { sessionId, originalCwd: original, workspaceSubdir, workspaceCwd, worktreeRoot, gitRoot, gitDir, branchName, originalBranchName, worktreePath, startedAt: new Date().toISOString() };
     writeMetadata(session);
     startLease(session.worktreePath);
     return session;
@@ -167,14 +182,14 @@ export function promoteWorktreeChanges(session: SandboxSession, files: string[] 
   const selected = files.map(validateRelativeFile);
   const trackedArgs = ["diff", "--binary", "HEAD", "--", ...(selected.length ? selected : ["."])];
   const patch = execFileSync("git", trackedArgs, { cwd: session.worktreePath, encoding: "buffer" });
-  if (patch.length) execFileSync("git", ["apply", "--binary", "-"], { cwd: session.originalCwd, input: patch, stdio: ["pipe", "pipe", "pipe"] });
+  if (patch.length) execFileSync("git", ["apply", "--binary", "-"], { cwd: session.gitRoot, input: patch, stdio: ["pipe", "pipe", "pipe"] });
 
   const untracked = git(session.worktreePath, ["ls-files", "--others", "--exclude-standard", "--", ...(selected.length ? selected : ["."])])
     .split("\n").filter((file) => Boolean(file) && file !== METADATA_FILE).map(validateRelativeFile);
   for (const file of untracked) {
     const source = join(session.worktreePath, file);
-    const target = join(session.originalCwd, file);
-    if (resolve(target) !== session.originalCwd && !resolve(target).startsWith(session.originalCwd + sep)) {
+    const target = join(session.gitRoot, file);
+    if (resolve(target) !== session.gitRoot && !resolve(target).startsWith(session.gitRoot + sep)) {
       throw new Error(`[dev-sandbox] Destino de promoção fora do projeto: ${file}`);
     }
     mkdirSync(dirname(target), { recursive: true });

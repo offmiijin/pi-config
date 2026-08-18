@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, utimesSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -34,6 +34,30 @@ describe("worktree", () => {
     git(root, ["init", "-q", original]);
 
     expect(() => createWorktree(original, root)).toThrow(/worktree aninhado/);
+  });
+
+  it("recusa projeto original com alterações locais", () => {
+    const original = repo();
+    writeFileSync(join(original, "file.txt"), "dirty\n");
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+
+    expect(() => createWorktree(original, root)).toThrow(/alterações locais/);
+  });
+
+  it("preserva subdiretório original dentro do worktree", () => {
+    const rootRepo = repo();
+    const original = join(rootRepo, "src");
+    mkdirSync(original, { recursive: true });
+    writeFileSync(join(original, "main.ts"), "original\n");
+    git(rootRepo, ["add", "."]);
+    git(rootRepo, ["commit", "-qm", "src"]);
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+
+    expect(session.workspaceSubdir).toBe("src");
+    expect(session.workspaceCwd).toBe(join(session.worktreePath, "src"));
+    expect(readFileSync(join(session.workspaceCwd, "main.ts"), "utf8")).toBe("original\n");
   });
 
   it("cria worktree temporário em branch própria", () => {
