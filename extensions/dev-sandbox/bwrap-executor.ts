@@ -265,6 +265,24 @@ function isPathInside(base: string, target: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel));
 }
 
+function assertDedicatedPath(path: string, cwd: string, label: string): void {
+  const resolvedCwd = resolve(cwd);
+  const resolvedPath = resolve(path);
+  let realCwd = resolvedCwd;
+  let realPath = resolvedPath;
+  try { realCwd = realpathSync(cwd); } catch { /* caminho ainda não criado */ }
+  try { realPath = realpathSync(path); } catch { /* caminho ainda não criado */ }
+
+  if (
+    resolvedPath === resolvedCwd ||
+    isPathInside(resolvedPath, resolvedCwd) ||
+    realPath === realCwd ||
+    isPathInside(realPath, realCwd)
+  ) {
+    throw new Error(`[dev-sandbox] ${label} sobrepõe ou contém o workspace: ${path}`);
+  }
+}
+
 /**
  * Verifica caminho configurado localmente sem seguir para fora do workspace.
  * Caminhos absolutos fora do workspace continuam permitidos explicitamente.
@@ -312,6 +330,7 @@ export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<str
   for (const [name, defaultRel] of Object.entries(CACHE_DIR_DEFAULTS)) {
     const v = cfg[name];
     out[name] = validateConfiguredDir(v || defaultRel, cwd, `cache ${name}`);
+    assertDedicatedPath(out[name], cwd, `cache ${name}`);
   }
   return out;
 }
@@ -337,6 +356,7 @@ export function resolveQuarantineDirs(config: SandboxConfig, cwd: string): { fet
   for (const [name, defaultRel] of Object.entries(QUARANTINE_DIR_DEFAULTS)) {
     const v = cfg[name];
     out[name] = validateConfiguredDir(v || defaultRel, cwd, `quarentena ${name}`);
+    assertDedicatedPath(out[name], cwd, `quarentena ${name}`);
   }
   return out as { fetch: string; runs: string };
 }

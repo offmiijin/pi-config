@@ -77,6 +77,13 @@ describe("resolveCacheDirs", () => {
     expect(() => resolveCacheDirs(cfg, "/proj")).toThrow(/escapa/);
   });
 
+  it("rejeita cache igual ou ancestral ao workspace", () => {
+    const same = makeConfig({ filesystem: { cacheDirs: { npm: "." } } });
+    const ancestor = makeConfig({ filesystem: { cacheDirs: { npm: "/" } } });
+    expect(() => resolveCacheDirs(same, "/proj")).toThrow(/sobrepõe/);
+    expect(() => resolveCacheDirs(ancestor, "/proj")).toThrow(/sobrepõe/);
+  });
+
   it("rejeita symlink local apontando para fora", () => {
     const root = mkdtempSync(join(tmpdir(), "sb-path-"));
     const outside = mkdtempSync(join(tmpdir(), "sb-outside-"));
@@ -93,5 +100,12 @@ describe("resolveQuarantineDirs", () => {
   it("rejeita traversal relativo", () => {
     const cfg = makeConfig({ filesystem: { quarantineDirs: { runs: "../../runs" } } });
     expect(() => resolveQuarantineDirs(cfg, "/proj")).toThrow(/escapa/);
+  });
+
+  it("rejeita quarentena igual ou ancestral ao workspace", () => {
+    const same = makeConfig({ filesystem: { quarantineDirs: { runs: "." } } });
+    const ancestor = makeConfig({ filesystem: { quarantineDirs: { runs: "/" } } });
+    expect(() => resolveQuarantineDirs(same, "/proj")).toThrow(/sobrepõe/);
+    expect(() => resolveQuarantineDirs(ancestor, "/proj")).toThrow(/sobrepõe/);
   });
 });
