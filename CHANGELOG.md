@@ -4,12 +4,18 @@
 
 ### Fixed
 
+- `dev-sandbox`: impede remoção do worktree ativo e criação de worktrees aninhados durante cleanup e testes.
+- `dev-sandbox`: substitui detecção baseada somente em PID por lease renovável entre namespaces, preserva cwd relativo/subdiretórios Git e recusa projetos com alterações locais.
+- `dev-sandbox`: valida caminhos reais em promoções e bloqueia symlinks que escapem do worktree ou projeto original.
+- `dev-sandbox`: reforça quarentena offline, fail-closed para Landlock obrigatório e invalidação do cache de argumentos após mudanças de isolamento.
+- `dev-sandbox`: amplia bloqueio de instalação/execução externa sem bloquear `vitest run` ou `npx --no-install vitest`.
 - `dev-sandbox`: persiste caches npm, pip e clones na quarentena, limpa artefatos sem atividade há mais de 30 dias e rejeita caminhos com traversal ou symlinks fora do workspace (issue [#97](https://github.com/offmiijin/pi-config/issues/97))
 - `custom-theme`/`dev-sandbox`: exibe diretório original, branch sandbox abreviado e branch original no footer durante sessões isoladas.
 - `pi-todo`: corrige sobreposição da tela quando a última tarefa visível falha, ocultando o motivo do erro na linha da tarefa (issue [#90](https://github.com/offmiijin/pi-config/issues/90))
 
 ### Added
 
+- `dev-sandbox`: bootstrap seguro de dependências npm no worktree confiável com `npm ci/install --ignore-scripts` e cache persistente.
 - `dev-sandbox` passou a executar projetos Git em worktrees temporários descartáveis,
   com cleanup de órfãos, configuração de raiz/política e tool `sandbox_promote_changes`
   para preservar alterações explicitamente.
@@ -27,6 +33,7 @@
 
 ### Changed
 
+- `dev-sandbox`: mounts de toolchains sob HOME passam a usar apenas diretórios necessários, sem expor árvores inteiras de `.local`, mise ou cargo.
 - `doctor_check`/`/doctor` passam a validar `pdftotext` (poppler-utils) para extração de PDF do pi-web-search, com hints de instalação por distro
 - `web_fetch` passa a baixar conteúdo não-texto (PDF, imagens, arquivos, ...) como binário para `.sandbox-cache/fetch/`, com extensão derivada do Content-Type (fallback: extensão da URL ou `.bin`), em vez de falhar com `UNSUPPORTED`
 - `web_fetch` passa a salvar páginas (texto) em `.sandbox-cache/fetch/page_<id>/` — um único diretório por sessão do pi (mesmo dir dos downloads binários e da raiz de downloads do `sandbox_fetch`), substituindo o antigo `.sandbox-cache/web-fetch/page_*` (um dir por chamada)
