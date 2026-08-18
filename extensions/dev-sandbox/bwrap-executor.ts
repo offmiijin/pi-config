@@ -396,6 +396,13 @@ function getBwrapCacheKey(config: SandboxConfig, cwd: string, profile: SandboxPr
     config.filesystem.cacheDirs ? Object.values(config.filesystem.cacheDirs).join(",") : "",
     config.filesystem.quarantineDirs ? Object.values(config.filesystem.quarantineDirs).join(",") : "",
     config.capabilities.drop.join(","),
+    String(config.landlock.enabled),
+    String(config.landlock.minAbi),
+    landlockExecHostPath ?? "",
+    ...(["normal", "fetch", "quarantine"] as const).flatMap((name) => {
+      const profile = config.profiles?.[name];
+      return profile ? [name, String(profile.enabled), profile.workspace, String(profile.network), profile.ssh] : [name];
+    }),
   ];
   return parts.join("|");
 }
@@ -833,8 +840,9 @@ function buildFetchArgs(config: SandboxConfig, cwd: string): string[] {
 function buildQuarantineArgs(config: SandboxConfig, cwd: string): string[] {
   const dirs = resolveQuarantineDirs(config, cwd);
   const caches = resolveCacheDirs(config, cwd);
-  const shareNet = config.internet.enabled && (config.profiles?.quarantine?.network ?? false);
-  return buildIsolationArgs(config, cwd, [dirs.runs], shareNet, caches);
+  // Quarentena é sempre offline, mesmo se configuração inválida tentar
+  // habilitar rede no perfil.
+  return buildIsolationArgs(config, cwd, [dirs.runs], false, caches);
 }
 
 /**
@@ -872,6 +880,7 @@ let landlockExecHostPath: string | undefined;
  */
 export function setLandlockExecPath(hostPath: string) {
   landlockExecHostPath = hostPath;
+  bwrapArgsCache.clear();
 }
 
 /** Cache do probe de ABI: undefined = não probado, null = indisponível, number = ABI. */
