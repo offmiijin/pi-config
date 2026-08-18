@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `pi-changes`: evita conflito e alternância duplicada do `Alt+D` com o atalho nativo do editor.
 - `dev-sandbox`: usa a raiz do projeto como workspace quando não há repositório Git, evitando falha na inicialização.
 - `dev-sandbox`: monta a raiz completa do worktree para projetos abertos em subdiretórios e corrige a limpeza de worktrees órfãos registrados no Git.
 - `dev-sandbox`: respeita `cleanup: "never"`, rejeita caches/quarentenas que sobreponham o workspace e alinha as opções do perfil normal ao executor.
@@ -20,6 +21,7 @@
 
 ### Added
 
+- `pi-changes`: adiciona painel TUI flutuante para navegar pelos diffs do worktree, com seleção de arquivos, estatísticas de linhas e atalho `Alt+D`.
 - `dev-sandbox`: adiciona `sandbox_promote_preview`/`sandbox_promote_restore` e os comandos `/promote-preview`/`/promote-restore`, com snapshot seguro para live preview e restauração do projeto original.
 - `dev-sandbox`: bootstrap seguro de dependências npm no worktree confiável com `npm ci/install --ignore-scripts` e cache persistente.
 - `dev-sandbox` passou a executar projetos Git em worktrees temporários descartáveis,
