@@ -164,8 +164,10 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 | `clones` | `.sandbox-cache/clones` | `SANDBOX_CLONE_DIR` — diretório p/ clonar repositórios |
 
 Valor vazio (`""`) = padrão dentro do workspace. Caminho relativo é resolvido
-contra o workspace. Caminho absoluto fora do workspace é bind-montado
-read-write se existir no host (use `extraWritable` para garantir persistência).
+contra o workspace; escapes (`../`) são rejeitados. Symlinks locais que apontam
+para fora do workspace também são rejeitados. Caminho absoluto fora do workspace
+é permitido explicitamente e bind-montado read-write se existir no host (use
+`extraWritable` para garantir persistência).
 
 ### Clonando repositórios
 

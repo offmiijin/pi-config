@@ -9,7 +9,7 @@
 
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync, chmodSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult, SandboxProfileName } from "./types";
 import { resolveSystemPaths } from "./portability";
 
@@ -260,20 +260,58 @@ const CACHE_ENV_VARS: Record<string, string> = {
   clones: "SANDBOX_CLONE_DIR",
 };
 
+function isPathInside(base: string, target: string): boolean {
+  const rel = relative(resolve(base), resolve(target));
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel));
+}
+
+/**
+ * Verifica caminho configurado localmente sem seguir para fora do workspace.
+ * Caminhos absolutos fora do workspace continuam permitidos explicitamente.
+ */
+function validateConfiguredDir(value: string, cwd: string, label: string): string {
+  const target = isAbsolute(value) ? resolve(value) : resolve(cwd, value);
+  const local = !isAbsolute(value) || isPathInside(cwd, target);
+  if (!local) return target;
+
+  if (!isPathInside(cwd, target)) {
+    throw new Error(`[dev-sandbox] ${label} escapa do workspace: ${value}`);
+  }
+
+  // Confere ancestral existente para detectar symlink em caminho criado depois.
+  let existing = target;
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  try {
+    const realCwd = realpathSync(cwd);
+    const realExisting = realpathSync(existing);
+    if (!isPathInside(realCwd, realExisting)) {
+      throw new Error(`[dev-sandbox] ${label} usa symlink fora do workspace: ${value}`);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("[dev-sandbox]")) throw err;
+    // Caminho ainda não criado: será validado no bind após mkdir.
+  }
+
+  return target;
+}
+
 /**
  * Resolve os caminhos reais dos diretórios de cache.
  * - Vazio "" → <cwd>/.sandbox-cache/<nome>
- * - Relativo  → resolvido contra cwd
+ * - Relativo  → resolvido contra cwd; escape do workspace é rejeitado
  * - Absoluto  → mantido (deve ser montado — ver buildBwrapArgs)
+ * - Symlink local apontando para fora do workspace é rejeitado
  */
 export function resolveCacheDirs(config: SandboxConfig, cwd: string): Record<string, string> {
   const cfg = (config.filesystem.cacheDirs ?? {}) as unknown as Record<string, string>;
   const out: Record<string, string> = {};
   for (const [name, defaultRel] of Object.entries(CACHE_DIR_DEFAULTS)) {
     const v = cfg[name];
-    if (!v) out[name] = join(cwd, defaultRel);
-    else if (v.startsWith("/")) out[name] = v;
-    else out[name] = join(cwd, v);
+    out[name] = validateConfiguredDir(v || defaultRel, cwd, `cache ${name}`);
   }
   return out;
 }
@@ -289,17 +327,16 @@ const QUARANTINE_DIR_DEFAULTS: Record<"fetch" | "runs", string> = {
 /**
  * Resolve os caminhos reais dos diretórios de quarentena.
  * - Vazio "" → <cwd>/.sandbox-cache/<nome>
- * - Relativo → resolvido contra cwd
+ * - Relativo → resolvido contra cwd; escape do workspace é rejeitado
  * - Absoluto → mantido (deve ser montado — ver buildIsolationArgs)
+ * - Symlink local apontando para fora do workspace é rejeitado
  */
 export function resolveQuarantineDirs(config: SandboxConfig, cwd: string): { fetch: string; runs: string } {
   const cfg = (config.filesystem.quarantineDirs ?? {}) as unknown as Record<string, string>;
   const out: Record<string, string> = {};
   for (const [name, defaultRel] of Object.entries(QUARANTINE_DIR_DEFAULTS)) {
     const v = cfg[name];
-    if (!v) out[name] = join(cwd, defaultRel);
-    else if (v.startsWith("/")) out[name] = v;
-    else out[name] = join(cwd, v);
+    out[name] = validateConfiguredDir(v || defaultRel, cwd, `quarentena ${name}`);
   }
   return out as { fetch: string; runs: string };
 }
@@ -620,12 +657,14 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
   // e expõe as variáveis de ambiente para as ferramentas (npm, pip, git).
   const cacheDirs = resolveCacheDirs(config, cwd);
   for (const [name, dir] of Object.entries(cacheDirs)) {
+    validateConfiguredDir(dir, cwd, `cache ${name}`);
     try {
       mkdirSync(dir, { recursive: true });
     } catch {
       // Degradação segura: segue sem criar
     }
 
+    validateConfiguredDir(dir, cwd, `cache ${name}`);
     const envVar = CACHE_ENV_VARS[name];
     if (envVar) {
       args.push("--setenv", envVar, dir);
@@ -741,14 +780,17 @@ function buildIsolationArgs(
 
   // ── Diretórios de quarentena e caches — RW explícitos ──
   for (const dir of rwDirs) {
+    validateConfiguredDir(dir, cwd, "diretório de quarentena");
     ensureQuarantineDir(dir);
+    validateConfiguredDir(dir, cwd, "diretório de quarentena");
   }
-  for (const dir of Object.values(cacheDirs)) {
+  for (const [name, dir] of Object.entries(cacheDirs)) {
     try {
       mkdirSync(dir, { recursive: true });
     } catch {
       // Degradação segura — o bind falha e bloqueia a execução.
     }
+    validateConfiguredDir(dir, cwd, `cache ${name}`);
   }
   for (const dir of [...new Set([...rwDirs, ...Object.values(cacheDirs)])]) {
     args.push("--bind", dir, dir);
