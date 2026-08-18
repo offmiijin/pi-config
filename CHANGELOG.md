@@ -30,6 +30,7 @@
 ### Removed
 
 - `dev-sandbox`: remove a limpeza automática de caches por inatividade após 30 dias; caches persistentes agora permanecem até remoção manual.
+- `pi-web-search`: remove a limpeza automática de páginas do `fetch` após sete dias; os arquivos permanecem disponíveis durante a sessão.
 
 ## [1.1.0] - 2026-08-16
 

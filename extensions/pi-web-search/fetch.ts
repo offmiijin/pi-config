@@ -9,8 +9,7 @@
  *
  * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
  * namespace (which mounts $CWD read-write but has isolated /tmp). The fetch root
- * is the same dir used by dev-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch);
- * page dirs (page_*) live inside it and are cleaned after 7 days.
+ * is the same dir used by dev-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch).
  */
 
 import { htmlToMarkdown } from "./html-to-markdown";
@@ -199,36 +198,6 @@ function isPdfBuffer(buf: Buffer): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Cache cleanup
-// ---------------------------------------------------------------------------
-
-const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-/**
- * Remove page directories (page_*, um por sessão do pi) older than 7 days.
- * Only touches dirs with the page_ prefix — artifacts of sandbox_fetch
- * at the fetch root (files, ca-extract/, ...) are never removed.
- * Silently ignores errors (permission, race, etc.).
- */
-async function cleanOldPages(baseDir: string): Promise<void> {
-	const now = Date.now();
-	try {
-		const entries = await fs.readdir(baseDir, { withFileTypes: true });
-		await Promise.all(entries.map(async (entry) => {
-			if (!entry.isDirectory()) return;
-			if (!entry.name.startsWith("page_")) return;
-			const fullPath = path.join(baseDir, entry.name);
-			try {
-				const stat = await fs.stat(fullPath);
-				if (now - stat.mtimeMs > CACHE_MAX_AGE_MS) {
-					await fs.rm(fullPath, { recursive: true, force: true });
-				}
-			} catch { /* ignorar */ }
-		}));
-	} catch { /* baseDir ainda nao existe -- ok */ }
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -259,10 +228,8 @@ export async function fetchPages(
 	maxConcurrent: number = DEFAULT_CONCURRENCY,
 	sessionKey: string = "default",
 ): Promise<FetchOutput> {
-	// 1. Clean pages older than 7 days, then resolve the session dir
-	const fetchRoot = path.join(cwd, ".sandbox-cache", "fetch");
-	await cleanOldPages(fetchRoot);
 	// Um único dir por sessão — texto e binário juntos
+	const fetchRoot = path.join(cwd, ".sandbox-cache", "fetch");
 	const sessionDir = path.join(fetchRoot, `page_${sanitizeSessionKey(sessionKey)}`);
 	await fs.mkdir(sessionDir, { recursive: true });
 	const outputDir = sessionDir;
