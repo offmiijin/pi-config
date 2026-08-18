@@ -383,9 +383,15 @@ function envFingerprint(): string {
   return parts.join("|");
 }
 
-function getBwrapCacheKey(config: SandboxConfig, cwd: string, profile: SandboxProfileName): string {
+function getBwrapCacheKey(
+  config: SandboxConfig,
+  cwd: string,
+  profile: SandboxProfileName,
+  workspaceRoot: string,
+): string {
   const parts = [
     cwd,
+    workspaceRoot,
     profile,
     envFingerprint(),
     String(config.internet.enabled),
@@ -428,11 +434,12 @@ export function buildBwrapArgs(
   config: SandboxConfig,
   cwd: string,
   profile: SandboxProfileName = "normal",
+  workspaceRoot = cwd,
 ): string[] {
-  const key = getBwrapCacheKey(config, cwd, profile);
+  const key = getBwrapCacheKey(config, cwd, profile, workspaceRoot);
   let cached = bwrapArgsCache.get(key);
   if (!cached) {
-    cached = buildProfileArgs(config, cwd, profile);
+    cached = buildProfileArgs(config, cwd, profile, workspaceRoot);
     if (bwrapArgsCache.size >= BWRAP_ARGS_CACHE_MAX) {
       const oldest = bwrapArgsCache.keys().next().value;
       if (oldest !== undefined) bwrapArgsCache.delete(oldest);
@@ -446,21 +453,26 @@ export function buildBwrapArgs(
   // (após binds de extraWritable/cache) para que a negação SEMPRE
   // vença sobre binds de diretórios read-write.
   if (profile === "normal") {
-    appendSensitiveMounts(args, config, cwd);
+    appendSensitiveMounts(args, config, workspaceRoot);
   }
 
   return args;
 }
 
 /** Dispatcher de perfil → construtor de args. */
-function buildProfileArgs(config: SandboxConfig, cwd: string, profile: SandboxProfileName): string[] {
+function buildProfileArgs(
+  config: SandboxConfig,
+  cwd: string,
+  profile: SandboxProfileName,
+  workspaceRoot: string,
+): string[] {
   switch (profile) {
     case "fetch":
       return buildFetchArgs(config, cwd);
     case "quarantine":
       return buildQuarantineArgs(config, cwd);
     default:
-      return buildNormalArgs(config, cwd);
+      return buildNormalArgs(config, cwd, workspaceRoot);
   }
 }
 
@@ -469,7 +481,7 @@ function buildProfileArgs(config: SandboxConfig, cwd: string, profile: SandboxPr
  * host, SSH, caches, whitelist de env. A parte estática independe do
  * estado atual dos arquivos no workspace — o resultado é cacheado.
  */
-function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
+function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd): string[] {
   const home = process.env.HOME || "/root";
   const args: string[] = [
     "--unshare-all",
@@ -547,7 +559,7 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
   }
 
   // Projeto read-write (ponto central do sandbox)
-  args.push("--bind", cwd, cwd);
+  args.push("--bind", workspaceRoot, workspaceRoot);
 
   // Rede do host
   if (config.internet.enabled) {
@@ -663,16 +675,16 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
   // ── Caches persistentes (npm, pip, clones) ────────────
   // Cria os diretórios no host (visíveis no sandbox via bind do $PWD)
   // e expõe as variáveis de ambiente para as ferramentas (npm, pip, git).
-  const cacheDirs = resolveCacheDirs(config, cwd);
+  const cacheDirs = resolveCacheDirs(config, workspaceRoot);
   for (const [name, dir] of Object.entries(cacheDirs)) {
-    validateConfiguredDir(dir, cwd, `cache ${name}`);
+    validateConfiguredDir(dir, workspaceRoot, `cache ${name}`);
     try {
       mkdirSync(dir, { recursive: true });
     } catch {
       // Degradação segura: segue sem criar
     }
 
-    validateConfiguredDir(dir, cwd, `cache ${name}`);
+    validateConfiguredDir(dir, workspaceRoot, `cache ${name}`);
     const envVar = CACHE_ENV_VARS[name];
     if (envVar) {
       args.push("--setenv", envVar, dir);
@@ -680,7 +692,7 @@ function buildNormalArgs(config: SandboxConfig, cwd: string): string[] {
 
     // Caminho fora do workspace → garante montagem read-write própria.
     // Se já coberto por extraWritable/extraReadonly, não duplica o bind.
-    if (!dir.startsWith(cwd + "/")) {
+    if (!dir.startsWith(workspaceRoot + "/")) {
       const alreadyBound = [...config.filesystem.extraWritable, ...config.filesystem.extraReadonly]
         .some((p) => dir === p || dir.startsWith(p + "/"));
       if (!alreadyBound) {
@@ -925,6 +937,7 @@ function buildLandlockArgs(
   config: SandboxConfig,
   cwd: string,
   profile: SandboxProfileName = "normal",
+  workspaceRoot = cwd,
 ): string[] {
   // ── Perfis de quarentena (fetch/quarantine) ─────────────
   // Sistema RO + diretórios explícitos RW. NUNCA o workspace.
@@ -981,7 +994,7 @@ function buildLandlockArgs(
   for (const p of roPaths) args.push("--allow-ro", p);
 
   // ── Read-write paths ─────────────────────
-  const rwPaths = ["/tmp", "/run", cwd];
+  const rwPaths = ["/tmp", "/run", workspaceRoot];
 
   // /dev — read-write, NÃO read-only.
   // Regras Landlock são interseção (todas devem conceder o acesso): com
@@ -995,7 +1008,7 @@ function buildLandlockArgs(
   rwPaths.push("/dev");
 
   // Caches persistentes
-  const cacheDirs = resolveCacheDirs(config, cwd);
+  const cacheDirs = resolveCacheDirs(config, workspaceRoot);
   for (const dir of Object.values(cacheDirs)) {
     if (existsSync(dir)) rwPaths.push(dir);
   }
@@ -1037,11 +1050,12 @@ export function wrapWithLandlock(
   config: SandboxConfig,
   cwd: string,
   profile: SandboxProfileName = "normal",
+  workspaceRoot = cwd,
 ): string[] {
   if (!config.landlock.enabled) {
     return [...bwrapArgs, ...command];
   }
-  const landlockArgs = buildLandlockArgs(config, cwd, profile);
+  const landlockArgs = buildLandlockArgs(config, cwd, profile, workspaceRoot);
   return [...bwrapArgs, ...landlockArgs, ...command];
 }
 
@@ -1073,7 +1087,8 @@ export function execInSandbox(
     // quarentena, onde o processo roda dentro do próprio dir de quarentena
     // e os mounts precisam ser resolvidos a partir do workspace.
     const baseCwd = opts.baseCwd ?? opts.cwd;
-    const baseArgs = buildBwrapArgs(config, baseCwd, profile);
+    const workspaceRoot = opts.workspaceRoot ?? baseCwd;
+    const baseArgs = buildBwrapArgs(config, baseCwd, profile, workspaceRoot);
     let args = [...baseArgs];
 
     // ── Seccomp BPF ──────────────────────────
@@ -1093,7 +1108,7 @@ export function execInSandbox(
 
     // ── Landlock + comando ───────────────────
     // Landlock é aplicado dentro do bwrap, após mounts e seccomp.
-    args = wrapWithLandlock(args, opts.command, config, baseCwd, profile);
+    args = wrapWithLandlock(args, opts.command, config, baseCwd, profile, workspaceRoot);
 
     // stdio: stdin, stdout, stderr, + opcionalmente FD 3 (BPF)
     const stdio: any[] = ["pipe", "pipe", "pipe"];

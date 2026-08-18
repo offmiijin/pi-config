@@ -18,12 +18,14 @@ interface StatResult {
   mtimeMs: number;
 }
 
-export function createLsOps(config: SandboxConfig, cwd: string): LsOperations {
+export function createLsOps(config: SandboxConfig, cwd: string, workspaceRoot = cwd): LsOperations {
+  const workspace = workspaceRoot !== cwd ? { workspaceRoot } : {};
   return {
     async exists(filePath) {
       const { exitCode } = await execInSandbox(config, {
         command: ["test", "-e", filePath],
         cwd,
+        ...workspace,
       });
       return exitCode === 0;
     },
@@ -33,6 +35,7 @@ export function createLsOps(config: SandboxConfig, cwd: string): LsOperations {
       const { stdout, exitCode } = await execInSandbox(config, {
         command: ["stat", "--format=%F|%s|%Y", filePath],
         cwd,
+        ...workspace,
       });
       if (exitCode !== 0 || !stdout.toString().trim()) {
         throw new Error(`Falha ao stat ${filePath}`);
@@ -61,6 +64,7 @@ export function createLsOps(config: SandboxConfig, cwd: string): LsOperations {
           "-printf", "%f\\0",
         ],
         cwd,
+        ...workspace,
       });
       if (exitCode !== 0) {
         throw new Error(`Falha ao listar ${dirPath}`);

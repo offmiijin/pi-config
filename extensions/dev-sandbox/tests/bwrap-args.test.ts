@@ -143,6 +143,15 @@ describe("buildBwrapArgs — flags base e mounts", () => {
     expect(binds).toContain(cwd);
   });
 
+  it("monta raiz completa quando cwd é subdiretório do worktree", () => {
+    const root = fixtureProj();
+    const subdir = join(root, "src");
+    mkdirSync(subdir);
+    const args = buildBwrapArgs(makeConfig(), subdir, "normal", root);
+    expect(flagValues(args, "--bind")).toContain(root);
+    expect(flagValues(args, "--bind")).not.toContain(subdir);
+  });
+
   it("cria HOME vazio antes das montagens", () => {
     const home = fixtureHome();
     process.env.HOME = home;

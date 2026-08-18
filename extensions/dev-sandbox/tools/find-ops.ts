@@ -6,12 +6,14 @@ import type { FindOperations } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "../types";
 import { execInSandbox } from "../bwrap-executor";
 
-export function createFindOps(config: SandboxConfig, cwd: string): FindOperations {
+export function createFindOps(config: SandboxConfig, cwd: string, workspaceRoot = cwd): FindOperations {
+  const workspace = workspaceRoot !== cwd ? { workspaceRoot } : {};
   return {
     async exists(filePath) {
       const { exitCode } = await execInSandbox(config, {
         command: ["test", "-e", filePath],
         cwd,
+        ...workspace,
       });
       return exitCode === 0;
     },
@@ -31,6 +33,7 @@ export function createFindOps(config: SandboxConfig, cwd: string): FindOperation
           "_", searchCwd, pattern,
         ],
         cwd,
+        ...workspace,
       });
       return stdout.toString().trim().split("\n").filter(Boolean);
     },
