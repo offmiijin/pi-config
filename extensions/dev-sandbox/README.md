@@ -61,7 +61,8 @@ Montado read-only:
 
 Montado read-write:
   $PWD                            → diretório do projeto
-  .sandbox-cache/npm, pip, clones → caches persistentes + clones de repositórios
+  .sandbox-cache/npm, pip          → caches persistentes
+  .sandbox-cache/clones             → clones isolados da sessão
   $SSH_AUTH_SOCK (socket)         → ssh-agent socket (modo agent)
 
 Montado como `/dev/null`:
@@ -96,6 +97,18 @@ Alterações do worktree são descartadas depois disso. Worktrees órfãos usam 
 cada 10 segundos e só são removidos após 60 segundos sem renovação; PID isolado não é usado
 como única prova de que sessão morreu. Promoções validam caminhos reais e recusam symlinks
 que apontem para fora do projeto.
+
+### Caches da sessão
+
+`fetch/` e `runs/` são criados no `.sandbox-cache/` do worktree temporário.
+Assim, `web_fetch` produz arquivos acessíveis por `read`/`ls` no mesmo workspace,
+enquanto `runs/` é mascarado no perfil normal e só fica disponível ao perfil
+`quarantine`. Ao encerrar a sessão, esses diretórios são descartados junto com
+o worktree.
+
+Os caches de npm e pip permanecem no projeto original para sobreviver à remoção
+do worktree. Clones são criados no cache da sessão dentro do worktree. O projeto
+original não é exposto como um todo.
 
 ## Configuração
 
@@ -160,7 +173,7 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 > - Se o scan falhar (ex: diretório sem permissão de leitura), a operação
 >   é **bloqueada** (fail-closed) — o sandbox nunca executa sem mascarar.
 
-### `cacheDirs` — caches persistentes
+### `cacheDirs` — caches de ferramentas
 
 | Chave | Padrão | Efeito |
 |---|---|---|
@@ -168,11 +181,13 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 | `pip` | `.sandbox-cache/pip` | `PIP_CACHE_DIR` — cache de pacotes pip |
 | `clones` | `.sandbox-cache/clones` | `SANDBOX_CLONE_DIR` — diretório p/ clonar repositórios |
 
-Valor vazio (`""`) = padrão dentro do workspace. Caminho relativo é resolvido
-contra o workspace; escapes (`../`) são rejeitados. Symlinks locais que apontam
-para fora do workspace também são rejeitados. Caminho absoluto fora do workspace
-é permitido explicitamente e bind-montado read-write se existir no host (use
-`extraWritable` para garantir persistência).
+Valor vazio (`""`) = padrão dentro do workspace. Durante uma sessão com worktree,
+npm/pip usam o cache persistente do projeto original e `clones` usa o worktree
+da sessão. Caminho relativo é resolvido contra o workspace correspondente;
+escapes (`../`) são rejeitados. Symlinks locais que apontam para fora do
+workspace também são rejeitados. Caminho absoluto fora do workspace é permitido
+explicitamente e bind-montado read-write se existir no host (use `extraWritable`
+para garantir persistência).
 
 ### Clonando repositórios
 
@@ -250,11 +265,11 @@ Configuração de perfis (global ou `.pi/sandbox.json`):
 
 ## Cache de pacotes
 
-Caches npm (`NPM_CONFIG_CACHE`), pip (`PIP_CACHE_DIR`) e clones de
-repositórios (`SANDBOX_CLONE_DIR`) são persistidos em `.sandbox-cache/`
-dentro do projeto. O perfil `quarantine` monta os caches configurados
-(`NPM_CONFIG_CACHE`, `PIP_CACHE_DIR` e `SANDBOX_CLONE_DIR`); o workspace
-inteiro continua inacessível.
+Caches npm (`NPM_CONFIG_CACHE`) e pip (`PIP_CACHE_DIR`) são persistidos no
+`.sandbox-cache/` do projeto original. Clones (`SANDBOX_CLONE_DIR`) ficam no
+`.sandbox-cache/` do worktree da sessão e são descartados com ele. O perfil
+`quarantine` monta individualmente os caches configurados; o workspace inteiro
+continua inacessível.
 Adicione ao `.gitignore`:
 
 ```gitignore

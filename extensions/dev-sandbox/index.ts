@@ -173,6 +173,7 @@ export default function (pi: ExtensionAPI) {
       localCwd = session.workspaceCwd;
       pi.events?.emit("custom:dev-sandbox-session", {
         originalCwd: session.originalCwd,
+        workspaceCwd: session.workspaceCwd,
         branchName: session.branchName,
         originalBranchName: session.originalBranchName,
       });
@@ -183,13 +184,17 @@ export default function (pi: ExtensionAPI) {
         config.filesystem.extraWritable.push(session.gitDir);
       }
 
-      // Caches/quarentena persistem no projeto original, mas são montados
-      // individualmente; o restante do projeto original continua inacessível.
-      const persistentCaches = resolveCacheDirs(config, originalCwd);
-      const persistentQuarantine = resolveQuarantineDirs(config, originalCwd);
-      config.filesystem.cacheDirs = persistentCaches as unknown as typeof config.filesystem.cacheDirs;
-      config.filesystem.quarantineDirs = persistentQuarantine;
-      const cleanup = cleanupSandboxCaches(persistentCaches, persistentQuarantine);
+      // npm/pip permanecem persistentes no projeto original; clones, fetch e
+      // runs são específicos desta sessão e ficam no worktree. O projeto
+      // original continua inacessível, salvo pelos caches persistentes
+      // montados individualmente.
+      const originalCaches = resolveCacheDirs(config, originalCwd);
+      const worktreeCaches = resolveCacheDirs(config, localCwd);
+      const sessionCaches = { ...originalCaches, clones: worktreeCaches.clones };
+      const sessionQuarantine = resolveQuarantineDirs(config, localCwd);
+      config.filesystem.cacheDirs = sessionCaches as unknown as typeof config.filesystem.cacheDirs;
+      config.filesystem.quarantineDirs = sessionQuarantine;
+      const cleanup = cleanupSandboxCaches(sessionCaches, sessionQuarantine);
       if (cleanup.removed > 0) {
         console.info(`[dev-sandbox] Limpeza de caches: ${cleanup.removed} entrada(s) removida(s).`);
       }
@@ -253,8 +258,9 @@ export default function (pi: ExtensionAPI) {
 
       enabled = true;
 
-      // Diretórios de quarentena (fetch/runs) — criados com 0o700.
-      const qdirs = resolveQuarantineDirs(config, localCwd);
+      // Diretórios de quarentena (fetch/runs) — criados com 0o700
+      // dentro do worktree da sessão.
+      const qdirs = config.filesystem.quarantineDirs;
       ensureQuarantineDir(qdirs.fetch);
       ensureQuarantineDir(qdirs.runs);
 
@@ -493,7 +499,7 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (!enabled || !config) throw quarantineBlockedError("sandbox_promote");
-      const target = await promoteArtifact(config, originalCwd, params.source, params.target);
+      const target = await promoteArtifact(config, localCwd, params.source, params.target);
       return {
         content: [{ type: "text", text: `Promoted: ${target}` }],
         details: { target },
@@ -555,8 +561,8 @@ export default function (pi: ExtensionAPI) {
     const caches = resolveCacheDirs(config, cwd);
     const sandboxNote =
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
-      `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}, ` +
-      `clone remote repos in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
+      `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}. ` +
+      `Clone remote repos for this session in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
     const dependencyNote = existsSync(join(cwd, "package.json")) && !existsSync(join(cwd, "node_modules"))
       ? "\npackage.json encontrado sem node_modules — use sandbox_install_dependencies."
       : "";
@@ -647,6 +653,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── session_shutdown ──────────────────────────
   pi.on("session_shutdown", () => {
+    pi.events?.emit("custom:dev-sandbox-session-shutdown", {});
     enabled = false;
     projectTrusted = false;
     releaseSession();
