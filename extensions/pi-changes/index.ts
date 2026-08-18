@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { collectChanges } from "./git.ts";
 import { ChangesPanel } from "./panel.ts";
 
@@ -8,6 +9,8 @@ export default function (pi: ExtensionAPI): void {
 	let activePanel: ChangesPanel | null = null;
 	let closeActivePanel: (() => void) | null = null;
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
+	let openingPanel = false;
+	let removeTerminalInputListener: (() => void) | undefined;
 
 	const loadChanges = (ctx: ExtensionContext) =>
 		collectChanges(ctx.cwd, async (args) => pi.exec("git", args, { timeout: 5000 }));
@@ -30,9 +33,11 @@ export default function (pi: ExtensionAPI): void {
 			closeActivePanel?.();
 			return;
 		}
+		if (openingPanel) return;
 
-		const initialSnapshot = await loadChanges(ctx);
+		openingPanel = true;
 		try {
+			const initialSnapshot = await loadChanges(ctx);
 			await ctx.ui.custom<void>(
 			(tui, theme, _keybindings, done) => {
 				const panel = new ChangesPanel(tui, theme, initialSnapshot, done);
@@ -44,7 +49,7 @@ export default function (pi: ExtensionAPI): void {
 			{
 				overlay: true,
 				overlayOptions: {
-					anchor: "left-center",
+					anchor: "center",
 					width: "85%",
 					maxHeight: "90%",
 					margin: 1,
@@ -56,12 +61,27 @@ export default function (pi: ExtensionAPI): void {
 			refreshTimer = undefined;
 			activePanel = null;
 			closeActivePanel = null;
+			openingPanel = false;
 		}
 	};
 
-	pi.registerShortcut("alt+d", {
-		description: "Abrir ou fechar o painel de alterações",
-		handler: openPanel,
+	// Alt+D é tratado antes do editor para evitar o conflito com a ação
+	// nativa `tui.editor.deleteWordForward`.
+	pi.on("session_start", (_event, ctx) => {
+		removeTerminalInputListener?.();
+		removeTerminalInputListener = undefined;
+		if (ctx.mode !== "tui") return;
+
+		removeTerminalInputListener = ctx.ui.onTerminalInput((data) => {
+			if (!matchesKey(data, Key.alt("d"))) return;
+			void openPanel(ctx);
+			return { consume: true };
+		});
+	});
+
+	pi.on("session_shutdown", () => {
+		removeTerminalInputListener?.();
+		removeTerminalInputListener = undefined;
 	});
 
 	// Atualiza rapidamente após operações do agente; o polling cobre alterações
