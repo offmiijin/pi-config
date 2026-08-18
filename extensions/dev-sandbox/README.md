@@ -280,6 +280,13 @@ O Python do sistema precisa fornecer `venv`/`ensurepip`. Como a quarentena
 não possui rede, baixe wheels ou fontes com `sandbox_fetch` e passe-os como
 artefatos para `sandbox_quarantine_exec`.
 
+### Bootstrap de dependências do projeto
+
+Para projeto confiável, use `sandbox_install_dependencies`. A tool executa
+`npm ci --ignore-scripts` (ou `npm install --ignore-scripts` sem lockfile) no
+worktree atual, usando o cache npm persistente. Como worktrees são temporários,
+repita a instalação após reiniciar a sessão; o cache evita baixar tudo de novo.
+
 ### Bootstrap offline de dependências
 
 Cache vazio não é preenchido automaticamente pela quarentena. Fluxo seguro:

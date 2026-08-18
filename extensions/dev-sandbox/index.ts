@@ -58,10 +58,11 @@ import type { SandboxConfig } from "./types";
 import type { SandboxSession } from "./session";
 import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
-import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs } from "./bwrap-executor";
+import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs, execInSandbox } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
 import { cleanupSandboxCaches } from "./cache-cleanup";
 import { dependencyBootstrapHint } from "./dependency-bootstrap";
+import { createNpmInstallPlan } from "./dependency-install";
 import { Type } from "typebox";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
@@ -86,6 +87,7 @@ export default function (pi: ExtensionAPI) {
   let enabled = false;
   /** true com opt-out explícito (--no-sandbox ou enabled:false) → tools do host. */
   let fallbackToHost = false;
+  let projectTrusted = false;
   let localCwd = process.cwd();
   let originalCwd = process.cwd();
   let session: SandboxSession | null = null;
@@ -109,6 +111,7 @@ export default function (pi: ExtensionAPI) {
     config = null;
     session = null;
     fallbackToHost = false;
+    projectTrusted = ctx.isProjectTrusted?.() ?? false;
 
     // --no-sandbox: opt-out explícito → tools do host
     if (pi.getFlag("no-sandbox") as boolean) {
@@ -356,6 +359,43 @@ export default function (pi: ExtensionAPI) {
     (config, cwd) => createGrepTool(cwd, config),
   ));
 
+  // ── Instalação segura de dependências ─────────
+  pi.registerTool({
+    name: "sandbox_install_dependencies",
+    label: "Sandbox Install Dependencies",
+    description:
+      "Installs npm dependencies in the current trusted temporary worktree. " +
+      "Uses npm ci/install with --ignore-scripts and persistent npm cache. " +
+      "Does not accept arbitrary commands or run lifecycle scripts.",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
+      if (!enabled || !config) throw sandboxBlockedError("sandbox_install_dependencies");
+      if (!projectTrusted) {
+        throw new Error("[dev-sandbox] sandbox_install_dependencies exige projeto confiável.");
+      }
+
+      const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
+      const plan = createNpmInstallPlan(cwd);
+      const result = await execInSandbox(
+        config,
+        { command: plan.command, cwd, timeout: 900, signal },
+        "normal",
+      );
+      const output = [result.stdout.toString(), result.stderr].filter(Boolean).join("\n");
+      const text = [output, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
+      return {
+        content: [{ type: "text", text: text || "(no output)" }],
+        details: {
+          exitCode: result.exitCode,
+          cwd,
+          command: plan.command,
+          lockfile: plan.lockfile,
+          cache: resolveCacheDirs(config, originalCwd).npm,
+        },
+      };
+    },
+  });
+
   // ── Tools de quarentena ──────────────────────
   // Exigem sandbox ativo: sem isolamento não há como baixar/executar
   // código externo com segurança (fail-closed, mesmo com --no-sandbox).
@@ -505,6 +545,9 @@ export default function (pi: ExtensionAPI) {
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
       `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}, ` +
       `clone remote repos in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
+    const dependencyNote = existsSync(join(cwd, "package.json")) && !existsSync(join(cwd, "node_modules"))
+      ? "\npackage.json encontrado sem node_modules — use sandbox_install_dependencies."
+      : "";
     const landlockNote = config.landlock.enabled
       ? "\nLandlock filesystem allowlist active."
       : "";
@@ -512,12 +555,13 @@ export default function (pi: ExtensionAPI) {
       "\nInstalling or executing external code (npm install, pip install, curl|bash) is BLOCKED in bash. " +
       "Download/run external code through the quarantine profiles:\n" +
       "- sandbox_fetch: download a file/URL (network ON, NO access to the project).\n" +
+      "- sandbox_install_dependencies: install npm dependencies in trusted worktree with --ignore-scripts.\n" +
       "- sandbox_quarantine_exec: install (npm/pip) or run downloaded code (NO network, NO project " +
       "access, writes only under .sandbox-cache/runs/<work> and configured caches).\n" +
       "- sandbox_promote: copy ONE specific artifact from runs/ back into the project — explicit, " +
       "the only way out.\n" +
       "Use normal bash only for project work.";
-    return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}${landlockNote}${quarantineNote}` };
+    return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}${dependencyNote}${landlockNote}${quarantineNote}` };
   });
 
   // ── /sandbox command ──────────────────────────
@@ -561,6 +605,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     enabled = false;
     config = null;
+    projectTrusted = false;
     releaseSession();
     localCwd = originalCwd;
     fallbackToHost = false;
