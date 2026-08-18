@@ -11,7 +11,7 @@ export interface SandboxSession {
   sessionId: string;
   /** Diretório originalmente aberto pelo usuário. */
   originalCwd: string;
-  /** Raiz do repositório Git original. */
+  /** Raiz do repositório Git original; vazio para projetos sem Git. */
   gitRoot: string;
   /** Diretório administrativo Git montado seletivamente no sandbox. */
   gitDir: string;

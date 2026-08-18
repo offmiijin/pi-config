@@ -25,6 +25,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 vi.mock("../worktree", () => ({
   cleanupOrphanedWorktrees: vi.fn(),
   cleanupWorktree: vi.fn(),
+  isGitRepository: vi.fn(() => true),
   createWorktree: vi.fn((originalCwd: string, worktreeRoot: string) => ({
     sessionId: "test-session",
     originalCwd,

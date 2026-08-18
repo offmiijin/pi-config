@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `dev-sandbox`: usa a raiz do projeto como workspace quando não há repositório Git, evitando falha na inicialização.
 - `dev-sandbox`: monta a raiz completa do worktree para projetos abertos em subdiretórios e corrige a limpeza de worktrees órfãos registrados no Git.
 - `dev-sandbox`: respeita `cleanup: "never"`, rejeita caches/quarentenas que sobreponham o workspace e alinha as opções do perfil normal ao executor.
 - `dev-sandbox`: amplia allowlist Landlock com paths de sistema detectados para manter compatibilidade com Nix e ambientes multilib.

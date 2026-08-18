@@ -56,7 +56,7 @@ import {
 } from "./portability";
 import type { SandboxConfig } from "./types";
 import type { SandboxSession } from "./session";
-import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreePreview, restoreWorktreePreview } from "./worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, isGitRepository, promoteWorktreePreview, restoreWorktreePreview } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs, execInSandbox } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
@@ -164,11 +164,11 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Worktree temporário ───────────────────
-      if (!config.worktree.enabled) {
+      if (!config.worktree.enabled && isGitRepository(originalCwd)) {
         throw new Error("[dev-sandbox] Worktree temporário desabilitado na configuração.");
       }
       session = createWorktree(originalCwd, config.worktree.root);
-      cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
+      if (session.gitRoot) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
       localCwd = session.workspaceCwd;
       pi.events?.emit("custom:dev-sandbox-session", {
         originalCwd: session.originalCwd,
@@ -178,8 +178,9 @@ export default function (pi: ExtensionAPI) {
       });
 
       // Git precisa dos metadados para status/branch/commit/push, mas o código
-      // do projeto original continua fora do namespace.
-      if (!config.filesystem.extraWritable.includes(session.gitDir)) {
+      // do projeto original continua fora do namespace. Projetos sem Git usam
+      // a própria raiz como workspace e não precisam desse mount adicional.
+      if (session.gitDir && !config.filesystem.extraWritable.includes(session.gitDir)) {
         config.filesystem.extraWritable.push(session.gitDir);
       }
 
@@ -597,7 +598,7 @@ export default function (pi: ExtensionAPI) {
         ``,
         `Status: ativo`,
         `Workspace: ${localCwd}`,
-        `Worktree: ${session?.worktreePath ?? "desabilitado"}`,
+        `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
         `Worktree cleanup: ${config.worktree.cleanup}`,
         `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
         `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
