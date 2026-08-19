@@ -316,15 +316,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 					originalBranch ? theme.fg("warning", originalBranch) : "",
 				].join("");
 
-				const statuses = footerData.getExtensionStatuses();
-				const cavemanText = statuses?.get("caveman") || "";
-
-				const leftW = visibleWidth(leftPart);
-				const cavemanW = visibleWidth(cavemanText);
-				const gap = Math.max(1, width - leftW - cavemanW);
-
-				const fullLine = leftPart + " ".repeat(gap) + cavemanText;
-				return [truncateToWidth(fullLine, width)];
+				return [truncateToWidth(leftPart, width)];
 			};
 
 			return {
