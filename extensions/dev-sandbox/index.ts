@@ -123,6 +123,7 @@ export default function (pi: ExtensionAPI) {
   let originalCwd = process.cwd();
   let session: SandboxSession | null = null;
   let persistedBranchName = "";
+  let restoreWarning = "";
 
   function emitSessionState(): void {
     if (!session) return;
@@ -176,6 +177,7 @@ export default function (pi: ExtensionAPI) {
     config = null;
     session = null;
     persistedBranchName = "";
+    restoreWarning = "";
     fallbackToHost = false;
     projectTrusted = ctx.isProjectTrusted?.() ?? false;
 
@@ -236,7 +238,6 @@ export default function (pi: ExtensionAPI) {
       }
       const persistedState = readPersistedSandboxState(ctx);
       persistedBranchName = persistedState?.branchName ?? "";
-      let restoreWarning = "";
       try {
         session = createWorktree(originalCwd, config.worktree.root, {
           restoreBranch: persistedState?.branchName,
@@ -634,6 +635,7 @@ export default function (pi: ExtensionAPI) {
     const sandboxNote =
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
       `Active Git branch: ${session?.branchName || "detached HEAD"}.\n` +
+      (restoreWarning ? `Warning: ${restoreWarning}\n` : "") +
       `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}. ` +
       `Clone remote repos for this session in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
     const dependencyNote = existsSync(join(cwd, "package.json")) && !existsSync(join(cwd, "node_modules"))
