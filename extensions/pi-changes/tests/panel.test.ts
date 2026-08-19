@@ -63,6 +63,9 @@ describe("painel — truncamento e layout", () => {
 		expect(body).toContain("+12");
 		expect(body).toContain("-4");
 		expect(body).toContain("src/utils.ts");
+		expect(body).not.toContain("PgUp");
+		expect(body).not.toContain("PgDn");
+		expect(body).not.toContain("Home/End");
 		for (const line of lines) expect(visibleWidth(line)).toBe(100);
 	});
 
@@ -83,7 +86,7 @@ describe("painel — truncamento e layout", () => {
 });
 
 describe("painel — seleção", () => {
-	it("setas para cima/baixo selecionam arquivos e trocam o código", () => {
+	it("setas e J/K para cima/baixo selecionam arquivos e trocam o código", () => {
 		const { panel, calls } = setup();
 		panel.handleInput("\x1b[B");
 		const selected = panel.render(100).join("\n");
@@ -91,8 +94,10 @@ describe("painel — seleção", () => {
 		expect(selected).not.toContain("line-1");
 		expect(calls.length).toBeGreaterThan(0);
 
-		panel.handleInput("\x1b[A");
+		panel.handleInput("k");
 		expect(panel.render(100).join("\n")).toContain("line-1");
+		panel.handleInput("J");
+		expect(panel.render(100).join("\n")).toContain("const created = true;");
 	});
 
 	it("Enter move o foco para o código e as setas passam a rolá-lo", () => {
@@ -100,10 +105,13 @@ describe("painel — seleção", () => {
 		panel.handleInput("\r");
 		expect(panel.render(100).join("\n")).toContain("rolar código");
 
-		panel.handleInput("\x1b[B");
+		panel.handleInput("J");
 		const scrolled = panel.render(100).join("\n");
 		expect(scrolled).not.toMatch(/line-1\s+│/);
 		expect(scrolled).toContain("line-13");
+
+		panel.handleInput("K");
+		expect(panel.render(100).join("\n")).toMatch(/line-1\s+│/);
 
 		panel.handleInput("\x1b[D");
 		expect(panel.render(100).join("\n")).toContain("Enter código");

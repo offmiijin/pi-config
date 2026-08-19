@@ -94,30 +94,22 @@ export class ChangesPanel implements Component {
 			return;
 		}
 
+		const moveUp = matchesKey(data, Key.up) || matchesKey(data, "k") || data === "K";
+		const moveDown = matchesKey(data, Key.down) || matchesKey(data, "j") || data === "J";
 		if (matchesKey(data, Key.enter)) {
 			this.focus = this.focus === "files" ? "code" : "files";
 			this.tui.requestRender();
 		} else if (matchesKey(data, Key.left) && this.focus === "code") {
 			this.focus = "files";
 			this.tui.requestRender();
-		} else if (matchesKey(data, Key.up)) {
+		} else if (moveUp) {
 			this.focus === "files"
 				? this.selectFile(this.selectedIndex - 1)
 				: this.scrollCode(-1);
-		} else if (matchesKey(data, Key.down)) {
+		} else if (moveDown) {
 			this.focus === "files"
 				? this.selectFile(this.selectedIndex + 1)
 				: this.scrollCode(1);
-		} else if (this.focus === "code" && matchesKey(data, Key.pageUp)) {
-			this.scrollCode(-this.viewportRows());
-		} else if (this.focus === "code" && matchesKey(data, Key.pageDown)) {
-			this.scrollCode(this.viewportRows());
-		} else if (this.focus === "code" && matchesKey(data, Key.home)) {
-			this.codeOffset = 0;
-			this.tui.requestRender();
-		} else if (this.focus === "code" && matchesKey(data, Key.end)) {
-			this.codeOffset = Number.MAX_SAFE_INTEGER;
-			this.tui.requestRender();
 		}
 	}
 
@@ -162,8 +154,8 @@ export class ChangesPanel implements Component {
 		}
 
 		const footerText = this.focus === "files"
-			? " ↑↓ arquivo  Enter código  Alt+D/Esc fechar "
-			: " ↑↓ rolar código  PgUp/PgDn  Home/End  ← arquivos  Alt+D/Esc fechar ";
+			? " ↑↓ K↑ J↓ arquivo  Enter código  Alt+D/Esc fechar "
+			: " ↑↓ K↑ J↓ rolar código  ← arquivos  Alt+D/Esc fechar ";
 		const footer = this.theme.fg("dim", footerText);
 		lines.push(contentRow(footer));
 		lines.push(horizontalRow("╰", "╯"));
