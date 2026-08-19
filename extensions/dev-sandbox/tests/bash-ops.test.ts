@@ -100,4 +100,11 @@ describe("createBashOps — bloqueio antes do spawn", () => {
     const message = res instanceof Error ? res.message : `exit ${res.exitCode}`;
     expect(message).not.toMatch(/bloqueada no bash/);
   });
+
+  it("chama callback após concluir comando normal", async () => {
+    let completed = 0;
+    const ops = createBashOps(DEFAULT_CONFIG, "/tmp", "/tmp", () => { completed++; });
+    await ops.exec("true", "/tmp", { onData: () => {} });
+    expect(completed).toBe(1);
+  });
 });

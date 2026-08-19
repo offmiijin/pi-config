@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges, promoteWorktreePreview, restoreWorktreePreview } from "../worktree";
+import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, promoteWorktreeChanges, promoteWorktreePreview, refreshWorktreeBranch, restoreWorktreePreview } from "../worktree";
 import type { SandboxSession } from "../session";
 
 const sessions: SandboxSession[] = [];
@@ -84,8 +84,73 @@ describe("worktree", () => {
     expect(session.workspaceCwd).toBe(session.worktreePath);
     expect(session.gitRoot).toBe(original);
     expect(session.branchName).toMatch(/^sandbox\//);
+    expect(session.temporaryBranchName).toBe(session.branchName);
     expect(readFileSync(join(session.workspaceCwd, "file.txt"), "utf8")).toBe("original\n");
     expect(git(session.workspaceCwd, ["branch", "--show-current"])).toBe(session.branchName);
+  });
+
+  it("anexa novo worktree diretamente à branch persistida", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const first = createWorktree(original, root);
+    sessions.push(first);
+    const feature = "feat/persisted-worktree";
+    git(first.workspaceCwd, ["switch", "-c", feature]);
+    writeFileSync(join(first.workspaceCwd, "feature.txt"), "persisted\n");
+    git(first.workspaceCwd, ["add", "."]);
+    git(first.workspaceCwd, ["commit", "-qm", "feature"]);
+    cleanupWorktree(first);
+
+    const resumed = createWorktree(original, root, { restoreBranch: feature });
+    sessions.push(resumed);
+
+    expect(resumed.branchName).toBe(feature);
+    expect(resumed.temporaryBranchName).toBe("");
+    expect(git(resumed.workspaceCwd, ["branch", "--show-current"])).toBe(feature);
+    expect(readFileSync(join(resumed.workspaceCwd, "feature.txt"), "utf8")).toBe("persisted\n");
+
+    cleanupWorktree(resumed);
+    expect(git(original, ["branch", "--list", feature])).toContain(feature);
+  });
+
+  it("atualiza branch ativa no metadata sem assumir ownership da branch nomeada", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const session = createWorktree(original, root);
+    sessions.push(session);
+    const feature = "feat/refresh-worktree";
+    git(session.workspaceCwd, ["switch", "-c", feature]);
+
+    expect(refreshWorktreeBranch(session)).toBe(true);
+    expect(session.branchName).toBe(feature);
+    const metadata = JSON.parse(readFileSync(join(session.worktreePath, ".pi-sandbox-worktree.json"), "utf8")) as {
+      branchName: string;
+      temporaryBranchName: string;
+    };
+    expect(metadata.branchName).toBe(feature);
+    expect(metadata.temporaryBranchName).toMatch(/^sandbox\//);
+
+    cleanupWorktree(session);
+    expect(git(original, ["branch", "--list", feature])).toContain(feature);
+  });
+
+  it("recusa restaurar branch persistida ocupada em outro worktree", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const first = createWorktree(original, root);
+    sessions.push(first);
+    const feature = "feat/occupied-worktree";
+    git(first.workspaceCwd, ["switch", "-c", feature]);
+
+    expect(() => createWorktree(original, root, { restoreBranch: feature })).toThrow(/já está em uso/);
+  });
+
+  it("sinaliza branch persistida apagada", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+
+    expect(() => createWorktree(original, root, { restoreBranch: "feat/missing-worktree" }))
+      .toThrow(/não encontrada/);
   });
 
   it("preserva worktree com lease fresco mesmo com PID invisível", () => {

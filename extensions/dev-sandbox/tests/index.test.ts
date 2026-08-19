@@ -25,15 +25,17 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 vi.mock("../worktree", () => ({
   cleanupOrphanedWorktrees: vi.fn(),
   cleanupWorktree: vi.fn(),
+  refreshWorktreeBranch: vi.fn(() => false),
   isGitRepository: vi.fn(() => true),
-  createWorktree: vi.fn((originalCwd: string, worktreeRoot: string) => ({
+  createWorktree: vi.fn((originalCwd: string, worktreeRoot: string, options?: { restoreBranch?: string }) => ({
     sessionId: "test-session",
     originalCwd,
     workspaceCwd: originalCwd,
     workspaceSubdir: "",
     gitRoot: originalCwd,
     gitDir: `${originalCwd}/.git`,
-    branchName: "sandbox/test-session",
+    branchName: options?.restoreBranch ?? "sandbox/test-session",
+    temporaryBranchName: options?.restoreBranch ? "" : "sandbox/test-session",
     originalBranchName: "main",
     baseCommit: "base-commit",
     worktreeRoot,
@@ -60,13 +62,14 @@ vi.mock("../config", async (importOriginal) => {
 });
 
 import extension from "../index";
-import { cleanupWorktree } from "../worktree";
+import { cleanupWorktree, createWorktree, refreshWorktreeBranch } from "../worktree";
 import { DEFAULT_CONFIG } from "../types";
 
 interface FakeCtx {
   cwd: string;
   hasUI: boolean;
   ui: { notify: ReturnType<typeof vi.fn>; setStatus: ReturnType<typeof vi.fn> };
+  sessionManager?: { getBranch: () => unknown[] };
 }
 
 function fakePi() {
@@ -79,12 +82,18 @@ function fakePi() {
     on: (ev: string, h: (event: unknown, ctx: unknown) => unknown) => handlers.set(ev, h),
     registerTool: (t: { name: string; execute: (...a: unknown[]) => Promise<unknown> }) => tools.push(t),
     registerCommand: (n: string, d: { handler: (args: string, ctx: unknown) => unknown }) => commands.set(n, d),
+    appendEntry: vi.fn(),
   };
   return { pi, handlers, tools, commands };
 }
 
-function fakeCtx(): FakeCtx {
-  return { cwd: process.cwd(), hasUI: false, ui: { notify: vi.fn(), setStatus: vi.fn() } };
+function fakeCtx(entries: unknown[] = []): FakeCtx {
+  return {
+    cwd: process.cwd(),
+    hasUI: false,
+    ui: { notify: vi.fn(), setStatus: vi.fn() },
+    sessionManager: { getBranch: () => entries },
+  };
 }
 
 beforeEach(() => {
@@ -92,6 +101,8 @@ beforeEach(() => {
   state.loadConfigCalls = [];
   state.loadConfigReturn = null;
   vi.mocked(cleanupWorktree).mockClear();
+  vi.mocked(createWorktree).mockClear();
+  vi.mocked(refreshWorktreeBranch).mockClear();
 });
 
 describe("index — orquestração", () => {
@@ -109,6 +120,46 @@ describe("index — orquestração", () => {
     expect(res.systemPrompt).toContain("sandboxed");
     expect(res.systemPrompt).toContain(".sandbox-cache/clones");
     expect(res.systemPrompt).toContain("/tmp is ephemeral");
+  });
+
+  it("restaura a branch persistida no novo worktree", async () => {
+    const { pi, handlers } = fakePi();
+    extension(pi as never);
+    const ctx = fakeCtx([{
+      type: "custom",
+      customType: "dev-sandbox-state",
+      data: { version: 1, branchName: "feat/new-feature" },
+    }]);
+
+    await handlers.get("session_start")!({}, ctx);
+
+    expect(createWorktree).toHaveBeenCalledWith(
+      process.cwd(),
+      DEFAULT_CONFIG.worktree.root,
+      { restoreBranch: "feat/new-feature" },
+    );
+    const prompt = handlers.get("before_agent_start")!(
+      { systemPrompt: "base" },
+      { cwd: process.cwd() },
+    ) as { systemPrompt: string };
+    expect(prompt.systemPrompt).toContain("Active Git branch: feat/new-feature");
+  });
+
+  it("persiste branch nomeada quando o worktree muda de branch", async () => {
+    const { pi, handlers } = fakePi();
+    extension(pi as never);
+    await handlers.get("session_start")!({}, fakeCtx());
+    vi.mocked(refreshWorktreeBranch).mockImplementationOnce((current) => {
+      current.branchName = "feat/new-feature";
+      return true;
+    });
+
+    handlers.get("session_shutdown")!({}, {});
+
+    expect(pi.appendEntry).toHaveBeenCalledWith(
+      "dev-sandbox-state",
+      { version: 1, branchName: "feat/new-feature" },
+    );
   });
 
   it("comando /sandbox mostra caches e clone dir", async () => {

@@ -70,7 +70,12 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
   }
 }
 
-export function createBashOps(config: SandboxConfig, cwd: string, workspaceRoot = cwd): BashOperations {
+export function createBashOps(
+  config: SandboxConfig,
+  cwd: string,
+  workspaceRoot = cwd,
+  onCommandComplete?: () => void,
+): BashOperations {
   return {
     async exec(command, cmdCwd, { onData, signal, timeout, env }) {
       // Sinal já abortado antes do spawn → nem cria o processo
@@ -165,6 +170,7 @@ export function createBashOps(config: SandboxConfig, cwd: string, workspaceRoot 
           } else if (timedOut) {
             reject(new Error(`timeout:${timeout}`));
           } else {
+            try { onCommandComplete?.(); } catch { /* tracking não pode falhar o comando */ }
             resolve({ exitCode: code });
           }
         });

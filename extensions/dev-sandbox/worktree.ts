@@ -11,7 +11,27 @@ const METADATA_FILE = ".pi-sandbox-worktree.json";
 export const WORKTREE_LEASE_INTERVAL_MS = 10_000;
 export const WORKTREE_LEASE_STALE_MS = 60_000;
 const activeLeases = new Map<string, NodeJS.Timeout>();
-type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "originalBranchName" | "baseCommit" | "worktreePath" | "worktreeRoot" | "workspaceSubdir" | "workspaceCwd" | "startedAt"> & { pid: number };
+type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "temporaryBranchName" | "originalBranchName" | "baseCommit" | "worktreePath" | "worktreeRoot" | "workspaceSubdir" | "workspaceCwd" | "startedAt"> & { pid: number };
+
+export interface CreateWorktreeOptions {
+  /** Branch persistida que deve ser anexada diretamente ao novo worktree. */
+  restoreBranch?: string;
+}
+
+export class WorktreeBranchUnavailableError extends Error {
+  constructor(
+    public readonly branchName: string,
+    public readonly reason: "missing" | "occupied",
+    public readonly occupiedPath?: string,
+  ) {
+    super(
+      reason === "missing"
+        ? `[dev-sandbox] Branch persistida não encontrada: ${branchName}`
+        : `[dev-sandbox] Branch persistida já está em uso em outro worktree: ${branchName}${occupiedPath ? ` (${occupiedPath})` : ""}`,
+    );
+    this.name = "WorktreeBranchUnavailableError";
+  }
+}
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -66,6 +86,46 @@ function writeMetadata(session: SandboxSession): void {
   writeFileSync(metadataPath(session.worktreePath), JSON.stringify(metadata, null, 2) + "\n", { mode: 0o600 });
 }
 
+/** Atualiza a branch ativa e o metadata do worktree após comandos Git. */
+export function refreshWorktreeBranch(session: SandboxSession): boolean {
+  if (!session.gitRoot || !existsSync(session.worktreePath)) return false;
+  const branchName = git(session.worktreePath, ["branch", "--show-current"]);
+  if (branchName === session.branchName) return false;
+  session.branchName = branchName;
+  writeMetadata(session);
+  return true;
+}
+
+function metadataSession(metadata: WorktreeMetadata): SandboxSession {
+  return {
+    ...metadata,
+    temporaryBranchName:
+      metadata.temporaryBranchName ??
+      (metadata.branchName?.startsWith("sandbox/") ? metadata.branchName : ""),
+    originalCwd: join(metadata.gitRoot, metadata.workspaceSubdir ?? ""),
+    workspaceCwd: metadata.workspaceCwd ?? metadata.worktreePath,
+  };
+}
+
+function localBranchExists(gitRoot: string, branchName: string): boolean {
+  try {
+    git(gitRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function worktreePathForBranch(gitRoot: string, branchName: string): string | undefined {
+  const lines = git(gitRoot, ["worktree", "list", "--porcelain"]).split("\n");
+  let path = "";
+  for (const line of lines) {
+    if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
+    if (line === `branch refs/heads/${branchName}`) return path;
+  }
+  return undefined;
+}
+
 function refreshLease(worktreePath: string): void {
   const now = new Date();
   try {
@@ -112,11 +172,7 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
       if (pathsOverlap(metadata.worktreePath, process.cwd())) continue;
       if (hasFreshLease(path)) continue;
       try { process.kill(metadata.pid, 0); continue; } catch (error: any) { if (error?.code === "EPERM") continue; if (error?.code !== "ESRCH") continue; }
-      cleanupWorktree({
-        ...metadata,
-        originalCwd: join(metadata.gitRoot, metadata.workspaceSubdir ?? ""),
-        workspaceCwd: metadata.workspaceCwd ?? path,
-      });
+      cleanupWorktree(metadataSession(metadata));
       removed++;
     } catch { /* metadata inválido ou órfão não removível: não apagar cegamente */ }
   }
@@ -127,11 +183,13 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
       const path = entries[i].slice("worktree ".length);
       const branchLine = entries.slice(i, i + 5).find((line) => line.startsWith("branch "));
       const branch = branchLine?.slice("branch ".length).replace("refs/heads/", "") ?? "";
-      if (!isManagedWorktreePath(path, worktreeRoot) || !branch.startsWith("sandbox/")) continue;
+      if (!isManagedWorktreePath(path, worktreeRoot)) continue;
       if (existsSync(join(path, METADATA_FILE))) continue;
       try {
         git(gitRoot, ["worktree", "remove", "--force", path]);
-        try { git(gitRoot, ["branch", "-D", branch]); } catch { /* branch já removida */ }
+        if (branch.startsWith("sandbox/")) {
+          try { git(gitRoot, ["branch", "-D", branch]); } catch { /* branch já removida */ }
+        }
         removed++;
       } catch { /* worktree inválido: não apagar fora do Git */ }
     }
@@ -146,7 +204,11 @@ export function cleanupOrphanedWorktrees(root = DEFAULT_WORKTREE_ROOT, gitRoot?:
  * aberta pelo usuário é usada como workspace do sandbox; nenhuma operação
  * Git ou limpeza de worktree é tentada.
  */
-export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT): SandboxSession {
+export function createWorktree(
+  originalCwd: string,
+  root = DEFAULT_WORKTREE_ROOT,
+  options: CreateWorktreeOptions = {},
+): SandboxSession {
   const original = resolve(originalCwd);
   const worktreeRoot = resolve(root);
   const gitRoot = gitRootOrNull(original);
@@ -160,6 +222,7 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
       gitRoot: "",
       gitDir: "",
       branchName: "",
+      temporaryBranchName: "",
       originalBranchName: "",
       baseCommit: "",
       worktreePath: original,
@@ -185,14 +248,27 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
   const sessionId = safeId();
   const worktreePath = join(worktreeRoot, sessionId);
   const originalBranchName = git(gitRoot, ["branch", "--show-current"]);
-  const baseCommit = git(original, ["rev-parse", "HEAD"]);
-  const branchName = `sandbox/${sessionId}`;
+  const restoreBranch = options.restoreBranch?.trim() || "";
+  if (restoreBranch) {
+    if (!localBranchExists(gitRoot, restoreBranch)) {
+      throw new WorktreeBranchUnavailableError(restoreBranch, "missing");
+    }
+    const occupiedPath = worktreePathForBranch(gitRoot, restoreBranch);
+    if (occupiedPath) {
+      throw new WorktreeBranchUnavailableError(restoreBranch, "occupied", occupiedPath);
+    }
+  }
+  const branchName = restoreBranch || `sandbox/${sessionId}`;
+  const temporaryBranchName = restoreBranch ? "" : branchName;
   mkdirSync(worktreeRoot, { recursive: true, mode: 0o700 });
   assertManagedPath(worktreeRoot, worktreePath);
   try {
-    git(gitRoot, ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
+    git(gitRoot, restoreBranch
+      ? ["worktree", "add", worktreePath, restoreBranch]
+      : ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
     const workspaceCwd = workspaceSubdir ? join(worktreePath, workspaceSubdir) : worktreePath;
-    const session: SandboxSession = { sessionId, originalCwd: original, workspaceSubdir, workspaceCwd, worktreeRoot, gitRoot, gitDir, branchName, originalBranchName, baseCommit, worktreePath, startedAt: new Date().toISOString() };
+    const baseCommit = git(worktreePath, ["rev-parse", "HEAD"]);
+    const session: SandboxSession = { sessionId, originalCwd: original, workspaceSubdir, workspaceCwd, worktreeRoot, gitRoot, gitDir, branchName, temporaryBranchName, originalBranchName, baseCommit, worktreePath, startedAt: new Date().toISOString() };
     writeMetadata(session);
     startLease(session.worktreePath);
     return session;
@@ -206,13 +282,15 @@ export function createWorktree(originalCwd: string, root = DEFAULT_WORKTREE_ROOT
 export function cleanupWorktree(session: SandboxSession): void {
   // Projetos sem Git usam a raiz original diretamente e não criam recursos
   // temporários para remover.
-  if (!session.gitRoot || !session.branchName) return;
+  if (!session.gitRoot) return;
   assertManagedPath(session.worktreeRoot, session.worktreePath);
   assertNotActiveWorktree(session.worktreePath);
   restoreWorktreePreview(session);
   stopLease(session.worktreePath);
   if (existsSync(session.worktreePath)) { try { git(session.gitRoot, ["worktree", "remove", "--force", session.worktreePath]); } catch { rmSync(session.worktreePath, { recursive: true, force: true }); } }
-  try { git(session.gitRoot, ["branch", "-D", session.branchName]); } catch { /* já removida */ }
+  if (session.temporaryBranchName) {
+    try { git(session.gitRoot, ["branch", "-D", session.temporaryBranchName]); } catch { /* já removida */ }
+  }
   rmSync(session.worktreePath, { recursive: true, force: true });
 }
 function validateRelativeFile(file: string): string {
