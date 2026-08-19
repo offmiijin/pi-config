@@ -676,6 +676,7 @@ export default function (pi: ExtensionAPI) {
         `Status: ativo`,
         `Workspace: ${localCwd}`,
         `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
+        `Branch: ${session?.branchName || "detached HEAD"}`,
         `Worktree cleanup: ${config.worktree.cleanup}`,
         `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
         `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
