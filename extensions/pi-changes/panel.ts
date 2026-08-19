@@ -141,11 +141,15 @@ export class ChangesPanel implements Component {
 			: this.theme.fg("accent", this.theme.bold(
 				`Alterações  +${formatNumber(this.snapshot.totalAdditions)} -${formatNumber(this.snapshot.totalDeletions)}`,
 			));
-		const header = `│${padToWidth(` ${title}`, innerWidth)}│`;
-		const separator = `│${"─".repeat(diffWidth)}┼${"─".repeat(metadataWidth)}│`;
+		const contentRow = (content: string): string =>
+			`│${padToWidth(content, innerWidth)}│`;
+		const horizontalRow = (left: string, right: string): string =>
+			`${left}${"─".repeat(innerWidth)}${right}`;
+		// A haste vertical da divisória começa abaixo do cabeçalho; `┬` evita desenhá-la dentro do título.
+		const separator = `├${"─".repeat(diffWidth)}┬${"─".repeat(metadataWidth)}┤`;
 		const lines = [
-			`╭${"─".repeat(innerWidth)}╮`,
-			header,
+			horizontalRow("╭", "╮"),
+			contentRow(` ${title}`),
 			separator,
 		];
 
@@ -159,8 +163,8 @@ export class ChangesPanel implements Component {
 			"dim",
 			` ↑↓ arquivo  PgUp/PgDn diff  Home/End  Alt+D/Esc fechar `,
 		);
-		lines.push(`│${padToWidth(footer, innerWidth)}│`);
-		lines.push(`╰${"─".repeat(innerWidth)}╯`);
+		lines.push(contentRow(footer));
+		lines.push(horizontalRow("╰", "╯"));
 		return lines;
 	}
 
