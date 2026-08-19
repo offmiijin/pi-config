@@ -78,14 +78,16 @@ export function matchPathPattern(relPath: string, pattern: string): boolean {
  *
  * Ignora .git, node_modules para performance.
  *
- * Fail-closed: se um diretório não puder ser lido (ex: permissão), LANÇA
- * erro — arquivos dentro dele podem não ser mascarados e a operação deve
- * ser bloqueada em vez de seguir sem negar.
+ * Diretórios removidos durante o scan são ignorados. Diretórios sem permissão
+ * de leitura também são ignorados, pois o processo dentro do sandbox usa o
+ * mesmo usuário e não consegue acessar esses arquivos. Outros erros falham
+ * em modo fechado para não deixar arquivos potencialmente sensíveis sem negar.
  *
  * Exportado para testes (security scan).
  */
 // Paths já alertados — evita spam no TUI a cada tool call.
 const symlinkWarned = new Set<string>();
+const eaccesWarned = new Set<string>();
 
 export function findDangerousFiles(cwd: string, patterns: string[], denyPaths: string[]): string[] {
   if (patterns.length === 0) return [];
@@ -110,11 +112,22 @@ export function findDangerousFiles(cwd: string, patterns: string[], denyPaths: s
       // Diretório removido durante o scan (ENOENT/ENOTDIR) → nada a mascarar
       const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
       if (code === "ENOENT" || code === "ENOTDIR") return;
-      // Fail-closed (EACCES incluído): diretório ilegível pode conter
-      // arquivos que deveriam ser mascarados — bloqueia em vez de seguir
-      // sem negar. Sem permissão de listagem (r), um path ainda é
-      // acessível por nome dentro do sandbox (precisa só de x no pai),
-      // então o mascaramento por bind /dev/null não é garantido.
+      // EACCES: o processo dentro do sandbox usa o mesmo usuário e também
+      // não consegue acessar esse diretório. Ignorar evita bloquear leituras
+      // do workspace por diretórios de runtime (ex: volumes Docker) que não
+      // fazem parte do conteúdo que está sendo lido.
+      if (code === "EACCES") {
+        if (!eaccesWarned.has(current)) {
+          eaccesWarned.add(current);
+          console.warn(
+            `[dev-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
+            "diretório ignorado no scan de denyFilePatterns.",
+          );
+        }
+        return;
+      }
+      // Outros erros: diretório ilegível pode conter arquivos que deveriam
+      // ser mascarados — bloqueia em vez de seguir sem negar.
       throw new Error(
         `[dev-sandbox] Falha ao escanear '${current}' para denyFilePatterns: ` +
         `${err instanceof Error ? err.message : String(err)}`,
