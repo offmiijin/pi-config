@@ -92,11 +92,19 @@ com alterações locais são recusados para evitar perder estado; faça commit o
 Sessões iniciadas dentro de `/tmp/pi-worktrees` também são recusadas para impedir worktrees
 aninhados.
 
-Ao encerrar sessão, o último preview é restaurado antes da remoção do worktree e da branch.
-Alterações do worktree são descartadas depois disso. Worktrees órfãos usam lease renovado a
-cada 10 segundos e só são removidos após 60 segundos sem renovação; PID isolado não é usado
-como única prova de que sessão morreu. Promoções validam caminhos reais e recusam symlinks
-que apontem para fora do projeto.
+Ao encerrar sessão, o último preview é restaurado antes da remoção do worktree. A branch
+criada automaticamente pelo sandbox é removida, mas branches de trabalho nomeadas criadas
+pelo usuário ou pelo modelo (por exemplo, `feat/new-feature`) permanecem no repositório.
+O branch de trabalho ativo é persistido na sessão do pi; ao usar `resume`, um novo worktree
+aleatório é anexado diretamente a esse branch, quando ele ainda existe e está livre.
+
+Se a branch persistida estiver ocupada em outro worktree, a inicialização é bloqueada sem
+forçar o checkout. Se ela tiver sido apagada, o sandbox cria um novo `sandbox/<session-id>`
+a partir da branch original atual e exibe um aviso; esse aviso continua até uma nova branch
+de trabalho ser definida. Worktrees órfãos usam lease renovado a cada 10 segundos e só são
+removidos após 60 segundos sem renovação; PID isolado não é usado como única prova de que
+sessão morreu. Promoções validam caminhos reais e recusam symlinks que apontem para fora do
+projeto.
 
 ### Caches da sessão
 
