@@ -71,6 +71,8 @@ describe("painel — truncamento e layout", () => {
 		expect(lines[0]!.endsWith("╮")).toBe(true);
 		expect(lines[2]!.startsWith("├")).toBe(true);
 		expect(lines[2]!.endsWith("┤")).toBe(true);
+		expect(lines[2]!).toContain("┬");
+		expect(lines[2]!).not.toContain("┼");
 		expect(lines.at(-1)!.startsWith("╰")).toBe(true);
 		expect(lines.at(-1)!.endsWith("╯")).toBe(true);
 		for (const line of lines) expect(visibleWidth(line)).toBe(160);

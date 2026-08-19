@@ -145,7 +145,8 @@ export class ChangesPanel implements Component {
 			`│${padToWidth(content, innerWidth)}│`;
 		const horizontalRow = (left: string, right: string): string =>
 			`${left}${"─".repeat(innerWidth)}${right}`;
-		const separator = `├${"─".repeat(diffWidth)}┼${"─".repeat(metadataWidth)}┤`;
+		// A haste vertical da divisória começa abaixo do cabeçalho; `┬` evita desenhá-la dentro do título.
+		const separator = `├${"─".repeat(diffWidth)}┬${"─".repeat(metadataWidth)}┤`;
 		const lines = [
 			horizontalRow("╭", "╮"),
 			contentRow(` ${title}`),
