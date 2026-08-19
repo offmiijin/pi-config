@@ -6,9 +6,24 @@
  * buildBwrapArgs/spawn, então não depende de bwrap).
  */
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isBlockedInstall, createBashOps } from "../tools/bash-ops";
 import { DEFAULT_CONFIG } from "../types";
+
+const workspaces: string[] = [];
+
+function workspace(): string {
+  const cwd = mkdtempSync(join(tmpdir(), "sb-bash-"));
+  workspaces.push(cwd);
+  return cwd;
+}
+
+afterEach(() => {
+  for (const cwd of workspaces.splice(0)) rmSync(cwd, { recursive: true, force: true });
+});
 
 describe("isBlockedInstall — comandos bloqueados", () => {
   const blocked = [
@@ -95,16 +110,18 @@ describe("createBashOps — bloqueio antes do spawn", () => {
     // O check não lança a mensagem de bloqueio. Em ambiente com bwrap real
     // o comando executa (exitCode 1: npm sem package.json); sem bwrap,
     // rejeita com erro de spawn — nenhum dos dois é a mensagem de bloqueio.
-    const ops = createBashOps(DEFAULT_CONFIG, "/tmp");
-    const res = await ops.exec("npm test", "/tmp", { onData: () => {} }).catch((e: Error) => e);
+    const cwd = workspace();
+    const ops = createBashOps(DEFAULT_CONFIG, cwd);
+    const res = await ops.exec("npm test", cwd, { onData: () => {} }).catch((e: Error) => e);
     const message = res instanceof Error ? res.message : `exit ${res.exitCode}`;
     expect(message).not.toMatch(/bloqueada no bash/);
   });
 
   it("chama callback após concluir comando normal", async () => {
     let completed = 0;
-    const ops = createBashOps(DEFAULT_CONFIG, "/tmp", "/tmp", () => { completed++; });
-    await ops.exec("true", "/tmp", { onData: () => {} });
+    const cwd = workspace();
+    const ops = createBashOps(DEFAULT_CONFIG, cwd, cwd, () => { completed++; });
+    await ops.exec("true", cwd, { onData: () => {} });
     expect(completed).toBe(1);
   });
 });
