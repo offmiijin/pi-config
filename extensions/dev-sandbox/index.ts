@@ -56,7 +56,16 @@ import {
 } from "./portability";
 import type { SandboxConfig } from "./types";
 import type { SandboxSession } from "./session";
-import { cleanupOrphanedWorktrees, cleanupWorktree, createWorktree, isGitRepository, promoteWorktreePreview, restoreWorktreePreview } from "./worktree";
+import {
+  cleanupOrphanedWorktrees,
+  cleanupWorktree,
+  createWorktree,
+  isGitRepository,
+  promoteWorktreePreview,
+  refreshWorktreeBranch,
+  restoreWorktreePreview,
+  WorktreeBranchUnavailableError,
+} from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs, execInSandbox } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
@@ -72,6 +81,29 @@ import { createGrepTool } from "./tools/grep";
 
 /** Diretório desta extensão — usado para resolver seccomp.bpf. */
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
+const SANDBOX_STATE_ENTRY = "dev-sandbox-state";
+
+interface PersistedSandboxState {
+  version: 1;
+  branchName: string;
+}
+
+function readPersistedSandboxState(ctx: any): PersistedSandboxState | null {
+  try {
+    const manager = ctx.sessionManager;
+    const entries = typeof manager?.getBranch === "function"
+      ? manager.getBranch()
+      : [...(manager?.getEntries?.() ?? [])].reverse();
+    const entry = entries.find((candidate: any) =>
+      candidate?.type === "custom" && candidate.customType === SANDBOX_STATE_ENTRY,
+    );
+    const data = entry?.data;
+    if (data?.version !== 1 || typeof data.branchName !== "string" || !data.branchName.trim()) return null;
+    return { version: 1, branchName: data.branchName.trim() };
+  } catch {
+    return null;
+  }
+}
 
 export default function (pi: ExtensionAPI) {
   // ── Flag --no-sandbox ──────────────────────────
@@ -90,6 +122,40 @@ export default function (pi: ExtensionAPI) {
   let localCwd = process.cwd();
   let originalCwd = process.cwd();
   let session: SandboxSession | null = null;
+  let persistedBranchName = "";
+
+  function emitSessionState(): void {
+    if (!session) return;
+    pi.events?.emit("custom:dev-sandbox-session", {
+      originalCwd: session.originalCwd,
+      workspaceCwd: session.workspaceCwd,
+      branchName: session.branchName,
+      originalBranchName: session.originalBranchName,
+    });
+  }
+
+  function persistActiveBranch(): void {
+    if (!session?.gitRoot || !session.branchName || session.branchName === session.temporaryBranchName) return;
+    if (session.branchName === persistedBranchName) return;
+    try {
+      pi.appendEntry(SANDBOX_STATE_ENTRY, { version: 1, branchName: session.branchName });
+      persistedBranchName = session.branchName;
+    } catch (err) {
+      console.warn("[dev-sandbox] Não foi possível persistir a branch da sessão:", err);
+    }
+  }
+
+  function refreshBranchState(): void {
+    if (!session?.gitRoot) return;
+    try {
+      if (refreshWorktreeBranch(session)) {
+        emitSessionState();
+        persistActiveBranch();
+      }
+    } catch (err) {
+      console.warn("[dev-sandbox] Não foi possível atualizar a branch do worktree:", err);
+    }
+  }
 
   function releaseSession(): void {
     const current = session;
@@ -109,6 +175,7 @@ export default function (pi: ExtensionAPI) {
     enabled = false;
     config = null;
     session = null;
+    persistedBranchName = "";
     fallbackToHost = false;
     projectTrusted = ctx.isProjectTrusted?.() ?? false;
 
@@ -167,15 +234,23 @@ export default function (pi: ExtensionAPI) {
       if (!config.worktree.enabled && isGitRepository(originalCwd)) {
         throw new Error("[dev-sandbox] Worktree temporário desabilitado na configuração.");
       }
-      session = createWorktree(originalCwd, config.worktree.root);
+      const persistedState = readPersistedSandboxState(ctx);
+      persistedBranchName = persistedState?.branchName ?? "";
+      let restoreWarning = "";
+      try {
+        session = createWorktree(originalCwd, config.worktree.root, {
+          restoreBranch: persistedState?.branchName,
+        });
+      } catch (err) {
+        if (!(err instanceof WorktreeBranchUnavailableError) || err.reason !== "missing") throw err;
+        session = createWorktree(originalCwd, config.worktree.root);
+        restoreWarning =
+          `A branch persistida '${err.branchName}' não existe mais. ` +
+          `Novo sandbox criado em '${session.branchName}' a partir da branch original atual.`;
+      }
       if (session.gitRoot) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
       localCwd = session.workspaceCwd;
-      pi.events?.emit("custom:dev-sandbox-session", {
-        originalCwd: session.originalCwd,
-        workspaceCwd: session.workspaceCwd,
-        branchName: session.branchName,
-        originalBranchName: session.originalBranchName,
-      });
+      emitSessionState();
 
       // Git precisa dos metadados para status/branch/commit/push, mas o código
       // do projeto original continua fora do namespace. Projetos sem Git usam
@@ -270,6 +345,7 @@ export default function (pi: ExtensionAPI) {
           `Quarentena: fetch=${qdirs.fetch}\nruns=${qdirs.runs}`,
           "info",
         );
+        if (restoreWarning) ctx.ui.notify(restoreWarning, "warning");
       }
     } catch (err: any) {
       // Erro inesperado → fail-closed: nunca roda sem sandbox silenciosamente
@@ -342,7 +418,7 @@ export default function (pi: ExtensionAPI) {
   // ── Bash tool unificado com bwrap operations ──
   pi.registerTool(sandboxTool(
     (cwd) => createBashTool(cwd),
-    (config, cwd, workspaceRoot) => createBashTool(cwd, { operations: createBashOps(config, cwd, workspaceRoot) }),
+    (config, cwd, workspaceRoot) => createBashTool(cwd, { operations: createBashOps(config, cwd, workspaceRoot, refreshBranchState) }),
     "bash (sandboxed)",
   ));
 
@@ -533,7 +609,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("user_bash", (_event, ctx) => {
     const cwd = session?.workspaceCwd ?? ctx?.cwd ?? localCwd;
     if (enabled && config) {
-      return { operations: createBashOps(config, cwd, session?.worktreePath ?? cwd) };
+      return { operations: createBashOps(config, cwd, session?.worktreePath ?? cwd, refreshBranchState) };
     }
     // Opt-out explícito → comportamento padrão do pi
     if (fallbackToHost) return;
@@ -557,6 +633,7 @@ export default function (pi: ExtensionAPI) {
     const caches = resolveCacheDirs(config, cwd);
     const sandboxNote =
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
+      `Active Git branch: ${session?.branchName || "detached HEAD"}.\n` +
       `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}. ` +
       `Clone remote repos for this session in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
     const dependencyNote = existsSync(join(cwd, "package.json")) && !existsSync(join(cwd, "node_modules"))
@@ -649,6 +726,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── session_shutdown ──────────────────────────
   pi.on("session_shutdown", () => {
+    refreshBranchState();
+    persistActiveBranch();
     pi.events?.emit("custom:dev-sandbox-session-shutdown", {});
     enabled = false;
     projectTrusted = false;

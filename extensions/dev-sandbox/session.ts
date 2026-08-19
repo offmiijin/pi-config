@@ -15,8 +15,10 @@ export interface SandboxSession {
   gitRoot: string;
   /** Diretório administrativo Git montado seletivamente no sandbox. */
   gitDir: string;
-  /** Branch temporária associada à sessão. */
+  /** Branch atualmente ativa no worktree. */
   branchName: string;
+  /** Branch criada automaticamente pelo sandbox e que pode ser removida. */
+  temporaryBranchName: string;
   /** Branch original usada como base da sessão. */
   originalBranchName: string;
   /** Commit usado como base para comparar alterações da sessão. */
