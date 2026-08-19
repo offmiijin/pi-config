@@ -20,6 +20,7 @@ function snapshot(): ChangesSnapshot {
 				additions: 12,
 				deletions: 4,
 				diff: "diff --git a/app.ts b/app.ts\n@@ -1 +1 @@\n-old\n+new",
+				content: Array.from({ length: 15 }, (_, index) => `line-${index + 1}`).join("\n"),
 			},
 			{
 				path: "src/utils.ts",
@@ -27,6 +28,7 @@ function snapshot(): ChangesSnapshot {
 				additions: 3,
 				deletions: 0,
 				diff: "diff --git a/utils.ts b/utils.ts\n+created",
+				content: "const created = true;",
 			},
 		],
 		totalAdditions: 15,
@@ -52,14 +54,15 @@ describe("painel — truncamento e layout", () => {
 		expect(visibleWidth(value)).toBeLessThanOrEqual(12);
 	});
 
-	it("renderiza o diff à esquerda e metadados em uma coluna menor à direita", () => {
+	it("renderiza o código à esquerda e metadados em uma coluna menor à direita", () => {
 		const { panel } = setup();
 		const lines = panel.render(100);
 		const body = lines.join("\n");
-		expect(body).toContain("+new");
+		expect(body).toContain("line-1");
+		expect(body).not.toContain("+new");
 		expect(body).toContain("+12");
 		expect(body).toContain("-4");
-		expect(body).toContain("app.ts");
+		expect(body).toContain("src/utils.ts");
 		for (const line of lines) expect(visibleWidth(line)).toBe(100);
 	});
 
@@ -80,16 +83,30 @@ describe("painel — truncamento e layout", () => {
 });
 
 describe("painel — seleção", () => {
-	it("setas para cima/baixo selecionam arquivos e trocam o diff", () => {
+	it("setas para cima/baixo selecionam arquivos e trocam o código", () => {
 		const { panel, calls } = setup();
 		panel.handleInput("\x1b[B");
 		const selected = panel.render(100).join("\n");
-		expect(selected).toContain("+created");
-		expect(selected).not.toContain("+new");
+		expect(selected).toContain("const created = true;");
+		expect(selected).not.toContain("line-1");
 		expect(calls.length).toBeGreaterThan(0);
 
 		panel.handleInput("\x1b[A");
-		expect(panel.render(100).join("\n")).toContain("+new");
+		expect(panel.render(100).join("\n")).toContain("line-1");
+	});
+
+	it("Enter move o foco para o código e as setas passam a rolá-lo", () => {
+		const { panel } = setup();
+		panel.handleInput("\r");
+		expect(panel.render(100).join("\n")).toContain("rolar código");
+
+		panel.handleInput("\x1b[B");
+		const scrolled = panel.render(100).join("\n");
+		expect(scrolled).not.toMatch(/line-1\s+│/);
+		expect(scrolled).toContain("line-13");
+
+		panel.handleInput("\x1b[D");
+		expect(panel.render(100).join("\n")).toContain("Enter código");
 	});
 
 	it("Esc chama o fechamento", () => {

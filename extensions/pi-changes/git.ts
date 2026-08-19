@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { ChangedFile, ChangeStatus, ChangesSnapshot } from "./types.ts";
 
 export interface GitResult {
@@ -61,6 +63,18 @@ export function parseNumstat(output: string): { additions: number; deletions: nu
 	};
 }
 
+async function readWorkingTreeFile(cwd: string, filePath: string, status: ChangeStatus): Promise<string> {
+	if (status === "D") return "(Arquivo removido; conteúdo não disponível.)";
+
+	try {
+		const content = await readFile(resolve(cwd, filePath), "utf8");
+		if (content.includes("\0")) return "(Arquivo binário; conteúdo não exibido.)";
+		return content;
+	} catch {
+		return "(Conteúdo do arquivo não está disponível.)";
+	}
+}
+
 function emptySnapshot(error?: string): ChangesSnapshot {
 	return {
 		files: [],
@@ -104,9 +118,10 @@ export async function collectChanges(cwd: string, runGit: GitRunner): Promise<Ch
 			"--numstat",
 			...diffArgs.slice(separatorIndex),
 		];
-		const [numstatResult, diffResult] = await Promise.all([
+		const [numstatResult, diffResult, content] = await Promise.all([
 			runGit(numstatArgs),
 			runGit(diffArgs),
+			readWorkingTreeFile(cwd, entry.path, entry.status),
 		]);
 		const stats = parseNumstat(numstatResult.stdout);
 
@@ -116,6 +131,7 @@ export async function collectChanges(cwd: string, runGit: GitRunner): Promise<Ch
 			additions: stats.additions,
 			deletions: stats.deletions,
 			diff: diffResult.stdout || "(Nenhum diff textual disponível.)",
+			content,
 		});
 	}
 
