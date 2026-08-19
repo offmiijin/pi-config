@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Cwd cujo scan de denyFilePatterns deve falhar (simula EACCES).
+// Cwd cujo scan de denyFilePatterns deve falhar (simula erro diferente de EACCES).
 const state = vi.hoisted(() => ({ failScanCwd: null as string | null }));
 
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
@@ -31,7 +31,7 @@ vi.mock("node:fs", async (importOriginal) => {
     },
     readdirSync: (p: unknown, ...rest: unknown[]) => {
       if (state.failScanCwd !== null && String(p) === state.failScanCwd) {
-        throw Object.assign(new Error(`EACCES: permission denied '${String(p)}'`), { code: "EACCES" });
+        throw Object.assign(new Error(`EPERM: operation not permitted '${String(p)}'`), { code: "EPERM" });
       }
       return (actual.readdirSync as (...a: unknown[]) => unknown)(p as string, ...rest);
     },

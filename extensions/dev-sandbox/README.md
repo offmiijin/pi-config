@@ -173,7 +173,9 @@ Exemplo: `/meu-projeto/.pi/sandbox.json`
 > **`denyFilePatterns`**: lista de padrões de arquivos a mascarar.
 > O sandbox escaneia $PWD recursivamente e substitui cada arquivo
 > correspondente por `/dev/null` (vazio, read-only). Ignora `.git/` e
-> `node_modules/` (performance).
+> `node_modules/` (performance). Diretórios sem permissão de leitura
+> (`EACCES`) são ignorados porque também não podem ser lidos dentro do
+> sandbox; outros erros de scan bloqueiam a operação.
 > - Padrão **sem `/`** casa o **nome** do arquivo (basename) em
 >   qualquer profundidade (ex: `.env`, `*.pem`).
 > - Padrão **com `/`** casa o **path relativo ao workspace** (ex:

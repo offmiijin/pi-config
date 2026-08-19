@@ -150,16 +150,16 @@ describe("findDangerousFiles", () => {
     expect(findDangerousFiles(join(tmpdir(), "nao-existe-xyz"), [".env"], [])).toEqual([]);
   });
 
-  it("diretório ilegível (EACCES) → bloqueia (fail-closed)", () => {
+  it("diretório ilegível (EACCES) → ignora e continua o scan", () => {
     const root = fixture();
     mkdirSync(join(root, "locked"), { recursive: true });
     writeFileSync(join(root, "locked", ".env"), "SECRET=1");
+    writeFileSync(join(root, ".env"), "SAFE_TO_MASK");
     state.failOn = [join(root, "locked")];
     try {
-      // Fail-closed: dir sem permissão de listagem (r) ainda pode ter
-      // arquivos acessíveis por nome dentro do sandbox (só precisa de x
-      // no pai) — mascaramento por bind /dev/null não é garantido.
-      expect(() => findDangerousFiles(root, [".env"], [])).toThrow(/denyFilePatterns/);
+      // O processo dentro do sandbox usa o mesmo usuário e também não
+      // consegue ler o diretório; EACCES não deve bloquear outras leituras.
+      expect(findDangerousFiles(root, [".env"], [])).toEqual([join(root, ".env")]);
     } finally {
       state.failOn = [];
     }
