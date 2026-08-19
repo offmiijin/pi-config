@@ -60,7 +60,20 @@ describe("painel — truncamento e layout", () => {
 		expect(body).toContain("+12");
 		expect(body).toContain("-4");
 		expect(body).toContain("app.ts");
-		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(100);
+		for (const line of lines) expect(visibleWidth(line)).toBe(100);
+	});
+
+	it("mantém a divisória dentro da moldura e alinha os cantos laterais", () => {
+		const { panel } = setup();
+		const lines = panel.render(160);
+
+		expect(lines[0]!.startsWith("╭")).toBe(true);
+		expect(lines[0]!.endsWith("╮")).toBe(true);
+		expect(lines[2]!.startsWith("├")).toBe(true);
+		expect(lines[2]!.endsWith("┤")).toBe(true);
+		expect(lines.at(-1)!.startsWith("╰")).toBe(true);
+		expect(lines.at(-1)!.endsWith("╯")).toBe(true);
+		for (const line of lines) expect(visibleWidth(line)).toBe(160);
 	});
 });
 
