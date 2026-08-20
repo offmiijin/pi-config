@@ -14,7 +14,7 @@ export interface DependencyInstallPlan {
  */
 export function createNpmInstallPlan(cwd: string): DependencyInstallPlan {
   if (!existsSync(join(cwd, "package.json"))) {
-    throw new Error(`[dev-sandbox] package.json não encontrado no worktree: ${cwd}`);
+    throw new Error(`[pi-sandbox] package.json não encontrado no worktree: ${cwd}`);
   }
 
   const lockfile = existsSync(join(cwd, "package-lock.json"));

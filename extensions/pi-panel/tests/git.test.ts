@@ -62,7 +62,7 @@ describe("git — coleta", () => {
 	});
 
 	it("lê o conteúdo atual do arquivo para a visualização", async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "pi-changes-"));
+		const cwd = mkdtempSync(join(tmpdir(), "pi-panel-"));
 		writeFileSync(join(cwd, "src.ts"), "const current = true;\n");
 
 		try {

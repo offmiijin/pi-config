@@ -1,7 +1,7 @@
 /**
- * pi-config-changelog — Exibe o CHANGELOG.md da versão atual do pi-config.
+ * pi-changelog — Exibe o CHANGELOG.md da versão atual do pi-config.
  *
- * Comando: /pi-config-changelog
+ * Comando: /pi-changelog
  *
  * Usa appendEntry() + registerEntryRenderer() para renderizar o changelog
  * como entrada no chat com markdown colorido (tema do pi). Essa abordagem
@@ -23,7 +23,7 @@ export default async function (pi: ExtensionAPI) {
 		return new Markdown(data.content, 1, 1, buildMarkdownTheme(theme));
 	});
 
-	pi.registerCommand("pi-config-changelog", {
+	pi.registerCommand("pi-changelog", {
 		description: "Mostra o changelog da versão atual do pi-config",
 		handler: async (_args, ctx) => {
 			const { runChangelogCommand, getExtensionDir } = await import(

@@ -2,7 +2,7 @@
 name = "gen-seccomp"
 version = "0.1.0"
 edition = "2021"
-description = "Gera filtro seccomp BPF para o dev-sandbox do pi. Usa libseccomp para compilar regras em bytecode que o kernel carrega via bwrap --seccomp."
+description = "Gera filtro seccomp BPF para o pi-sandbox do pi. Usa libseccomp para compilar regras em bytecode que o kernel carrega via bwrap --seccomp."
 
 [dependencies]
 libseccomp = "0.3"

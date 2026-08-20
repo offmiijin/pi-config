@@ -17,7 +17,7 @@ import { buildBwrapArgs, killGroup, wrapWithLandlock } from "../bwrap-executor";
  * Mensagem exibida quando um comando de instalação é bloqueado no bash.
  */
 const BLOCKED_INSTALL_MSG =
-  "[dev-sandbox] Instalação/execução de código externo bloqueada no bash. " +
+  "[pi-sandbox] Instalação/execução de código externo bloqueada no bash. " +
   "Use as tools de quarentena (sandbox_fetch + sandbox_quarantine_exec) para " +
   "baixar e executar pacotes sem expor o workspace.";
 
@@ -65,7 +65,7 @@ function openSeccompFd(config: SandboxConfig): number | undefined {
   try {
     return openSync(cfg.bpfPath, "r");
   } catch (err) {
-    console.warn("[dev-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
+    console.warn("[pi-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
     return undefined;
   }
 }

@@ -4,7 +4,7 @@
  * Extensões incluídas:
  *   • status-bar     — editor customizado (modelo, tokens) + footer (branch git)
  *
- * Auto-descoberto via custom-theme/index.ts
+ * Auto-descoberto via pi-custom-theme/index.ts
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

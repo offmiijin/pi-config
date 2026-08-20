@@ -1,4 +1,4 @@
-/** Estado da sessão isolada do dev-sandbox. */
+/** Estado da sessão isolada do pi-sandbox. */
 
 /**
  * Identidade e caminhos da sessão atual.
@@ -38,7 +38,7 @@ export interface SandboxSession {
 /** Retorna workspace efetivo ou lança se sessão não foi inicializada. */
 export function requireWorkspace(session: SandboxSession | null): string {
   if (!session) {
-    throw new Error("[dev-sandbox] Sessão de workspace não inicializada.");
+    throw new Error("[pi-sandbox] Sessão de workspace não inicializada.");
   }
   return session.workspaceCwd;
 }
@@ -46,7 +46,7 @@ export function requireWorkspace(session: SandboxSession | null): string {
 /** Retorna diretório original ou lança se sessão não foi inicializada. */
 export function requireOriginalCwd(session: SandboxSession | null): string {
   if (!session) {
-    throw new Error("[dev-sandbox] Sessão de sandbox não inicializada.");
+    throw new Error("[pi-sandbox] Sessão de sandbox não inicializada.");
   }
   return session.originalCwd;
 }

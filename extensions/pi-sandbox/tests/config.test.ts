@@ -54,7 +54,7 @@ function fixture(): string {
 
 function writeGlobal(json: string): string {
   const agentDir = fixture();
-  const p = join(agentDir, "extensions", "dev-sandbox.json");
+  const p = join(agentDir, "extensions", "pi-sandbox.json");
   mkdirSync(join(agentDir, "extensions"), { recursive: true });
   writeFileSync(p, json);
   return agentDir;

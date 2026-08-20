@@ -1,5 +1,5 @@
 {
-  "name": "pi-config-changelog",
+  "name": "pi-changelog",
   "private": true,
   "type": "module",
   "scripts": {

@@ -13,7 +13,7 @@ function git(cwd: string, args: string[]): string {
 }
 
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "dev-sandbox-repo-"));
+  const dir = mkdtempSync(join(tmpdir(), "pi-sandbox-repo-"));
   git(dir, ["init", "-q"]);
   git(dir, ["config", "user.email", "sandbox@test.invalid"]);
   git(dir, ["config", "user.name", "Sandbox Test"]);
@@ -29,8 +29,8 @@ afterEach(() => {
 
 describe("worktree", () => {
   it("usa a raiz original como sandbox quando o projeto não tem Git", () => {
-    const original = mkdtempSync(join(tmpdir(), "dev-sandbox-no-git-"));
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const original = mkdtempSync(join(tmpdir(), "pi-sandbox-no-git-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
 
@@ -43,7 +43,7 @@ describe("worktree", () => {
   });
 
   it("recusa criar worktree aninhado na área gerenciada", () => {
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const original = join(root, "project");
     git(root, ["init", "-q", original]);
 
@@ -53,7 +53,7 @@ describe("worktree", () => {
   it("recusa projeto original com alterações locais", () => {
     const original = repo();
     writeFileSync(join(original, "file.txt"), "dirty\n");
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
 
     expect(() => createWorktree(original, root)).toThrow(/alterações locais/);
   });
@@ -65,7 +65,7 @@ describe("worktree", () => {
     writeFileSync(join(original, "main.ts"), "original\n");
     git(rootRepo, ["add", "."]);
     git(rootRepo, ["commit", "-qm", "src"]);
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
 
@@ -76,7 +76,7 @@ describe("worktree", () => {
 
   it("cria worktree temporário em branch própria", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
 
@@ -91,7 +91,7 @@ describe("worktree", () => {
 
   it("anexa novo worktree diretamente à branch persistida", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const first = createWorktree(original, root);
     sessions.push(first);
     const feature = "feat/persisted-worktree";
@@ -115,7 +115,7 @@ describe("worktree", () => {
 
   it("atualiza branch ativa no metadata sem assumir ownership da branch nomeada", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
     const feature = "feat/refresh-worktree";
@@ -136,7 +136,7 @@ describe("worktree", () => {
 
   it("recusa restaurar branch persistida ocupada em outro worktree", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const first = createWorktree(original, root);
     sessions.push(first);
     const feature = "feat/occupied-worktree";
@@ -147,7 +147,7 @@ describe("worktree", () => {
 
   it("sinaliza branch persistida apagada", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
 
     expect(() => createWorktree(original, root, { restoreBranch: "feat/missing-worktree" }))
       .toThrow(/não encontrada/);
@@ -155,7 +155,7 @@ describe("worktree", () => {
 
   it("preserva worktree com lease fresco mesmo com PID invisível", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
 
@@ -172,7 +172,7 @@ describe("worktree", () => {
 
   it("remove registro Git órfão sem metadata", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
     rmSync(join(session.worktreePath, ".pi-sandbox-worktree.json"));
@@ -184,7 +184,7 @@ describe("worktree", () => {
 
   it("promove alterações rastreadas e untracked", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
     writeFileSync(join(session.workspaceCwd, "file.txt"), "promoted\n");
@@ -198,7 +198,7 @@ describe("worktree", () => {
 
   it("promove preview com alterações commitadas e untracked", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
     writeFileSync(join(session.workspaceCwd, "file.txt"), "committed\n");
@@ -215,7 +215,7 @@ describe("worktree", () => {
 
   it("atualiza preview repetido e remove arquivo revertido no worktree", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
     writeFileSync(join(session.workspaceCwd, "file.txt"), "primeiro\n");
@@ -232,7 +232,7 @@ describe("worktree", () => {
 
   it("restaura preview, incluindo arquivo novo", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
     writeFileSync(join(session.workspaceCwd, "file.txt"), "preview\n");
@@ -248,7 +248,7 @@ describe("worktree", () => {
 
   it("recusa restaurar quando branch original mudou após preview", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
     writeFileSync(join(session.workspaceCwd, "file.txt"), "preview\n");
@@ -261,10 +261,10 @@ describe("worktree", () => {
 
   it("bloqueia promoção de untracked que escapa por symlink", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     sessions.push(session);
-    const outside = mkdtempSync(join(tmpdir(), "dev-sandbox-outside-"));
+    const outside = mkdtempSync(join(tmpdir(), "pi-sandbox-outside-"));
     symlinkSync(outside, join(session.worktreePath, "redirect"));
     writeFileSync(join(outside, "secret.txt"), "secret\n");
 
@@ -273,7 +273,7 @@ describe("worktree", () => {
 
   it("restaura preview automaticamente antes de remover worktree", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     writeFileSync(join(session.workspaceCwd, "file.txt"), "temporary\n");
     promoteWorktreePreview(session);
@@ -285,7 +285,7 @@ describe("worktree", () => {
 
   it("remove worktree e branch de forma idempotente", () => {
     const original = repo();
-    const root = mkdtempSync(join(tmpdir(), "dev-sandbox-worktrees-"));
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
     const session = createWorktree(original, root);
     writeFileSync(join(session.workspaceCwd, "file.txt"), "temporary\n");
 

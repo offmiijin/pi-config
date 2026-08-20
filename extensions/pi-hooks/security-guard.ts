@@ -1,12 +1,12 @@
 /**
  * Security Guard Hook — escopo mínimo.
  *
- * Intercepta apenas o que o dev-sandbox NÃO cobre:
+ * Intercepta apenas o que o pi-sandbox NÃO cobre:
  *   - Fork bomb (`:(){ :|:& };:`) — namespaces não limitam processos;
  *     consome CPU/memória do host.
  *   - Download + execução direta (`curl|bash`, `wget|sh`, `bash <(curl)`,
  *     `source <(curl)`) — roda no workspace com rede no perfil normal.
- *     (O bash-ops do dev-sandbox também bloqueia; aqui é defesa em
+ *     (O bash-ops do pi-sandbox também bloqueia; aqui é defesa em
  *     profundidade com confirmação interativa.)
  *   - `eval` com entrada dinâmica — execução de código arbitrário.
  *

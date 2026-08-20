@@ -26,8 +26,8 @@ export class WorktreeBranchUnavailableError extends Error {
   ) {
     super(
       reason === "missing"
-        ? `[dev-sandbox] Branch persistida não encontrada: ${branchName}`
-        : `[dev-sandbox] Branch persistida já está em uso em outro worktree: ${branchName}${occupiedPath ? ` (${occupiedPath})` : ""}`,
+        ? `[pi-sandbox] Branch persistida não encontrada: ${branchName}`
+        : `[pi-sandbox] Branch persistida já está em uso em outro worktree: ${branchName}${occupiedPath ? ` (${occupiedPath})` : ""}`,
     );
     this.name = "WorktreeBranchUnavailableError";
   }
@@ -68,13 +68,13 @@ function pathsOverlap(first: string, second: string): boolean {
 
 function assertManagedPath(root: string, path: string): void {
   if (!isPathWithin(root, path) || resolve(path) === resolve(root)) {
-    throw new Error(`[dev-sandbox] Worktree fora da área gerenciada: ${path}`);
+    throw new Error(`[pi-sandbox] Worktree fora da área gerenciada: ${path}`);
   }
 }
 
 function assertNotActiveWorktree(path: string): void {
   if (pathsOverlap(path, process.cwd())) {
-    throw new Error(`[dev-sandbox] Recusa remover worktree ativo: ${path}`);
+    throw new Error(`[pi-sandbox] Recusa remover worktree ativo: ${path}`);
   }
 }
 function metadataPath(worktreePath: string): string {
@@ -231,18 +231,18 @@ export function createWorktree(
   }
   if (isPathWithin(worktreeRoot, original)) {
     throw new Error(
-      `[dev-sandbox] Não é seguro criar worktree aninhado dentro da área gerenciada: ${original}`,
+      `[pi-sandbox] Não é seguro criar worktree aninhado dentro da área gerenciada: ${original}`,
     );
   }
   const gitDirValue = git(original, ["rev-parse", "--git-common-dir"]);
   const gitDir = resolve(gitRoot, gitDirValue);
   const workspaceSubdir = relative(gitRoot, original);
   if (workspaceSubdir.startsWith("..") || resolve(gitRoot, workspaceSubdir) !== original) {
-    throw new Error(`[dev-sandbox] CWD fora da raiz Git: ${original}`);
+    throw new Error(`[pi-sandbox] CWD fora da raiz Git: ${original}`);
   }
   if (git(original, ["status", "--porcelain", "--untracked-files=all"])) {
     throw new Error(
-      `[dev-sandbox] O projeto original possui alterações locais. Faça commit ou stash antes de iniciar o sandbox: ${original}`,
+      `[pi-sandbox] O projeto original possui alterações locais. Faça commit ou stash antes de iniciar o sandbox: ${original}`,
     );
   }
   const sessionId = safeId();
@@ -274,7 +274,7 @@ export function createWorktree(
     return session;
   } catch (error) {
     rmSync(worktreePath, { recursive: true, force: true });
-    throw new Error(`[dev-sandbox] Falha ao criar worktree temporário: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`[pi-sandbox] Falha ao criar worktree temporário: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -296,7 +296,7 @@ export function cleanupWorktree(session: SandboxSession): void {
 function validateRelativeFile(file: string): string {
   const clean = file.trim();
   if (!clean || clean.startsWith("/") || clean.split("/").includes("..")) {
-    throw new Error(`[dev-sandbox] Caminho inválido para promoção: ${file}`);
+    throw new Error(`[pi-sandbox] Caminho inválido para promoção: ${file}`);
   }
   return clean;
 }
@@ -311,7 +311,7 @@ function assertRealPathInside(base: string, target: string, label: string): void
   }
   const realExisting = realpathSync(existing);
   if (realExisting !== baseReal && !realExisting.startsWith(baseReal + sep)) {
-    throw new Error(`[dev-sandbox] ${label} escapa da área permitida: ${target}`);
+    throw new Error(`[pi-sandbox] ${label} escapa da área permitida: ${target}`);
   }
 }
 
@@ -348,7 +348,7 @@ function captureOriginalFile(session: SandboxSession, file: string): PreviewSnap
   assertRealPathInside(session.gitRoot, target, "Destino de promoção");
   if (!existsSync(target)) return { existed: false };
   const stat = lstatSync(target);
-  if (!stat.isFile()) throw new Error(`[dev-sandbox] Destino de promoção não é arquivo: ${file}`);
+  if (!stat.isFile()) throw new Error(`[pi-sandbox] Destino de promoção não é arquivo: ${file}`);
   return { existed: true, content: readFileSync(target), mode: stat.mode & 0o777 };
 }
 
@@ -397,7 +397,7 @@ function applyWorktreeChanges(session: SandboxSession, selected: string[]): stri
 /** Promove alterações rastreadas e arquivos untracked ao projeto original. */
 export function promoteWorktreeChanges(session: SandboxSession, files: string[] = []): string[] {
   if (!session.gitRoot || !session.branchName) {
-    throw new Error("[dev-sandbox] Promoção indisponível: o projeto não possui um worktree Git.");
+    throw new Error("[pi-sandbox] Promoção indisponível: o projeto não possui um worktree Git.");
   }
   return applyWorktreeChanges(session, files.map(validateRelativeFile));
 }
@@ -405,7 +405,7 @@ export function promoteWorktreeChanges(session: SandboxSession, files: string[] 
 /** Aplica alterações do worktree e registra snapshot para restauração posterior. */
 export function promoteWorktreePreview(session: SandboxSession, files: string[] = []): string[] {
   if (!session.gitRoot || !session.branchName) {
-    throw new Error("[dev-sandbox] Preview indisponível: o projeto não possui um worktree Git.");
+    throw new Error("[pi-sandbox] Preview indisponível: o projeto não possui um worktree Git.");
   }
   const selected = files.map(validateRelativeFile);
   const changed = changedWorktreeFiles(session, selected);
@@ -416,7 +416,7 @@ export function promoteWorktreePreview(session: SandboxSession, files: string[] 
   for (const file of reconcile) {
     const current = state.files.get(file);
     if (current && fileFingerprint(join(session.gitRoot, file)) !== current.promotedFingerprint) {
-      throw new Error(`[dev-sandbox] Arquivo promovido foi alterado no projeto original: ${file}`);
+      throw new Error(`[pi-sandbox] Arquivo promovido foi alterado no projeto original: ${file}`);
     }
     if (!current) state.files.set(file, { snapshot: captureOriginalFile(session, file), promotedFingerprint: "" });
   }
@@ -444,7 +444,7 @@ export function restoreWorktreePreview(session: SandboxSession): string[] {
   for (const file of files) {
     const entry = state.files.get(file)!;
     if (fileFingerprint(join(session.gitRoot, file)) !== entry.promotedFingerprint) {
-      throw new Error(`[dev-sandbox] Arquivo promovido foi alterado no projeto original: ${file}`);
+      throw new Error(`[pi-sandbox] Arquivo promovido foi alterado no projeto original: ${file}`);
     }
   }
   for (const file of files) restoreSnapshot(session, file, state.files.get(file)!.snapshot);

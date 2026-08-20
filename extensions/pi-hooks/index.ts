@@ -6,7 +6,7 @@
  *
  * Hooks carregados:
  *   - block-force-push.ts → bloqueia git push --force para main/master
- *   - security-guard.ts   → bloqueia o que o dev-sandbox não cobre
+ *   - security-guard.ts   → bloqueia o que o pi-sandbox não cobre
  *     (fork bomb, download+pipe a bash, eval dinâmico)
  */
 

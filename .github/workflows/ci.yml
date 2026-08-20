@@ -31,8 +31,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Instala bubblewrap/ripgrep (p/ teste memory + doctor smoke)
         run: sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
-      - name: dev-sandbox (vitest)
-        run: npm run test:sandbox
+      - name: pi-sandbox (vitest)
+        run: npm run test:pi-sandbox
       - name: pi-github (vitest)
         run: npm run test:github
       - name: pi-web-search (vitest)
@@ -40,10 +40,10 @@ jobs:
       - name: pi-memory (node --test)
         run: npm run test:memory
       - name: doctor (vitest)
-        run: npm run test:doctor
+        run: npm run test:pi-doctor
       - name: thinking-level (vitest)
-        run: npm run test:thinking
-      - name: Typecheck dev-sandbox
+        run: npm run test:pi-thinking-level
+      - name: Typecheck pi-sandbox
         run: npm run typecheck
       - name: Doctor smoke — ambiente completo sem pendências
         run: npm run doctor:check
@@ -68,8 +68,8 @@ jobs:
         run: |
           test -d ~/.pi/agent/node_modules/@earendil-works/pi-coding-agent
           test -d ~/.pi/agent/node_modules/typebox
-          test -x ~/.pi/agent/extensions/dev-sandbox/landlock-exec-x86_64
-          test -s ~/.pi/agent/extensions/dev-sandbox/seccomp.bpf
+          test -x ~/.pi/agent/extensions/pi-sandbox/landlock-exec-x86_64
+          test -s ~/.pi/agent/extensions/pi-sandbox/seccomp.bpf
           test -f ~/.pi/agent/settings.json
           test -d ~/.pi/agent/themes
           test -d ~/.pi/agent/skills
@@ -113,6 +113,6 @@ jobs:
             bash -c '${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
               test -d ~/.pi/agent/node_modules/@earendil-works/pi-coding-agent && \
               test -d ~/.pi/agent/node_modules/typebox && \
-              test -s ~/.pi/agent/extensions/dev-sandbox/seccomp.bpf && \
+              test -s ~/.pi/agent/extensions/pi-sandbox/seccomp.bpf && \
               test -f ~/.pi/agent/settings.json && \
               echo "OK: ${{ matrix.name }} — deps instaladas via pm nativo"'

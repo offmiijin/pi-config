@@ -1,5 +1,5 @@
 /**
- * Testes da extensão pi-config-changelog — cenários de exibição.
+ * Testes da extensão pi-changelog — cenários de exibição.
  * Roda com: vitest run
  */
 

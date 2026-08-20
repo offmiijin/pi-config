@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────
-# build.sh — artefatos portáteis do dev-sandbox
+# build.sh — artefatos portáteis do pi-sandbox
 #
 # Gera:
 #   1. ../landlock-exec-<arch>   — helper Landlock da arquitetura (x86_64,

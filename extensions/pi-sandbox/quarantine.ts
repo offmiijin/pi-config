@@ -26,12 +26,12 @@ export const QUARANTINE_TIMEOUT_S = 300;
  */
 export function validateQuarantinePath(baseDir: string, subPath: string): string {
   if (subPath === "") {
-    throw new Error("[dev-sandbox] Path vazio em área de quarentena.");
+    throw new Error("[pi-sandbox] Path vazio em área de quarentena.");
   }
   const resolved = resolve(baseDir, subPath);
   const rel = relative(baseDir, resolved);
   if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
-    throw new Error(`[dev-sandbox] Path fora da área de quarentena: ${subPath}`);
+    throw new Error(`[pi-sandbox] Path fora da área de quarentena: ${subPath}`);
   }
   return resolved;
 }
@@ -46,7 +46,7 @@ function assertRealPathInside(baseDir: string, target: string, label: string): v
   }
   const realExisting = realpathSync(existing);
   if (realExisting !== baseReal && !realExisting.startsWith(baseReal + sep)) {
-    throw new Error(`[dev-sandbox] ${label} escapa da área permitida: ${target}`);
+    throw new Error(`[pi-sandbox] ${label} escapa da área permitida: ${target}`);
   }
 }
 
@@ -63,7 +63,7 @@ export async function fetchUrl(
   signal?: AbortSignal,
 ): Promise<{ file: string; result: BwrapResult }> {
   if (!/^https?:\/\//i.test(url)) {
-    throw new Error(`[dev-sandbox] sandbox_fetch aceita apenas URLs http/https: ${url}`);
+    throw new Error(`[pi-sandbox] sandbox_fetch aceita apenas URLs http/https: ${url}`);
   }
 
   const dirs = resolveQuarantineDirs(config, cwd);
@@ -110,7 +110,7 @@ export async function execQuarantine(
   signal?: AbortSignal,
 ): Promise<BwrapResult> {
   if (!command || command.trim() === "") {
-    throw new Error("[dev-sandbox] sandbox_quarantine_exec requer um comando.");
+    throw new Error("[pi-sandbox] sandbox_quarantine_exec requer um comando.");
   }
 
   const dirs = resolveQuarantineDirs(config, cwd);
@@ -120,7 +120,7 @@ export async function execQuarantine(
   for (const art of artifactPaths) {
     const src = validateQuarantinePath(dirs.fetch, art);
     if (!existsSync(src)) {
-      throw new Error(`[dev-sandbox] Artefato não encontrado no fetch: ${art}`);
+      throw new Error(`[pi-sandbox] Artefato não encontrado no fetch: ${art}`);
     }
     const dest = validateQuarantinePath(workDir, art);
     const destParent = dirname(dest);
@@ -159,17 +159,17 @@ export async function promoteArtifact(
 
   const src = validateQuarantinePath(dirs.runs, sourceRel);
   if (!existsSync(src)) {
-    throw new Error(`[dev-sandbox] Artefato não encontrado na quarentena: ${sourceRel}`);
+    throw new Error(`[pi-sandbox] Artefato não encontrado na quarentena: ${sourceRel}`);
   }
   // Anti-symlink: resolve o path real e confere que segue dentro de runs/.
   let realSrc: string;
   try {
     realSrc = realpathSync(src);
   } catch {
-    throw new Error(`[dev-sandbox] Artefato inacessível: ${sourceRel}`);
+    throw new Error(`[pi-sandbox] Artefato inacessível: ${sourceRel}`);
   }
   if (realSrc !== dirs.runs && !realSrc.startsWith(dirs.runs + sep)) {
-    throw new Error(`[dev-sandbox] Artefato escapa da área de quarentena: ${sourceRel}`);
+    throw new Error(`[pi-sandbox] Artefato escapa da área de quarentena: ${sourceRel}`);
   }
 
   const target = validateQuarantinePath(cwd, targetRel);

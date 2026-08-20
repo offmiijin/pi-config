@@ -7,9 +7,9 @@
  * PDFs additionally get text extracted via `pdftotext` (poppler-utils) so the
  * agent can read the content (saved as <name>.txt beside the .pdf).
  *
- * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
+ * Uses project-local cache so files are accessible inside pi-sandbox's bwrap
  * namespace (which mounts $CWD read-write but has isolated /tmp). The fetch root
- * is the same dir used by dev-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch).
+ * is the same dir used by pi-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch).
  */
 
 import { htmlToMarkdown } from "./html-to-markdown";
@@ -218,7 +218,7 @@ function isPdfBuffer(buf: Buffer): boolean {
  * `sessionKey` escopa a saída: um único diretório por sessão do pi (todas as
  * chamadas de web_fetch da mesma sessão compartilham o dir). Fallback: "default".
  *
- * Uses project-local .sandbox-cache/ so files are accessible inside dev-sandbox's
+ * Uses project-local .sandbox-cache/ so files are accessible inside pi-sandbox's
  * bwrap namespace (which mounts $CWD read-write but has isolated /tmp).
  */
 export async function fetchPages(

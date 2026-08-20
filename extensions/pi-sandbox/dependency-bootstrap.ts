@@ -17,7 +17,7 @@ export function dependencyBootstrapHint(command: string, output: string): string
     : "npm install ./pacote.tgz";
 
   return [
-    "[dev-sandbox] Bootstrap de dependência não encontrou pacote/cache local.",
+    "[pi-sandbox] Bootstrap de dependência não encontrou pacote/cache local.",
     "A quarentena permanece sem rede por segurança.",
     `Use sandbox_fetch para baixar um ${artifact}, passe o caminho em 'artifacts' para sandbox_quarantine_exec e instale o arquivo localmente:`,
     `  ${install}`,

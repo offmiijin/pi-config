@@ -1,5 +1,5 @@
 /**
- * Tipos e interfaces para extensão dev-sandbox.
+ * Tipos e interfaces para extensão pi-sandbox.
  */
 
 export interface SandboxFilesystemConfig {

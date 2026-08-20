@@ -1,5 +1,5 @@
 /**
- * Extensão dev-sandbox — sandbox completo via bubblewrap.
+ * Extensão pi-sandbox — sandbox completo via bubblewrap.
  *
  * Isola todas as tools built-in do pi (read, write, edit, bash,
  * grep, find, ls) dentro de um namespace bwrap com:
@@ -8,8 +8,8 @@
  *   - HOME isolado (sem acesso ao home real)
  *   - SSH via ssh-agent socket (chaves privadas nunca entram)
  *
- * Complementa hooks/security-guard.ts:
- *   - dev-sandbox    = hard boundary (kernel namespaces, capabilities, seccomp)
+ * Complementa pi-hooks/security-guard.ts:
+ *   - pi-sandbox    = hard boundary (kernel namespaces, capabilities, seccomp)
  *   - security-guard = soft boundary MÍNIMO — só o que o sandbox não isola
  *     (fork bomb, download+pipe a bash, eval dinâmico)
  *
@@ -25,7 +25,7 @@
  *   - Dev-sandbox registra tool unificado com bwrap operations
  *
  * Configuração:
- *   - ~/.pi/agent/extensions/dev-sandbox.json (global)
+ *   - ~/.pi/agent/extensions/pi-sandbox.json (global)
  *   - .pi/sandbox.json (projeto, somente se confiável)
  *
  * Uso:
@@ -142,7 +142,7 @@ export default function (pi: ExtensionAPI) {
       pi.appendEntry(SANDBOX_STATE_ENTRY, { version: 1, branchName: session.branchName });
       persistedBranchName = session.branchName;
     } catch (err) {
-      console.warn("[dev-sandbox] Não foi possível persistir a branch da sessão:", err);
+      console.warn("[pi-sandbox] Não foi possível persistir a branch da sessão:", err);
     }
   }
 
@@ -154,7 +154,7 @@ export default function (pi: ExtensionAPI) {
         persistActiveBranch();
       }
     } catch (err) {
-      console.warn("[dev-sandbox] Não foi possível atualizar a branch do worktree:", err);
+      console.warn("[pi-sandbox] Não foi possível atualizar a branch do worktree:", err);
     }
   }
 
@@ -165,7 +165,7 @@ export default function (pi: ExtensionAPI) {
     try {
       if (config?.worktree.cleanup !== "never") cleanupWorktree(current);
     } catch (err) {
-      console.error("[dev-sandbox] Falha ao remover worktree temporário:", err);
+      console.error("[pi-sandbox] Falha ao remover worktree temporário:", err);
     }
   }
 
@@ -234,7 +234,7 @@ export default function (pi: ExtensionAPI) {
 
       // ── Worktree temporário ───────────────────
       if (!config.worktree.enabled && isGitRepository(originalCwd)) {
-        throw new Error("[dev-sandbox] Worktree temporário desabilitado na configuração.");
+        throw new Error("[pi-sandbox] Worktree temporário desabilitado na configuração.");
       }
       const persistedState = readPersistedSandboxState(ctx);
       persistedBranchName = persistedState?.branchName ?? "";
@@ -300,12 +300,12 @@ export default function (pi: ExtensionAPI) {
           const msg =
             `Landlock helper não encontrado (procurado: landlock-exec-${archTriplet()} em ${EXT_DIR}).\n` +
             "Landlock desabilitado — sandbox opera com namespaces + capabilities + seccomp.\n" +
-            "Compile com: cd extensions/dev-sandbox/gen-seccomp && ./build.sh";
+            "Compile com: cd extensions/pi-sandbox/gen-seccomp && ./build.sh";
           if (config.landlock.required) {
             throw new Error(msg);
           }
           if (ctx.hasUI) ctx.ui.notify(msg, "warning");
-          console.warn("[dev-sandbox] landlock-exec não encontrado — Landlock desabilitado.");
+          console.warn("[pi-sandbox] landlock-exec não encontrado — Landlock desabilitado.");
           config.landlock.enabled = false;
         } else {
           const abi = probeLandlockAbi(hostPath);
@@ -318,7 +318,7 @@ export default function (pi: ExtensionAPI) {
             }
             if (ctx.hasUI) ctx.ui.notify(msg, "warning");
             console.warn(
-              `[dev-sandbox] Landlock ABI insuficiente (${abi ?? "N/A"} < ${config.landlock.minAbi}) — modo degradado.`
+              `[pi-sandbox] Landlock ABI insuficiente (${abi ?? "N/A"} < ${config.landlock.minAbi}) — modo degradado.`
             );
             config.landlock.enabled = false;
           } else {
@@ -353,7 +353,7 @@ export default function (pi: ExtensionAPI) {
       enabled = false;
       releaseSession();
       config = null;
-      console.error("[dev-sandbox] Falha ao inicializar sandbox:", err);
+      console.error("[pi-sandbox] Falha ao inicializar sandbox:", err);
       if (ctx.hasUI) {
         ctx.ui.notify(
           `Falha ao inicializar sandbox. Tools bloqueadas.\n${err?.message ?? String(err)}`,
@@ -366,7 +366,7 @@ export default function (pi: ExtensionAPI) {
   /** Erro lançado pelas tools quando o sandbox não está ativo (fail-closed). */
   function sandboxBlockedError(toolName: string): Error {
     return new Error(
-      `[dev-sandbox] Tool '${toolName}' bloqueada: sandbox não está ativo. ` +
+      `[pi-sandbox] Tool '${toolName}' bloqueada: sandbox não está ativo. ` +
       "Instale bubblewrap e habilite o sandbox, ou use --no-sandbox para rodar sem isolamento.",
     );
   }
@@ -450,7 +450,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
       if (!enabled || !config) throw sandboxBlockedError("sandbox_install_dependencies");
       if (!projectTrusted) {
-        throw new Error("[dev-sandbox] sandbox_install_dependencies exige projeto confiável.");
+        throw new Error("[pi-sandbox] sandbox_install_dependencies exige projeto confiável.");
       }
 
       const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
@@ -480,7 +480,7 @@ export default function (pi: ExtensionAPI) {
   // código externo com segurança (fail-closed, mesmo com --no-sandbox).
   function quarantineBlockedError(toolName: string): Error {
     return new Error(
-      `[dev-sandbox] Tool '${toolName}' exige sandbox ativo. ` +
+      `[pi-sandbox] Tool '${toolName}' exige sandbox ativo. ` +
       "Sem isolamento, download/execução de código externo não é permitido.",
     );
   }
@@ -504,7 +504,7 @@ export default function (pi: ExtensionAPI) {
       const { file, result } = await fetchUrl(config, cwd, params.url, params.output, signal);
       if (result.exitCode !== 0) {
         throw new Error(
-          `[dev-sandbox] sandbox_fetch falhou (exit ${result.exitCode}).\n${result.stderr || "sem stderr"}`,
+          `[pi-sandbox] sandbox_fetch falhou (exit ${result.exitCode}).\n${result.stderr || "sem stderr"}`,
         );
       }
       return {
@@ -618,7 +618,7 @@ export default function (pi: ExtensionAPI) {
     return {
       result: {
         output:
-          "[dev-sandbox] Comando bloqueado: sandbox não está ativo. " +
+          "[pi-sandbox] Comando bloqueado: sandbox não está ativo. " +
           "Instale bubblewrap e habilite o sandbox, ou use --no-sandbox.",
         exitCode: 1,
         cancelled: false,

@@ -86,7 +86,7 @@ const MIN_NODE = "22.19.0";
 
 const RUNTIME_PACKAGES = [
 	{ name: "@earendil-works/pi-coding-agent", usedBy: "API de todas as extensões" },
-	{ name: "@earendil-works/pi-tui", usedBy: "custom-theme" },
+	{ name: "@earendil-works/pi-tui", usedBy: "pi-custom-theme" },
 	{ name: "typebox", usedBy: "pi-github · pi-memory · pi-web-search" },
 	{ name: "cheerio", usedBy: "pi-web-search" },
 ] as const;
@@ -360,7 +360,7 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 	});
 
 	// Artefatos do sandbox
-	const devSandboxDir = join(EXT_DIR, "dev-sandbox");
+	const devSandboxDir = join(EXT_DIR, "pi-sandbox");
 	const seccompOk = existsSync(join(devSandboxDir, "seccomp.bpf"));
 	checks.push({
 		id: "seccomp-bpf",
@@ -404,7 +404,7 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		detail: landlockDetail,
 		fix: landlockOk
 			? undefined
-			: "sandbox opera sem a camada Landlock; rode gen-seccomp/build.sh para compilar (dev-sandbox/README)",
+			: "sandbox opera sem a camada Landlock; rode gen-seccomp/build.sh para compilar (pi-sandbox/README)",
 	});
 
 	// User namespaces (bwrap depende)

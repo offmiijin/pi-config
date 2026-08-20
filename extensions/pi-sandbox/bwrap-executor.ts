@@ -120,7 +120,7 @@ export function findDangerousFiles(cwd: string, patterns: string[], denyPaths: s
         if (!eaccesWarned.has(current)) {
           eaccesWarned.add(current);
           console.warn(
-            `[dev-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
+            `[pi-sandbox] Aviso: sem permissão para escanear '${current}' — ` +
             "diretório ignorado no scan de denyFilePatterns.",
           );
         }
@@ -129,7 +129,7 @@ export function findDangerousFiles(cwd: string, patterns: string[], denyPaths: s
       // Outros erros: diretório ilegível pode conter arquivos que deveriam
       // ser mascarados — bloqueia em vez de seguir sem negar.
       throw new Error(
-        `[dev-sandbox] Falha ao escanear '${current}' para denyFilePatterns: ` +
+        `[pi-sandbox] Falha ao escanear '${current}' para denyFilePatterns: ` +
         `${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -179,7 +179,7 @@ export function findDangerousFiles(cwd: string, patterns: string[], denyPaths: s
     walk(cwd);
   } catch (err) {
     console.warn(
-      "[dev-sandbox] Falha ao escanear denyFilePatterns — operação bloqueada:",
+      "[pi-sandbox] Falha ao escanear denyFilePatterns — operação bloqueada:",
       err,
     );
     throw err;
@@ -292,7 +292,7 @@ function assertDedicatedPath(path: string, cwd: string, label: string): void {
     realPath === realCwd ||
     isPathInside(realPath, realCwd)
   ) {
-    throw new Error(`[dev-sandbox] ${label} sobrepõe ou contém o workspace: ${path}`);
+    throw new Error(`[pi-sandbox] ${label} sobrepõe ou contém o workspace: ${path}`);
   }
 }
 
@@ -306,7 +306,7 @@ function validateConfiguredDir(value: string, cwd: string, label: string): strin
   if (!local) return target;
 
   if (!isPathInside(cwd, target)) {
-    throw new Error(`[dev-sandbox] ${label} escapa do workspace: ${value}`);
+    throw new Error(`[pi-sandbox] ${label} escapa do workspace: ${value}`);
   }
 
   // Confere ancestral existente para detectar symlink em caminho criado depois.
@@ -320,10 +320,10 @@ function validateConfiguredDir(value: string, cwd: string, label: string): strin
     const realCwd = realpathSync(cwd);
     const realExisting = realpathSync(existing);
     if (!isPathInside(realCwd, realExisting)) {
-      throw new Error(`[dev-sandbox] ${label} usa symlink fora do workspace: ${value}`);
+      throw new Error(`[pi-sandbox] ${label} usa symlink fora do workspace: ${value}`);
     }
   } catch (err) {
-    if (err instanceof Error && err.message.includes("[dev-sandbox]")) throw err;
+    if (err instanceof Error && err.message.includes("[pi-sandbox]")) throw err;
     // Caminho ainda não criado: será validado no bind após mkdir.
   }
 
@@ -691,7 +691,7 @@ function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd
     if (isSymlink) {
       if (!symlinkWarned.has(deny)) {
         symlinkWarned.add(deny);
-        console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+        console.warn(`[pi-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
       }
       continue;
     }
@@ -840,7 +840,7 @@ function buildIsolationArgs(
     if (isSymlink) {
       if (!symlinkWarned.has(deny)) {
         symlinkWarned.add(deny);
-        console.warn(`[dev-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
+        console.warn(`[pi-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
       }
       continue;
     }
@@ -1144,7 +1144,7 @@ export function execInSandbox(
         args.push("--seccomp", "3");
       } catch (err) {
         // Degradação de segurança → aviso explícito
-        console.warn("[dev-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
+        console.warn("[pi-sandbox] Falha ao abrir seccomp.bpf — seccomp desabilitado:", err);
         bpfFd = undefined;
       }
     }
@@ -1246,14 +1246,14 @@ export function execInProfile(
 ): Promise<BwrapResult> {
   const prof = config.profiles?.[profile];
   if (!prof) {
-    return Promise.reject(new Error(`[dev-sandbox] Perfil '${profile}' não configurado.`));
+    return Promise.reject(new Error(`[pi-sandbox] Perfil '${profile}' não configurado.`));
   }
   if (!prof.enabled) {
-    return Promise.reject(new Error(`[dev-sandbox] Perfil '${profile}' desabilitado na configuração.`));
+    return Promise.reject(new Error(`[pi-sandbox] Perfil '${profile}' desabilitado na configuração.`));
   }
   if (prof.workspace === "rw") {
     return Promise.reject(
-      new Error(`[dev-sandbox] Perfil '${profile}' monta o workspace — não é perfil de quarentena.`),
+      new Error(`[pi-sandbox] Perfil '${profile}' monta o workspace — não é perfil de quarentena.`),
     );
   }
   return execInSandbox(config, opts, profile);

@@ -1,4 +1,4 @@
-/// gen-seccomp — Gera filtro seccomp BPF para o dev-sandbox.
+/// gen-seccomp — Gera filtro seccomp BPF para o pi-sandbox.
 ///
 /// Lê nomes de syscalls (um por linha ou como argumentos) e gera um
 /// filtro BPF compilado via libseccomp. O filtro usa default-allow:
@@ -10,7 +10,7 @@
 ///   gen-seccomp --list        # lista todas as syscalls bloqueáveis
 ///
 /// O binário foi projetado para ser chamado uma vez durante o setup
-/// da extensão dev-sandbox. O BPF gerado (~200 bytes) é carregado
+/// da extensão pi-sandbox. O BPF gerado (~200 bytes) é carregado
 /// em runtime pelo bwrap-executor.ts.
 
 use libseccomp::*;

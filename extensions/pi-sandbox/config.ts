@@ -1,9 +1,9 @@
 /**
- * Carregamento e merge de configuração do dev-sandbox.
+ * Carregamento e merge de configuração do pi-sandbox.
  *
  * Ordem de precedência (último sobrescreve):
  *   1. DEFAULT_CONFIG (types.ts)
- *   2. ~/.pi/agent/extensions/dev-sandbox.json (global)
+ *   2. ~/.pi/agent/extensions/pi-sandbox.json (global)
  *   3. .pi/sandbox.json (projeto)
  */
 
@@ -224,7 +224,7 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
 export function loadConfig(cwd: string, options: LoadConfigOptions = {}): SandboxConfig {
   // Global
   const agentDir = getAgentDir();
-  const globalPath = join(agentDir, "extensions", "dev-sandbox.json");
+  const globalPath = join(agentDir, "extensions", "pi-sandbox.json");
 
   // Projeto
   const projectPath = join(cwd, CONFIG_DIR_NAME, "sandbox.json");

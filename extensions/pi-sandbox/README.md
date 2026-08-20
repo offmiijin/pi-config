@@ -8,7 +8,7 @@ Sandbox de desenvolvimento via bubblewrap para pi.
 # Requer bubblewrap (Linux)
 sudo apt install bubblewrap
 
-# A extensão já está em ~/.pi/agent/extensions/dev-sandbox/
+# A extensão já está em ~/.pi/agent/extensions/pi-sandbox/
 # Carregue normalmente ao iniciar o pi.
 
 # Rust NÃO é necessário para uso — o seccomp.bpf já está compilado.
@@ -27,7 +27,7 @@ sudo apt install bubblewrap
 │ security-guard.ts (mínimo)      │ ← Soft boundary
 │  Fork bomb / curl\|bash / eval  │   Só o que o sandbox NÃO isola
 ├─────────────────────────────────┤
-│ dev-sandbox                     │ ← Hard boundary (kernel)
+│ pi-sandbox                     │ ← Hard boundary (kernel)
 │  Namespaces (bwrap)             │   Filesystem isolado
 │  Capabilities (--cap-drop ×18)  │   Poderes de root removidos
 │  Seccomp (BPF ×33 syscalls)     │   Syscalls perigosas bloqueadas
@@ -131,7 +131,7 @@ original não é exposto como um todo.
 > **Pré-requisito para modo `agent`**: o `ssh-agent` deve estar rodando no host
 > com as chaves carregadas (`ssh-add -l` para verificar).
 
-### Global (`~/.pi/agent/extensions/dev-sandbox.json`)
+### Global (`~/.pi/agent/extensions/pi-sandbox.json`)
 
 ```json
 {
@@ -344,7 +344,7 @@ artefatos ou no cache persistente.
 Suíte vitest na extensão (unit + integração):
 
 ```bash
-cd extensions/dev-sandbox
+cd extensions/pi-sandbox
 vitest run
 # ou, sem download implícito:
 npx --no-install vitest run
@@ -507,7 +507,7 @@ Edite o fonte Rust em `gen-seccomp/src/main.rs`, remova a syscall do
 array `DEFAULT_BLOCKED`, recompile e regere o BPF:
 
 ```bash
-cd extensions/dev-sandbox/gen-seccomp
+cd extensions/pi-sandbox/gen-seccomp
 ./build.sh   # regera landlock-exec-<arch> + seccomp.bpf universal
 ```
 

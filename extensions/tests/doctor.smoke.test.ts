@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runChecks, buildReportText, readOsRelease, detectPackageManager } from "../00-doctor";
+import { runChecks, buildReportText, readOsRelease, detectPackageManager } from "../pi-doctor";
 
 describe("doctor smoke (ambiente real)", () => {
 	it("ambiente sem pendências (nenhum erro)", async () => {

@@ -11,7 +11,7 @@ vi.mock("../search", () => ({
 }));
 
 describe("web_fetch — workspace efetivo", () => {
-  it("grava no worktree informado pelo dev-sandbox", async () => {
+  it("grava no worktree informado pelo pi-sandbox", async () => {
     fetchPages.mockResolvedValueOnce({
       total: 1,
       succeeded: 1,
