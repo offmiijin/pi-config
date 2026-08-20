@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collectChanges, parseNumstat, parsePorcelainStatus, statusFromPorcelain } from "../git.ts";
 
@@ -56,6 +59,24 @@ describe("git — coleta", () => {
 		expect(snapshot.totalAdditions).toBe(4);
 		expect(snapshot.totalDeletions).toBe(2);
 		expect(calls.some((args) => args.includes("--no-index"))).toBe(true);
+	});
+
+	it("lê o conteúdo atual do arquivo para a visualização", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "pi-changes-"));
+		writeFileSync(join(cwd, "src.ts"), "const current = true;\n");
+
+		try {
+			const snapshot = await collectChanges(cwd, async (args) => {
+				if (args.includes("status")) return result(" M src.ts\0");
+				if (args.includes("rev-parse")) return result("head\n");
+				if (args.includes("--numstat")) return result("1\t0\tsrc.ts\n");
+				return result("@@\n+const current = true;\n");
+			});
+
+			expect(snapshot.files[0]?.content).toBe("const current = true;\n");
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 
 	it("retorna erro quando o diretório não é um repositório", async () => {

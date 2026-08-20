@@ -6,6 +6,7 @@ export interface ChangedFile {
 	additions: number;
 	deletions: number;
 	diff: string;
+	content: string;
 }
 
 export interface ChangesSnapshot {
