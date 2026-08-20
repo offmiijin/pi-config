@@ -31,6 +31,16 @@ describe("compactação de saída do bash", () => {
     expect(result.output).toContain("linhas de saída omitidas");
   });
 
+  it("reconhece tail com opções antes de -f", () => {
+    const output = Array.from({ length: 40 }, (_, index) =>
+      index === 20 ? "2026-01-01 ERROR database unavailable" : `2026-01-01 INFO polling ${index}`,
+    ).join("\n");
+    const result = compactBashOutput("tail -n 40 -f app.log", output);
+    expect(result.kind).toBe("log");
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain("ERROR database unavailable");
+  });
+
   it("filtra ruído de logs e preserva erro", () => {
     const output = Array.from({ length: 40 }, (_, index) =>
       index === 20 ? "2026-01-01 ERROR database unavailable" : `2026-01-01 INFO polling ${index}`,

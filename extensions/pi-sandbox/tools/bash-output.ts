@@ -1,7 +1,7 @@
 const IMPORTANT = /\b(?:error|fatal|critical|exception|traceback|panic|fail(?:ed|ure)?|warn(?:ing)?)\b/i;
 const NOISE = /\b(?:debug|info|heartbeat|polling|retrying|pass(?:ed|ing)?|progress)\b/i;
 const TEST_COMMAND = /(?:^|[;&|])\s*(?:npm\s+(?:run\s+)?(?:test|lint|typecheck|build)(?::[\w-]+)?|(?:pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|build)(?::[\w-]+)?|(?:npx\s+)?(?:vitest|jest|pytest|go\s+test|cargo\s+test|mvn\s+test|gradle\s+test|tsc|eslint|biome|ruff|mypy))(?:\s|$)/i;
-const LOG_COMMAND = /(?:docker\s+(?:compose\s+)?logs?|kubectl\s+logs?|journalctl|tail\s+(?:-f|--follow)|(?:^|[\s;&|])logs?\b)/i;
+const LOG_COMMAND = /(?:docker\s+(?:compose\s+)?logs?|kubectl\s+logs?|journalctl|(?:^|[\s;&|])tail(?:\s|$)|(?:^|[\s;&|])logs?\b)/i;
 
 interface TextBlock extends Record<string, unknown> {
 	type: "text";
