@@ -78,6 +78,7 @@ import { createEditOps } from "./tools/edit-ops";
 import { createFindOps } from "./tools/find-ops";
 import { createLsOps } from "./tools/ls-ops";
 import { createGrepTool } from "./tools/grep";
+import { compactBashToolResult, compactBashToolError } from "./tools/bash-output";
 
 /** Diretório desta extensão — usado para resolver seccomp.bpf. */
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -382,6 +383,8 @@ export default function (pi: ExtensionAPI) {
     makeTool: (cwd: string) => TTool,
     makeSandboxed: (config: SandboxConfig, cwd: string, workspaceRoot: string) => TTool,
     label?: string,
+    postProcess?: (result: unknown, params: unknown) => unknown,
+    processError?: (error: unknown, params: unknown) => unknown,
   ): TTool {
     const base = makeTool(localCwd);
     return {
@@ -389,12 +392,21 @@ export default function (pi: ExtensionAPI) {
       ...(label !== undefined ? { label } : {}),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
         const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
-        if (!enabled || !config) {
-          if (fallbackToHost) return makeTool(cwd).execute(toolCallId, params, signal, onUpdate, ctx);
-          throw sandboxBlockedError(base.name);
+        const execute = async () => {
+          if (!enabled || !config) {
+            if (fallbackToHost) return makeTool(cwd).execute(toolCallId, params, signal, onUpdate, ctx);
+            throw sandboxBlockedError(base.name);
+          }
+          const workspaceRoot = session?.worktreePath ?? cwd;
+          return makeSandboxed(config, cwd, workspaceRoot).execute(toolCallId, params, signal, onUpdate, ctx);
+        };
+        try {
+          const result = await execute();
+          return postProcess ? postProcess(result, params) : result;
+        } catch (error) {
+          if (processError) throw processError(error, params);
+          throw error;
         }
-        const workspaceRoot = session?.worktreePath ?? cwd;
-        return makeSandboxed(config, cwd, workspaceRoot).execute(toolCallId, params, signal, onUpdate, ctx);
       },
     };
   }
@@ -421,6 +433,8 @@ export default function (pi: ExtensionAPI) {
     (cwd) => createBashTool(cwd),
     (config, cwd, workspaceRoot) => createBashTool(cwd, { operations: createBashOps(config, cwd, workspaceRoot, refreshBranchState) }),
     "bash (sandboxed)",
+    (result, params) => compactBashToolResult(result, params),
+    (error, params) => compactBashToolError(error, params),
   ));
 
   pi.registerTool(sandboxTool(
