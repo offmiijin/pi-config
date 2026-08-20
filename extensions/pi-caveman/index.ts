@@ -17,7 +17,7 @@ export default function (pi: ExtensionAPI): void {
 	const stats = new StatsTracker();
 	const state: CavemanRuntimeState = { enabled: config.enabled, ready: false };
 
-	registerRecoveryTool(pi, store);
+	registerRecoveryTool(pi, store, { onRecovered: () => stats.recordRecovery() });
 	registerCavemanCommand(pi, state, stats);
 
 	pi.on("session_start", async (_event, ctx) => {

@@ -5,7 +5,11 @@ import { isRecoveryHandle } from "./handles.ts";
 
 export const RECOVERY_TOOL_NAME = "caveman_retrieve";
 
-export function registerRecoveryTool(pi: ExtensionAPI, store: RecoveryStore): void {
+export interface RecoveryToolCallbacks {
+	onRecovered?(): void;
+}
+
+export function registerRecoveryTool(pi: ExtensionAPI, store: RecoveryStore, callbacks: RecoveryToolCallbacks = {}): void {
 	pi.registerTool({
 		name: RECOVERY_TOOL_NAME,
 		label: "Recuperar conteúdo Caveman",
@@ -19,6 +23,7 @@ export function registerRecoveryTool(pi: ExtensionAPI, store: RecoveryStore): vo
 			}
 			try {
 				const content = await store.get(params.recovery_handle);
+				callbacks.onRecovered?.();
 				return {
 					content: [{ type: "text", text: content }],
 					details: { recovery_handle: params.recovery_handle, recovered: true },

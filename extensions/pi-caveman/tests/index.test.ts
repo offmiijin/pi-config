@@ -57,6 +57,10 @@ describe("integração com Pi", () => {
 		expect(patch).toMatchObject({ content: [{ type: "text" }] });
 		const compacted = (patch as { content: Array<{ text: string }> }).content[0]!.text;
 		expect(compacted).toContain("<<ccr:");
+		const handle = compacted.match(/<<ccr:(ccr_[0-9a-f]{32})>>/)?.[1];
+		expect(handle).toBeDefined();
+		const recovered = await fixture.tools.get("caveman_retrieve")!.execute("tool-1", { recovery_handle: handle });
+		expect(recovered.content[0].text).toBe(original);
 	});
 
 	it("registra a ferramenta de recuperação e o comando", async () => {
