@@ -1,5 +1,5 @@
 /**
- * pi-memory — Configuração da extração (Fase 3).
+ * pi-memory — Configuração da extração.
  *
  * Modelo dedicado e FIXO para extração — não herda o modelo interativo da
  * sessão (mudaria com /model). Meio-termo de custo/qualidade: modelo forte
@@ -39,7 +39,7 @@ export const EXTRACTION_SESSION_ID = "pi-memory-extraction";
  */
 export const EXTRACTION_MAX_CANDIDATES_PER_JOB = 8;
 
-/** Orçamentos do prompt de extração (mapping Fase 3, seção 3.4). */
+/** Orçamentos do prompt de extração. */
 export const EXTRACTION_MAX_EVIDENCE_TOKENS = 18_000;
 export const EXTRACTION_MAX_MEMORY_CONTEXT_TOKENS = 5_000;
 

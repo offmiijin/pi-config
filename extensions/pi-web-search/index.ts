@@ -16,7 +16,7 @@ import { registerWebAgent } from "./agent";
 import { getConfigSummary, setKey, getConfiguredProviders, getSearxngUrl, getSearxngKey } from "./config";
 
 export default function (pi: ExtensionAPI) {
-	// O dev-sandbox cria um worktree após o ctx.cwd original já ter sido
+	// O pi-sandbox cria um worktree após o ctx.cwd original já ter sido
 	// definido. web_fetch precisa gravar no workspace efetivo da sessão para
 	// que read/ls possam acessar os arquivos dentro do mesmo namespace.
 	let sandboxWorkspaceCwd: string | undefined;

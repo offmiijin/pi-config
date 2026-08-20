@@ -1,7 +1,7 @@
 /**
- * Sanitização DOM (Fase 2.1) + escolha de conteúdo (Fase 2.2).
+ * Sanitização DOM e escolha do conteúdo principal.
  *
- * Fase 2.1 — limpeza estrutural:
+ * Limpeza estrutural:
  *   - comentários HTML e doctype removidos
  *   - atributos fora da whitelist (KEPT_ATTRIBUTES) removidos: on*, style,
  *     class, id, name, role, aria-*, data-*, ... (exceção: `class` com
@@ -9,7 +9,7 @@
  *   - elementos com `hidden` removidos
  *   - nós vazios removidos (exceto void: br, img, hr, source, ...)
  *
- * Fase 2.2 — escolha de conteúdo:
+ * Escolha de conteúdo:
  *   article → main → [role="main"] → body. Sem candidato claro, o
  *   documento inteiro é renderizado.
  */
@@ -24,9 +24,7 @@ const KEEP_EMPTY_TAGS = new Set([
 	"col", "embed", "param", "command", "keygen",
 ]);
 
-// ---------------------------------------------------------------------------
-// Fase 2.1 — sanitização estrutural
-// ---------------------------------------------------------------------------
+// Sanitização estrutural
 
 export function sanitizeDocument($: CheerioAPI): void {
 	removeCommentsAndDoctype($);
@@ -97,9 +95,7 @@ export function sanitizeAttributes($: CheerioAPI): void {
 	});
 }
 
-// ---------------------------------------------------------------------------
-// Fase 2.2 — escolha de conteúdo
-// ---------------------------------------------------------------------------
+// Escolha de conteúdo
 
 /**
  * Seleciona o conteúdo principal: article → main → [role="main"] → body.

@@ -14,9 +14,7 @@ export interface TodoToolState {
 	value: TodoState;
 }
 
-// ---------------------------------------------------------------------------
 // Construção e utilitários
-// ---------------------------------------------------------------------------
 
 /** Estado inicial vazio (mesma semântica de `clear`). */
 export function createTodoState(): TodoState {
@@ -36,9 +34,7 @@ export function snapshot(state: TodoState): TodoState {
 	};
 }
 
-// ---------------------------------------------------------------------------
 // add
-// ---------------------------------------------------------------------------
 
 export interface AddTodosResult {
 	ok: boolean;
@@ -79,9 +75,7 @@ export function addTodos(state: TodoState, texts: string[]): AddTodosResult {
 	};
 }
 
-// ---------------------------------------------------------------------------
 // update
-// ---------------------------------------------------------------------------
 
 export interface UpdateTodoResult {
 	ok: boolean;
@@ -136,9 +130,7 @@ export function updateTodo(
 	return { ok: true, state: { ...state, items }, updated: items[index] };
 }
 
-// ---------------------------------------------------------------------------
 // clear
-// ---------------------------------------------------------------------------
 
 /** Zera a lista e reinicia `nextId` em 1. */
 export function clearTodos(): TodoState {

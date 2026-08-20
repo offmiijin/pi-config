@@ -8,17 +8,17 @@
     "@rolldown/binding-linux-x64-gnu": "^1.1.5"
   },
   "scripts": {
-    "test": "npm run test:sandbox && npm run test:github && npm run test:websearch && npm run test:memory && npm run test:doctor && npm run test:thinking && npm run test:changelog && npm run test:todo && npm run test:changes",
-    "test:sandbox": "cd extensions/dev-sandbox && vitest run",
+    "test": "npm run test:pi-sandbox && npm run test:github && npm run test:websearch && npm run test:memory && npm run test:pi-doctor && npm run test:pi-thinking-level && npm run test:pi-changelog && npm run test:todo && npm run test:pi-panel",
+    "test:pi-sandbox": "cd extensions/pi-sandbox && vitest run",
     "test:github": "cd extensions/pi-github && vitest run",
     "test:websearch": "cd extensions/pi-web-search && vitest run",
     "test:memory": "cd extensions/pi-memory && node --test",
-    "test:changelog": "cd extensions/pi-config-changelog && vitest run",
+    "test:pi-changelog": "cd extensions/pi-changelog && vitest run",
     "test:todo": "cd extensions/pi-todo && vitest run",
-    "test:changes": "cd extensions/pi-changes && vitest run",
-    "test:doctor": "cd extensions && vitest run tests/doctor.test.ts",
-    "test:thinking": "cd extensions && vitest run tests/thinking-level.test.ts",
-    "typecheck": "cd extensions/dev-sandbox && tsc --noEmit",
+    "test:pi-panel": "cd extensions/pi-panel && vitest run",
+    "test:pi-doctor": "cd extensions && vitest run tests/doctor.test.ts",
+    "test:pi-thinking-level": "cd extensions && vitest run tests/thinking-level.test.ts",
+    "typecheck": "cd extensions/pi-sandbox && tsc --noEmit",
     "doctor:check": "cd extensions && vitest run tests/doctor.smoke.test.ts"
   }
 }

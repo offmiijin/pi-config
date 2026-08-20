@@ -48,9 +48,7 @@ import { spawnSync } from "node:child_process";
 // Test cwd — used for all fetchPages calls
 const testCwd = "/home/user/project";
 
-// ---------------------------------------------------------------------------
 // fetchPages — mocked fetch + fs
-// ---------------------------------------------------------------------------
 describe("fetchPages", () => {
 	beforeEach(() => {
 		vi.stubGlobal(
@@ -281,9 +279,7 @@ describe("fetchPages", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // extensionForContentType — pure function
-// ---------------------------------------------------------------------------
 describe("extensionForContentType", () => {
 	it("maps known application types", () => {
 		expect(extensionForContentType("application/pdf", "https://x/a")).toBe("pdf");

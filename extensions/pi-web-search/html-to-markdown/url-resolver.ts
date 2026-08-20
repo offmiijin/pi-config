@@ -1,5 +1,5 @@
 /**
- * Resolução e validação de URLs (Fase 1 — links e imagens).
+ * Resolução e validação de URLs para links e imagens.
  *
  * Regras globais do contrato:
  *   - URLs relativas são resolvidas contra a baseUrl (URL final da página)

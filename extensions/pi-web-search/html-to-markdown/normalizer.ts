@@ -1,5 +1,5 @@
 /**
- * Normalização de saída (Fase 2.3 — espaçamento), ciente de blocos de código.
+ * Normalização de saída ciente de blocos de código.
  *
  * Regras:
  *   - máximo de duas quebras consecutivas (uma linha em branco entre blocos)

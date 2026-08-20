@@ -7,9 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { buildTitle, validateTitle, VALID_TYPES } from "../../tools/validate";
 
-// ---------------------------------------------------------------------------
 // buildTitle
-// ---------------------------------------------------------------------------
 describe("buildTitle", () => {
 	it("builds basic title with type, scope, and description", () => {
 		const result = buildTitle({
@@ -91,9 +89,7 @@ describe("buildTitle", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // validateTitle
-// ---------------------------------------------------------------------------
 describe("validateTitle", () => {
 	it("validates a correct title", () => {
 		expect(validateTitle("feat(auth): Adiciona login")).toEqual({

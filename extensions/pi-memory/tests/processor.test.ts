@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: processor de extração (Fase 3) com modelo fake.
+ * pi-memory — Tests: processor de extração com modelo fake.
  *
  * Usa banco temporário + model fake — nenhuma chamada LLM real. Testa o fluxo
  * evidências → prompt → complete() → candidates no banco + métricas no job.
@@ -120,7 +120,7 @@ describe("createExtractionProcessor", () => {
 		expect(candidates.length).toBe(1);
 		expect(candidates[0].context).toBe("sessao-cache");
 		expect(candidates[0].evidenceIds).toEqual([evidenceId]);
-		expect(candidates[0].status).toBe("committed"); // auto-accept (Fase 4)
+		expect(candidates[0].status).toBe("committed"); // auto-accept
 
 		const updated = pipeline.getJob(jobId)!;
 		expect(updated.model).toBe("fake/fake-model");
@@ -391,7 +391,7 @@ describe("createExtractionProcessor", () => {
 	});
 });
 
-describe("Fase 4: validação, revisor e commit", () => {
+describe("Validação, revisor e commit", () => {
 	type Messages = { content: { type: string; text?: string }[] }[];
 
 	/** Fake que distingue o prompt de extração do prompt do revisor. */

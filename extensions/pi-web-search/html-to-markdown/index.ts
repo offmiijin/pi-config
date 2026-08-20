@@ -1,15 +1,8 @@
 /**
  * HTML → Markdown (pi-web-search) — conversor.
  *
- * Pipeline (fases):
- *   Fase 0 — contrato + módulo
- *   Fase 1 — renderer CommonMark (títulos, listas, citações, código, links,
- *            imagens, mídia, ênfase, escape)
- *   Fase 2 — sanitização DOM (comentários, hidden, vazios, atributos),
- *            escolha de conteúdo (article/main/[role=main]/body),
- *            normalização de espaçamento e escape por contexto
- *   Fase 3 — tabelas GFM; Fase 4 — formulários; Fase 5 — conteúdo
- *            editorial; Fase 6 — tags obsoletas
+ * Pipeline: contrato, renderização CommonMark, sanitização DOM, escolha do
+ * conteúdo principal, normalização, tabelas, formulários e tags obsoletas.
  */
 
 import * as cheerio from "cheerio";

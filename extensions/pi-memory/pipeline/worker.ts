@@ -1,9 +1,9 @@
 /**
  * pi-memory — Worker assíncrono de extração (sem dependência do PI).
  *
- * Fase 2: fila de jobs, seleção de episódios, consumer loop com retry/backoff
- * e sinalização por wake (sem polling). A extração em si (chamada LLM) chega
- * na Fase 3 — o executor padrão aqui só seleciona e reclama episódios
+ * Fila de jobs, seleção de episódios, consumer loop com retry/backoff
+ * e sinalização por wake (sem polling). A extração em si (chamada LLM) é
+ * executada pelo processor; o worker seleciona e reclama episódios
  * (normalized → selected) registrando auditoria no job.
  *
  * Modelo:
@@ -59,8 +59,8 @@ export interface JobExecutionResult {
 	error?: string;
 	details?: Record<string, unknown>;
 	/**
-	 * Status terminal dos episódios no sucesso: 'selected' (seleção, Fase 2)
-	 * ou 'processed' (extração, Fase 3). Default: 'selected'.
+	 * Status terminal dos episódios no sucesso: 'selected' (seleção)
+	 * ou 'processed' (extração). Default: 'selected'.
 	 */
 	episodesStatus?: EpisodeStatus;
 }
@@ -78,7 +78,7 @@ export interface WorkerOptions {
 	backoffMs?: number[];
 	/**
 	 * Inclui episódios 'selected' (claimados por job anterior) na seleção —
-	 * usado pela extração (Fase 3) para processar o que a seleção (Fase 2)
+	 * usado pela extração para processar o que a seleção
 	 * deixou em espera. Default: false.
 	 */
 	includeClaimed?: boolean;
@@ -92,7 +92,7 @@ export interface WorkerOptions {
  * Seleciona episódios normalized do projeto para um job: mais antigos
  * primeiro, acumulando até o alvo sem estourar o hard cap. Um episódio único
  * maior que o cap é incluído mesmo assim (episódio é a unidade — a
- * orçamentação de evidências acontece na montagem do prompt, Fase 3).
+ * orçamentação de evidências acontece na montagem do prompt).
  */
 export function selectEpisodesForJob(
 	pipeline: PipelineDB,
@@ -180,7 +180,7 @@ export function maybeCreateJob(
 }
 
 /**
- * Executor padrão da Fase 2 (substituído pela extração real na Fase 3):
+ * Executor padrão (substituído pela extração real):
  * aceita a seleção e devolve sucesso — o worker então reclama os episódios
  * (normalized → selected) e completa o job com auditoria da seleção.
  */

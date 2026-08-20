@@ -5,13 +5,12 @@
  *   memories/.pipeline.sqlite — episódios, evidências, jobs, candidatos.
  *
  * O markdown de memórias e o `.index.sqlite` (busca) NÃO são tocados aqui —
- * o pipeline registra o que a sessão produziu para o worker de extração
- * (fases seguintes). A fonte original continua sendo a sessão JSONL do Pi;
+ * o pipeline registra o que a sessão produziu para o worker de extração.
+ * A fonte original continua sendo a sessão JSONL do Pi;
  * este banco guarda apenas a projeção operacional.
  *
- * Fase 0: schema completo + captura de episódios (agent_settled). As tabelas
- * de evidências/jobs/candidatos já nascem para as fases 1–4; só episódios
- * são populados nesta fase.
+ * Schema completo + captura de episódios (agent_settled). As tabelas de
+ * evidências/jobs/candidatos já existem no mesmo banco operacional.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -433,7 +432,7 @@ export class PipelineDB {
 			db.exec("PRAGMA busy_timeout = 5000");
 			db.exec("PRAGMA foreign_keys = ON");
 			db.exec(SCHEMA_SQL);
-			// Migração v1 → v2: colunas novas em jobs (bancos criados na Fase 0).
+			// Migração v1 → v2: colunas novas em jobs.
 			// CREATE TABLE IF NOT EXISTS não altera tabela existente — colunas
 			// ausentes são adicionadas por ALTER (no-op se já presentes).
 			const jobCols = db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
@@ -638,7 +637,7 @@ export class PipelineDB {
 	}
 
 	/* ------------------------------------------------------------ */
-	/* Jobs (Fase 2)                                                 */
+	/* Jobs                                                         */
 	/* ------------------------------------------------------------ */
 
 	/** Cria um job de extração com status 'queued'. Retorna o id gerado. */
@@ -762,7 +761,7 @@ export class PipelineDB {
 		}
 	}
 
-	/** Alias Fase 2: completa job de seleção (episódios → selected). */
+	/** Alias que completa job de seleção (episódios → selected). */
 	completeJobWithSelection(
 		jobId: string,
 		episodeIds: string[],

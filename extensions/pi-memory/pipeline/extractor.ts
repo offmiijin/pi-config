@@ -1,5 +1,5 @@
 /**
- * pi-memory — Prompt de extração e parsing da resposta (Fase 3, sem
+ * pi-memory — Prompt de extração e parsing da resposta (sem
  * dependência do PI). Módulo puro — testável standalone.
  *
  * Responsabilidades:

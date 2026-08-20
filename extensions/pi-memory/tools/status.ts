@@ -1,5 +1,5 @@
 /**
- * pi-memory — memory_status tool (Fase 6: métricas do pipeline).
+ * pi-memory — memory_status tool (métricas do pipeline).
  *
  * Substitui o antigo contador de observações markdown (threshold 50) pelas
  * métricas reais do pipeline: episódios por status, evidências, jobs,

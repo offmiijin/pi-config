@@ -433,7 +433,7 @@ export function formatFrontmatter(meta: Record<string, unknown>): string {
 }
 
 /**
- * Parâmetros de entrada do saveMemory (Fase 5 — snapshot consolidado).
+ * Parâmetros de entrada do saveMemory (snapshot consolidado).
  */
 export interface SaveMemoryParams {
 	type: string;
@@ -458,9 +458,9 @@ export interface SaveMemoryParams {
 
 /**
  * Salva ou atualiza um arquivo de memória. Compartilhado por memory_save e
- * pelo commit do pipeline (Fase 4/5).
+ * pelo commit do pipeline.
  *
- * Fase 5 — snapshot consolidado:
+ * Snapshot consolidado:
  * - Contexto novo → cria arquivo com frontmatter v2 (revision: 1, created,
  *   updated, confidence, scope, tags, summary, evidence).
  * - Contexto existente → a versão atual vai para .history/{context}/v{N}.md

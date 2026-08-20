@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: tool memory_status (Fase 6 — métricas do pipeline).
+ * pi-memory — Tests: tool memory_status (métricas do pipeline).
  *
  * Substitui o antigo contador de observações markdown pelas métricas reais
  * do pipeline: episódios por status, evidências, jobs, candidatos e worker.
@@ -106,7 +106,7 @@ afterAll(() => {
 	rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("memory_status (Fase 6)", () => {
+describe("memory_status", () => {
 	it("reporta métricas do pipeline (episódios, jobs, candidatos, última extração)", async () => {
 		const state: ToolState = {
 			projectId: proj,

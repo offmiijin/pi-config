@@ -4,7 +4,7 @@
  *
  * Só os campos que as tools leem/escrevem vivem aqui. O resto do estado da
  * extensão (pipeline/worker são criados no session_start e injetados aqui
- * para as tools de Fase 6 consumirem).
+ * para as tools consumirem).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -24,9 +24,9 @@ export interface ToolState {
 	cachedIndexText: string | null;
 	/** Índice SQLite/FTS5 aberto na sessão (null se indisponível → fallback rg). */
 	index: MemoryIndex | null;
-	/** Pipeline operacional (Fase 6) — null se indisponível. */
+	/** Pipeline operacional — null se indisponível. */
 	pipeline: PipelineDB | null;
-	/** Worker assíncrono (Fase 6) — null se indisponível. */
+	/** Worker assíncrono — null se indisponível. */
 	worker: PipelineWorker | null;
 	/** Store de atividade de retenção — null se desativado/indisponível. */
 	retention: MemoryActivityStore | null;
@@ -69,7 +69,7 @@ export function syncIndex(
 
 /**
  * Emite o evento custom:memory-stats com a contagem atual de memórias
- * (global + project). Consumido pelo status-bar do custom-theme — a
+ * (global + project). Consumido pelo status-bar do pi-custom-theme — a
  * apresentação fica desacoplada do storage. No-op sem projectId ativo.
  */
 export function emitMemoryStats(pi: ExtensionAPI, state: ToolState): void {
