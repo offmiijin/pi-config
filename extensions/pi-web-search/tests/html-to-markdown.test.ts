@@ -770,7 +770,7 @@ describe("aceite", () => {
 		expect(md("<p>a</p>texto solto depois")).toBe("a\n\ntexto solto depois");
 	});
 
-	it("documento composto de aceite — integra todas as fases", () => {
+	it("documento composto de aceite — integra todos os recursos", () => {
 		const html = `<article>
 			<h1>Título</h1>
 			<p>Intro com <strong>negrito</strong> e <a href="/rel">link relativo</a>.</p>

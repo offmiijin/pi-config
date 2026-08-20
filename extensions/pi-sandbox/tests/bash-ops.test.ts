@@ -1,5 +1,5 @@
 /**
- * Testes do bloqueio de instalação/execução externa no bash (fase E).
+ * Testes do bloqueio de instalação/execução externa no bash.
  *
  * Cobre: isBlockedInstall (padrões bloqueados e permitidos) e o throw do
  * createBashOps antes do spawn (sem mock — o bloqueio ocorre antes de

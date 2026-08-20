@@ -290,7 +290,7 @@ export async function fetchPages(
 			let filename: string;
 			if (isText) {
 				// HTML → Markdown (.md) via html-to-markdown (baseUrl = URL final,
-				// após redirects, para resolver links relativos nas fases seguintes)
+				// após redirects, para resolver links relativos no conteúdo convertido)
 				const html = await response.text();
 				const { markdown } = htmlToMarkdown(html, {
 					baseUrl: response.url || url,
