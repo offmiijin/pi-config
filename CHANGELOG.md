@@ -22,6 +22,7 @@
 
 ### Added
 
+- `pi-caveman`: adiciona compressão local de resultados JSON e logs no evento `tool_result`, armazenamento content-addressed com handles `ccr_...`, recuperação exata via `caveman_retrieve`, fallback fail-open, estatísticas de sessão e comando `/caveman`.
 - `pi-panel`: adiciona painel TUI flutuante para navegar pelos diffs do worktree, com seleção de arquivos, estatísticas de linhas e atalho `Alt+D`.
 - `pi-sandbox`: adiciona `sandbox_promote_preview`/`sandbox_promote_restore` e os comandos `/promote-preview`/`/promote-restore`, com snapshot seguro para live preview e restauração do projeto original.
 - `pi-sandbox`: bootstrap seguro de dependências npm no worktree confiável com `npm ci/install --ignore-scripts` e cache persistente.
