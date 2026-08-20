@@ -16,7 +16,16 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   createReadTool: () => ({ name: "read", execute: vi.fn(async () => ({ content: [{ type: "text", text: "fallback" }] })) }),
   createWriteTool: () => ({ name: "write", execute: vi.fn() }),
   createEditTool: () => ({ name: "edit", execute: vi.fn() }),
-  createBashTool: () => ({ name: "bash", execute: vi.fn() }),
+  createBashTool: () => ({
+    name: "bash",
+    execute: vi.fn(async () => ({
+      content: [{
+        type: "text",
+        text: Array.from({ length: 40 }, (_, index) => `PASS test-${index}`).join("\n"),
+      }],
+      details: {},
+    })),
+  }),
   createFindTool: () => ({ name: "find", execute: vi.fn() }),
   createLsTool: () => ({ name: "ls", execute: vi.fn() }),
   createGrepTool: () => ({ name: "grep", execute: vi.fn() }),
@@ -219,6 +228,23 @@ describe("index — orquestração", () => {
       expect.stringContaining("--no-sandbox"),
       "warning",
     );
+  });
+
+  it("bash aplica compactação específica após execução sandboxed", async () => {
+    const { pi, handlers, tools } = fakePi();
+    extension(pi as never);
+    await handlers.get("session_start")!({}, fakeCtx());
+
+    const bashTool = tools.find((tool) => tool.name === "bash")!;
+    const result = await bashTool.execute(
+      "id",
+      { command: "npm test" },
+      undefined,
+      undefined,
+      { cwd: process.cwd() },
+    ) as { content: Array<{ text: string }> };
+
+    expect(result.content[0]?.text).toContain("linhas de saída omitidas");
   });
 
   it("user_bash: devolve operations quando habilitado", async () => {
