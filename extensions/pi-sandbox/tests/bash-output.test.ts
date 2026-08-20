@@ -13,6 +13,13 @@ describe("compactação de saída do bash", () => {
     expect(result.output).toBe('{"items":[1,2]}');
   });
 
+  it("reconhece scripts de teste com sufixo do workspace", () => {
+    const output = Array.from({ length: 40 }, (_, index) => `PASS test-${index}`).join("\n");
+    const result = compactBashOutput("npm run test:pi-sandbox", output);
+    expect(result.kind).toBe("test");
+    expect(result.changed).toBe(true);
+  });
+
   it("filtra linhas repetitivas de testes e preserva falhas", () => {
     const output = Array.from({ length: 40 }, (_, index) =>
       index === 30 ? "FAIL src/auth.test.ts:42 invalid token" : `PASS test-${index}`,

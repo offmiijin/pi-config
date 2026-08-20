@@ -35,6 +35,24 @@ sudo apt install bubblewrap
 └─────────────────────────────────┘
 ```
 
+## Política de saída das tools
+
+A compactação pertence à tool que conhece a semântica do resultado. O sandbox
+mantém o conteúdo exato de arquivos e patches e aplica somente limites e filtros
+seguros na origem:
+
+| Tool | Política | Limite/garantia |
+|---|---|---|
+| `read` | conteúdo íntegro; paginação por `offset`/`limit` | truncamento nativo do Pi |
+| `write`/`edit` | confirmação curta; conteúdo e patches intactos | sem poda semântica |
+| `grep` | matches e contexto preservados; contexto sobreposto deduplicado | 100 matches e 50 KiB |
+| `find`/glob | caminhos preservados; `.git` e `node_modules` ignorados pelo backend sandbox | limite solicitado pela tool e 50 KiB do Pi |
+| `ls` | entradas preservadas e ordenadas pela tool built-in | 500 entradas e 50 KiB do Pi |
+| `bash` | JSON válido minificado; testes e logs filtrados somente por comando inequívoco | saída desconhecida permanece intacta, além do limite nativo |
+
+Toda saída limitada recebe um aviso no resultado. Código, diffs, configurações e
+texto desconhecido não são compactados semanticamente.
+
 ## O que é isolado
 
 | Ferramenta | Dentro do sandbox? |
