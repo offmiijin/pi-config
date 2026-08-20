@@ -1,10 +1,10 @@
 /**
  * pi-memory — Normalização de evidências (sem dependência do PI).
  *
- * Fase 1: a partir de um episódio (registrado na Fase 0), lê o arquivo de
+ * A partir de um episódio, lê o arquivo de
  * sessão JSONL do Pi, reconstrói o branch, classifica as entradas pela
  * matriz de relevância e insere `evidence` no pipeline. Nenhuma chamada LLM
- * aqui — só filtragem determinística (fonte: mapping Fase 1).
+ * aqui — só filtragem determinística.
  *
  * Regras centrais:
  * - tools de leitura/navegação (read/grep/find/ls/web_fetch) → descartadas
@@ -303,7 +303,7 @@ function extractTitles(resultText: string): string {
 }
 
 /**
- * Classifica um tool call segundo a matriz de relevância (mapping Fase 1,
+ * Classifica um tool call segundo a matriz de relevância,
  * seção 1.3). Retorna null para tools descartadas (leitura/navegação).
  */
 export function classifyToolCall(input: {
@@ -593,7 +593,7 @@ export function extractEpisodeEvidence(entries: SessionEntry[]): ExtractedEviden
 			continue;
 		}
 
-		// bashExecution e demais papéis — descartados (Fase 1)
+		// bashExecution e demais papéis — descartados
 	}
 
 	return out;
@@ -633,7 +633,7 @@ export interface NormalizeResult {
  * entradas e insere evidências em transação única.
  *
  * - Arquivo ausente/ilegível ou range não encontrado → mantém `pending`
- *   (o worker da Fase 2 pode retentar; a sessão pode ainda não ter sido
+ *   (o worker pode retentar; a sessão pode ainda não ter sido
  *   persistida no disco quando agent_settled dispara).
  * - Zero evidências → `ignored` (episódio ruidoso — nunca reanalisado).
  * - Com evidências → `normalized` (pronto para o worker).

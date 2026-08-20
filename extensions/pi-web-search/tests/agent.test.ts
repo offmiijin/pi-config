@@ -1,16 +1,14 @@
 /**
  * Tests for agent.ts
  *
- * Phase 1: Tool registration, goal management, state transitions, output formatting
- * Phase 2: Event-driven query/fetch tracking via tool_call and tool_result
+ * Registra a tool, gerencia objetivos, transições de estado e formatação de saída.
+ * Acompanha pesquisas e coletas pelos eventos tool_call e tool_result.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { __resetState, __getState } from "../agent";
 
-// ---------------------------------------------------------------------------
 // Fake ExtensionAPI
-// ---------------------------------------------------------------------------
 interface RegisteredTool {
 	name: string;
 	label: string;
@@ -57,18 +55,14 @@ function createFakeAPI(): FakeAPI {
 	};
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /** Load agent module fresh */
 async function loadAgent() {
 	return await import("../agent");
 }
 
-// ---------------------------------------------------------------------------
-// Phase 1 — State management
-// ---------------------------------------------------------------------------
+// State management
 describe("state management", () => {
 	beforeEach(() => {
 		__resetState();
@@ -120,9 +114,7 @@ describe("state management", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Phase 1 — Output formatting
-// ---------------------------------------------------------------------------
+// Output formatting
 describe("output formatting", () => {
 	beforeEach(() => {
 		__resetState();
@@ -195,9 +187,7 @@ describe("output formatting", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Phase 2 — Event listeners: tool_call tracking
-// ---------------------------------------------------------------------------
+// Event listeners: tool_call tracking
 describe("tool_call tracking", () => {
 	beforeEach(() => {
 		__resetState();
@@ -208,7 +198,6 @@ describe("tool_call tracking", () => {
 		const api = createFakeAPI();
 		registerWebAgent(api);
 
-		// Start a session
 		const tool = api.getTool("web_agent")!;
 		await tool.execute("id0", { goal: "research" }, undefined);
 
@@ -281,7 +270,6 @@ describe("tool_call tracking", () => {
 		const api = createFakeAPI();
 		registerWebAgent(api);
 
-		// No session started — emit events
 		await api.emit("tool_call", {
 			toolName: "web_search",
 			toolCallId: "call-1",
@@ -310,9 +298,7 @@ describe("tool_call tracking", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Phase 2 — Event listeners: tool_result tracking
-// ---------------------------------------------------------------------------
+// Event listeners: tool_result tracking
 describe("tool_result tracking", () => {
 	beforeEach(() => {
 		__resetState();
@@ -517,9 +503,7 @@ describe("tool_result tracking", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Phase 2 — Integration: state queried via web_agent after events
-// ---------------------------------------------------------------------------
+// Integration: state queried via web_agent after events
 describe("state query after events", () => {
 	beforeEach(() => {
 		__resetState();
@@ -532,7 +516,6 @@ describe("state query after events", () => {
 
 		const tool = api.getTool("web_agent")!;
 
-		// Start session
 		await tool.execute("id0", { goal: "research" }, undefined);
 
 		// Simulate search
@@ -652,9 +635,7 @@ describe("state query after events", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Phase 3 — discoveredUrls and contextual suggestions
-// ---------------------------------------------------------------------------
+// discoveredUrls and contextual suggestions
 describe("discovered URLs tracking", () => {
 	beforeEach(() => {
 		__resetState();
@@ -745,9 +726,7 @@ describe("discovered URLs tracking", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Phase 3 — Suggestions
-// ---------------------------------------------------------------------------
+// Suggestions
 describe("suggestions", () => {
 	beforeEach(() => {
 		__resetState();
@@ -943,9 +922,7 @@ describe("suggestions", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Phase 3 — Integration: complete research flow
-// ---------------------------------------------------------------------------
+// Integration: complete research flow
 describe("complete research flow", () => {
 	beforeEach(() => {
 		__resetState();
@@ -958,7 +935,6 @@ describe("complete research flow", () => {
 
 		const tool = api.getTool("web_agent")!;
 
-		// 1. Start session
 		await tool.execute("id0", { goal: "Find CLI tools" }, undefined);
 
 		// 2. Two searches

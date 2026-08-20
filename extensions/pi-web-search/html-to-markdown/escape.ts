@@ -1,9 +1,9 @@
 /**
- * Escape para Markdown CommonMark (Fase 1).
+ * Escape para Markdown CommonMark.
  *
  * Protege o texto contra sintaxe introduzida acidentalmente pelo conteúdo
  * original (ênfase, links, listas, títulos, código, HTML). Refinamento por
- * contexto completo (MarkdownEscapeContext) na Fase 2.
+ * contexto completo (`MarkdownEscapeContext`).
  */
 
 import type { MarkdownEscapeContext } from "./types";
@@ -13,7 +13,7 @@ import type { MarkdownEscapeContext } from "./types";
  *   - `\`, `` ` ``, `*`, `_`, `[`, `]`, `<` — especiais em qualquer lugar
  *   - `#`, `>`, `- `, `+ `, `1. ` — no início de linha
  *
- * Contextos (Fase 2.4):
+ * Contextos:
  *   - heading: prefixo `#` inicial (já coberto pela regra de início de linha)
  *   - list: marcadores `-`/`*`/`+`/`1.` do texto (já cobertos)
  *   - table-cell: além do base, escapa `|` e converte quebras em `<br>`

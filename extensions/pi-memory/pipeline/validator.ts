@@ -1,5 +1,5 @@
 /**
- * pi-memory — Validação de candidatos e revisor condicional (Fase 4, sem
+ * pi-memory — Validação de candidatos e revisor condicional (sem
  * dependência do PI). Módulo puro — testável standalone.
  *
  * - validateCandidate: checagens determinísticas (schema, evidência, ação ×

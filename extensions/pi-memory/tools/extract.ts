@@ -1,5 +1,5 @@
 /**
- * pi-memory — memory_extract tool (Fase 6: enfileirador assíncrono).
+ * pi-memory — memory_extract tool (enfileirador assíncrono).
  *
  * O pipeline legado (extração síncrona de observações markdown) foi
  * substituído pelo worker em background: esta tool apenas

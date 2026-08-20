@@ -14,7 +14,7 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 		name: "memory_save",
 		label: "Memory Save",
 		description:
-			"Saves or updates a memory as a consolidated snapshot (Fase 5): same context key = same file, " +
+			"Saves or updates a memory as a consolidated snapshot: same context key = same file, " +
 			"every write rewrites the CURRENT state and archives the previous version to .history/. " +
 			"Provide 'summary' (1-2 sentences, PT-BR) describing the CURRENT state — it is persisted and updated on every write. " +
 			"Use supersedes to mark a memory under a DIFFERENT context key as replaced. " +

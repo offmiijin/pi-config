@@ -7,9 +7,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { searchTool } from "../../tools/search";
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function makeGh() {
 	return {
@@ -26,9 +24,7 @@ function makeGh() {
 	};
 }
 
-// ---------------------------------------------------------------------------
 // searchTool
-// ---------------------------------------------------------------------------
 describe("searchTool", () => {
 	it("returns search results as formatted text", async () => {
 		const gh = makeGh();

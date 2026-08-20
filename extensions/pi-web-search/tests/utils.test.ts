@@ -12,9 +12,7 @@ import {
 	asyncPool,
 } from "../utils";
 
-// ---------------------------------------------------------------------------
 // sanitizeFilename
-// ---------------------------------------------------------------------------
 describe("sanitizeFilename", () => {
 	it("converts standard URL with path", () => {
 		expect(sanitizeFilename("https://example.com/page")).toBe(
@@ -72,9 +70,7 @@ describe("sanitizeFilename", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // randomUserAgent
-// ---------------------------------------------------------------------------
 describe("randomUserAgent", () => {
 	it("returns a string from the USER_AGENTS pool", () => {
 		const ua = randomUserAgent();
@@ -97,9 +93,7 @@ describe("randomUserAgent", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // asyncPool
-// ---------------------------------------------------------------------------
 describe("asyncPool", () => {
 	it("processes all items", async () => {
 		const items = [1, 2, 3, 4, 5];

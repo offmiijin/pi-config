@@ -6,7 +6,7 @@
  * ricos agrupados por contexto, buscáveis via índice SQLite FTS5/BM25
  * (fallback ripgrep).
  *
- * Arquitetura (Fases 0-6):
+ * Arquitetura:
  *   sessão JSONL do Pi → episódios (agent_settled) → evidências →
  *   jobs de extração (gatilhos automáticos ou memory_extract) → worker em
  *   background (prompt + modelo → validação → revisor → commit snapshot).
@@ -16,16 +16,16 @@
  *   constants.ts        — constantes compartilhadas + setup de projeto
  *   db.ts               — driver SQLite compartilhado (node/bun)
  *   pipeline.ts         — pipeline operacional (episódios, evidências, jobs)
- *   evidence.ts         — normalização de evidências (Fase 1)
- *   worker.ts           — fila de jobs + consumer assíncrono (Fase 2)
- *   config.ts           — modelo de extração (Fase 3)
- *   extractor.ts        — prompt de extração + parsing (Fase 3)
- *   processor.ts        — extração → validação → commit (Fases 3-4)
- *   validator.ts        — validação/política/revisor (Fase 4)
+ *   evidence.ts         — normalização de evidências
+ *   worker.ts           — fila de jobs + consumer assíncrono
+ *   config.ts           — modelo de extração
+ *   extractor.ts        — prompt de extração + parsing
+ *   processor.ts        — extração → validação → commit
+ *   validator.ts        — validação/política/revisor
  *   memory.ts           — CRUD de memórias snapshot v2 + save
  *   memory-index.ts     — índice FTS5 derivado
  *   memory-search.ts    — fallback de busca via ripgrep
- *   session.ts          — helpers legados (estimativa de tokens)
+ *   session.ts          — helpers de sessão e estimativa de tokens
  *   schemas.ts          — schemas de parâmetros das tools
  *   tools/*.ts          — um arquivo por tool (status, save, search, decay, extract)
  */
@@ -325,7 +325,7 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] worker indisponível: ${(err as Error).message}`);
 		}
 
-		// Tools (Fase 6) consomem pipeline/worker via state
+		// Tools consomem pipeline/worker via state
 		state.pipeline = pipeline;
 		state.worker = worker;
 

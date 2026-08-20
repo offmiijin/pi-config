@@ -1,9 +1,9 @@
 /**
- * Tests for html-to-markdown (Fase 1 — núcleo CommonMark seguro)
+ * Tests for html-to-markdown — núcleo CommonMark seguro.
  *
  * Covers: contrato público (invariantes, constantes) e o renderer por tag
  * (títulos, parágrafos, listas, citações, código, ênfase, links, imagens,
- * mídia, tags removidas e escape). Tabelas/formulários: fases 3-4.
+ * mídia, tags removidas, escape, tabelas e formulários.
  */
 
 import { describe, it, expect } from "vitest";
@@ -18,9 +18,7 @@ import { normalizeMarkdown } from "../html-to-markdown/normalizer";
 const opts = { baseUrl: "https://example.com/page" };
 const md = (html: string) => htmlToMarkdown(html, opts).markdown;
 
-// ---------------------------------------------------------------------------
 // Contrato (invariantes globais)
-// ---------------------------------------------------------------------------
 describe("contrato", () => {
 	it("retorna { markdown, baseUrl }", () => {
 		const r = htmlToMarkdown("<p>x</p>", { baseUrl: "https://a.com/p" });
@@ -85,9 +83,7 @@ describe("contrato", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // Títulos, parágrafos e separadores
-// ---------------------------------------------------------------------------
 describe("títulos e blocos", () => {
 	it("converte h1-h6 com prefixo #", () => {
 		const html = "<h1>A</h1><h2>B</h2><h6>F</h6>";
@@ -124,9 +120,7 @@ describe("títulos e blocos", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // Ênfase e código
-// ---------------------------------------------------------------------------
 describe("ênfase e código", () => {
 	it("strong/b → **texto**", () => {
 		expect(md("<p><strong>negrito</strong> e <b>também</b></p>")).toBe(
@@ -168,9 +162,7 @@ describe("ênfase e código", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // Citações e definições
-// ---------------------------------------------------------------------------
 describe("blockquote, dl e miscelânea", () => {
 	it("blockquote prefixa cada linha com >", () => {
 		expect(md("<blockquote><p>citação</p></blockquote>")).toBe("> citação");
@@ -215,9 +207,7 @@ describe("blockquote, dl e miscelânea", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // Links
-// ---------------------------------------------------------------------------
 describe("links", () => {
 	it("link absoluto", () => {
 		expect(md('<p><a href="https://x.com">site</a></p>')).toBe(
@@ -275,9 +265,7 @@ describe("links", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // Imagens e mídia
-// ---------------------------------------------------------------------------
 describe("imagens e mídia", () => {
 	it("img com src e alt", () => {
 		expect(md('<img src="https://x.com/i.png" alt="foto">')).toBe(
@@ -323,9 +311,7 @@ describe("imagens e mídia", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // Listas
-// ---------------------------------------------------------------------------
 describe("listas", () => {
 	it("ul simples", () => {
 		expect(md("<ul><li>a</li><li>b</li></ul>")).toBe("- a\n- b");
@@ -363,9 +349,7 @@ describe("listas", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
 // Escape e tags removidas/desconhecidas
-// ---------------------------------------------------------------------------
 describe("escape e remoção", () => {
 	it("escapa ênfase e colchetes no texto", () => {
 		expect(md("<p>*asterisco* e [x]</p>")).toBe("\\*asterisco\\* e \\[x\\]");
@@ -418,10 +402,8 @@ describe("escape e remoção", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 2 — sanitização DOM
-// ---------------------------------------------------------------------------
-describe("sanitização (Fase 2)", () => {
+// Sanitização DOM
+describe("sanitização", () => {
 	it("remove elementos hidden", () => {
 		expect(md("<div hidden><p>secreto</p></div><p>público</p>")).toBe("público");
 	});
@@ -449,10 +431,8 @@ describe("sanitização (Fase 2)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 2 — escolha de conteúdo
-// ---------------------------------------------------------------------------
-describe("escolha de conteúdo (Fase 2)", () => {
+// Escolha de conteúdo
+describe("escolha de conteúdo", () => {
 	it("prefere article sobre o resto do documento", () => {
 		expect(md("<div>ruído</div><article><p>conteúdo</p></article>")).toBe(
 			"conteúdo",
@@ -478,10 +458,8 @@ describe("escolha de conteúdo (Fase 2)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 2 — normalização de espaçamento
-// ---------------------------------------------------------------------------
-describe("normalização de espaçamento (Fase 2)", () => {
+// Normalização de espaçamento
+describe("normalização de espaçamento", () => {
 	it("remove espaço antes de pontuação", () => {
 		expect(md("<p>olá , mundo .</p>")).toBe("olá, mundo.");
 	});
@@ -506,10 +484,8 @@ describe("normalização de espaçamento (Fase 2)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 2 — escape por contexto
-// ---------------------------------------------------------------------------
-describe("escape por contexto (Fase 2)", () => {
+// Escape por contexto
+describe("escape por contexto", () => {
 	it("table-cell escapa | e converte quebras em <br>", () => {
 		expect(escapeText("a | b\nc", "table-cell")).toBe("a \\| b<br>c");
 	});
@@ -524,10 +500,8 @@ describe("escape por contexto (Fase 2)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 3 — tabelas GFM
-// ---------------------------------------------------------------------------
-describe("tabelas (Fase 3)", () => {
+// Tabelas GFM
+describe("tabelas", () => {
 	it("tabela simples com thead", () => {
 		const html =
 			"<table><thead><tr><th>Nome</th><th>Valor</th></tr></thead>" +
@@ -600,10 +574,8 @@ describe("tabelas (Fase 3)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 4 — formulários
-// ---------------------------------------------------------------------------
-describe("formulários (Fase 4)", () => {
+// Formulários
+describe("formulários", () => {
 	it("checkbox marcado e desmarcado", () => {
 		expect(md('<input type="checkbox" checked>')).toBe("[x]");
 		expect(md('<input type="checkbox">')).toBe("[ ]");
@@ -685,10 +657,8 @@ describe("formulários (Fase 4)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 5 — conteúdo editorial
-// ---------------------------------------------------------------------------
-describe("conteúdo editorial (Fase 5)", () => {
+// Conteúdo editorial
+describe("conteúdo editorial", () => {
 	it("del/s/strike → ~~texto~~", () => {
 		expect(md("<p><del>removido</del></p>")).toBe("~~removido~~");
 		expect(md("<p><s>antigo</s></p>")).toBe("~~antigo~~");
@@ -731,10 +701,8 @@ describe("conteúdo editorial (Fase 5)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 6 — tags obsoletas
-// ---------------------------------------------------------------------------
-describe("obsoletas (Fase 6)", () => {
+// Tags obsoletas
+describe("obsoletas", () => {
 	it("font/basefont/tt → filhos", () => {
 		expect(md('<p><font color="red">texto</font></p>')).toBe("texto");
 		expect(md("<p><tt>mono</tt></p>")).toBe("mono");
@@ -769,10 +737,8 @@ describe("obsoletas (Fase 6)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Fase 7 — critérios de aceite
-// ---------------------------------------------------------------------------
-describe("aceite (Fase 7)", () => {
+// Critérios de aceite
+describe("aceite", () => {
 	it("li com múltiplos parágrafos mantém estrutura", () => {
 		const html =
 			"<ul><li><p>primeiro parágrafo</p><p>segundo</p></li><li>item</li></ul>";

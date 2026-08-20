@@ -110,7 +110,7 @@ export const RetentionSchema = Type.Object({
 });
 
 /* ------------------------------------------------------------------ */
-/* Extração (Fase 3) — schema da resposta do modelo                    */
+/* Schema da resposta do modelo                                      */
 /* ------------------------------------------------------------------ */
 
 export const ExtractionCandidateSchema = Type.Object({

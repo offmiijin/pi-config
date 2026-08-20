@@ -5,9 +5,7 @@
  * invariantes que toda implementação deve respeitar.
  */
 
-// ---------------------------------------------------------------------------
 // Status
-// ---------------------------------------------------------------------------
 
 /** Status possíveis de uma tarefa. */
 export const TODO_STATUSES = ["pending", "in-progress", "done", "error"] as const;
@@ -21,9 +19,7 @@ export const TODO_STATUSES = ["pending", "in-progress", "done", "error"] as cons
  */
 export type TodoStatus = (typeof TODO_STATUSES)[number];
 
-// ---------------------------------------------------------------------------
 // Item
-// ---------------------------------------------------------------------------
 
 /**
  * Tarefa individual.
@@ -43,9 +39,7 @@ export interface TodoItem {
 	error?: string;
 }
 
-// ---------------------------------------------------------------------------
 // Estado
-// ---------------------------------------------------------------------------
 
 /**
  * Estado global da lista.
@@ -63,9 +57,7 @@ export interface TodoState {
 	nextId: number;
 }
 
-// ---------------------------------------------------------------------------
 // Ações e payload persistido
-// ---------------------------------------------------------------------------
 
 /** Ações suportadas pela tool única `todo`. */
 export type TodoAction = "list" | "add" | "update" | "clear";
@@ -78,9 +70,7 @@ export interface TodoDetails {
 	error?: string;
 }
 
-// ---------------------------------------------------------------------------
 // Regras de transição de status
-// ---------------------------------------------------------------------------
 
 /**
  * Transições permitidas de `status` (validadas em state.ts):

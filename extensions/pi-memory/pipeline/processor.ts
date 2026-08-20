@@ -1,5 +1,5 @@
 /**
- * pi-memory — Processor de extração (Fase 3).
+ * pi-memory — Processor de extração.
  *
  * Converte um job em memórias candidatas: lê as evidências dos episódios
  * selecionados, busca memórias relacionadas, monta o prompt, chama o modelo
@@ -100,14 +100,14 @@ export interface ExtractionProcessorDeps {
 	getModel(): Promise<ExtractionModelRef | null>;
 	getRelatedMemories(projectId: string, terms: string[]): Promise<string>;
 	/**
-	 * Fase 4: localiza memória existente pelo context key no PROJETO DO JOB
+	 * Localiza memória existente pelo context key no PROJETO DO JOB
 	 * (dedup/contradição e validação de supersede). projectId vem do job —
 	 * troca de projeto durante extração não pode consultar o projeto errado.
 	 * Default: nenhuma.
 	 */
 	findExistingMemory?(projectId: string, context: string): Promise<MemoryFileRef | null>;
 	/**
-	 * Fase 4: grava a memória no PROJETO DO JOB (markdown + índice).
+	 * Grava a memória no PROJETO DO JOB (markdown + índice).
 	 * projectId vem do job — commit nunca vai para o projeto errado.
 	 * Default: no-op ok.
 	 */
@@ -194,9 +194,9 @@ export function toNewCandidate(jobId: string, c: {
 
 /**
  * Cria o processor de extração usado pelo worker. Fluxo:
- * 1. Extração (Fase 3): evidências → termos → memórias relacionadas → prompt
+ * 1. Extração: evidências → termos → memórias relacionadas → prompt
  *    → complete() → parse → candidatos no banco (idempotente).
- * 2. Validação + commit (Fase 4): para cada candidato, validação
+ * 2. Validação + commit: para cada candidato, validação
  *    determinística → política (auto-accept | review | reject) → revisor
  *    condicional (mesmo modelo, reasoning low) para casos sensíveis →
  *    commit via deps.commitMemory → status committed/rejected/pending.
@@ -259,7 +259,7 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				candidates.map((c) => toNewCandidate(job.id, c)),
 			);
 
-			// Fase 4: validação + política + revisor + commit
+			// Validação + política + revisor + commit
 			const validEvidenceIds = new Set(blocks.map((b) => b.id));
 			let committed = 0;
 			let rejected = 0;

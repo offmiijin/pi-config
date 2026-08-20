@@ -1,8 +1,8 @@
 /**
  * HTML → Markdown (pi-web-search) — contrato do conversor.
  *
- * Fase 0: define entrada/saída pública, contextos de escape e regras
- * globais. As fases 1+ implementam, por trás de `htmlToMarkdown()`, os
+ * Define entrada/saída pública, contextos de escape e regras globais. Os
+ * módulos por trás de `htmlToMarkdown()` são:
  * módulos: sanitize, url-resolver, renderer e markdown-normalizer.
  */
 
@@ -36,7 +36,7 @@ export const KEPT_ATTRIBUTES = [
 ] as const;
 
 /**
- * Contextos de escape do Markdown (usados pelo renderer nas fases 1+).
+ * Contextos de escape do Markdown usados pelo renderer.
  * Cada contexto protege contra a sintaxe que o conteúdo original poderia
  * introduzir acidentalmente (ex.: `#` no início de um título, `|` em célula).
  */

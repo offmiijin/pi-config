@@ -4,9 +4,7 @@
  * UA pool, random delay, filename sanitization, async concurrency pool.
  */
 
-// ---------------------------------------------------------------------------
 // User-Agent Pool — 8 realistas de navegadores modernos
-// ---------------------------------------------------------------------------
 export const USER_AGENTS = [
 	// Chrome 135 — Windows
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
@@ -31,9 +29,7 @@ export function randomUserAgent(): string {
 	return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
-// ---------------------------------------------------------------------------
 // Delay
-// ---------------------------------------------------------------------------
 export const MIN_DELAY_MS = 1500;
 export const MAX_DELAY_MS = 3000;
 export const MIN_SEARCH_INTERVAL_MS = 2000;
@@ -44,9 +40,7 @@ export function randomDelay(min = MIN_DELAY_MS, max = MAX_DELAY_MS): Promise<voi
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ---------------------------------------------------------------------------
 // Search throttle — minimum spacing between searches
-// ---------------------------------------------------------------------------
 
 let lastSearchTime = 0;
 
@@ -64,18 +58,14 @@ export async function throttleSearch(): Promise<void> {
 	lastSearchTime = Date.now();
 }
 
-// ---------------------------------------------------------------------------
 // Timeouts
-// ---------------------------------------------------------------------------
 export const SEARCH_TIMEOUT_MS = 10_000;
 export const FETCH_TIMEOUT_MS = 15_000;
 /** Orçamento estendido para download de binários (PDFs grandes, servidores lentos). */
 export const BINARY_TIMEOUT_MS = 60_000;
 export const DEFAULT_CONCURRENCY = 3;
 
-// ---------------------------------------------------------------------------
 // Filename sanitization
-// ---------------------------------------------------------------------------
 /**
  * Convert a URL to a safe filename.
  *
@@ -99,9 +89,7 @@ export function sanitizeFilename(url: string): string {
 	return `${name}.txt`;
 }
 
-// ---------------------------------------------------------------------------
 // Async concurrency pool
-// ---------------------------------------------------------------------------
 /**
  * Process an array of items with limited concurrency.
  *

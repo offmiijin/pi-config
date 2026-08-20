@@ -22,9 +22,7 @@ import { agentConfig as coderConfig } from "./coder.ts";
 import { agentConfig as plannerConfig } from "./planner.ts";
 import { agentConfig as writerConfig } from "./writer.ts";
 
-// ---------------------------------------------------------------------------
 // Tipos
-// ---------------------------------------------------------------------------
 
 export interface AgentConfig {
 	type: "coder" | "planner" | "writer";
@@ -34,9 +32,7 @@ export interface AgentConfig {
 	allowedExtensions?: Record<string, string[]>;
 }
 
-// ---------------------------------------------------------------------------
 // Estado
-// ---------------------------------------------------------------------------
 
 const AGENTS: Record<string, AgentConfig> = {
 	coder: coderConfig,
@@ -46,9 +42,7 @@ const AGENTS: Record<string, AgentConfig> = {
 
 let currentType: AgentConfig["type"] = "coder";
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Tools gerenciadas por esta extensão — todas as tools built-in do pi.
@@ -107,9 +101,7 @@ function injectSystemPrompt(base: string, config: AgentConfig): string {
 	return `${base}\n\n${config.agentsMd}`;
 }
 
-// ---------------------------------------------------------------------------
 // Comando /agent
-// ---------------------------------------------------------------------------
 
 async function handleAgent(args: string, pi: ExtensionAPI, ctx: ExtensionContext) {
 	const arg = args?.trim().toLowerCase();
@@ -148,9 +140,7 @@ function doSwitch(type: AgentConfig["type"], pi: ExtensionAPI, ctx?: ExtensionCo
 	if (ctx) ctx.ui.notify(`Modo: ${config.label}`, "info");
 }
 
-// ---------------------------------------------------------------------------
 // Entry point
-// ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
 	// Bloqueio de extensão (WRITER/PLANNER: só .md)

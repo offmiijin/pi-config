@@ -26,9 +26,7 @@ import {
 	DEFAULT_CONCURRENCY,
 } from "./utils";
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 export interface FetchItemResult {
 	url: string;
 	file?: string;
@@ -53,9 +51,7 @@ export interface FetchOutput {
 	results: FetchItemResult[];
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function randomHex(length: number): string {
 	return Math.random().toString(16).slice(2, 2 + length);
@@ -67,9 +63,7 @@ function sanitizeSessionKey(key: string): string {
 	return (clean || "default").slice(0, 64);
 }
 
-// ---------------------------------------------------------------------------
 // Binary content
-// ---------------------------------------------------------------------------
 
 /**
  * Extensão de arquivo a partir do Content-Type.
@@ -136,9 +130,7 @@ function uniqueFilename(filename: string, used: Set<string>): string {
 }
 
 
-// ---------------------------------------------------------------------------
 // PDF text extraction (pdftotext / poppler-utils)
-// ---------------------------------------------------------------------------
 
 const PDF_TEXT_TIMEOUT_MS = 30_000;
 
@@ -197,9 +189,7 @@ function isPdfBuffer(buf: Buffer): boolean {
 	return buf.subarray(0, 5).toString("latin1") === "%PDF-";
 }
 
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /**
  * Fetch all `urls` concurrently (max `maxConcurrent` at a time).
