@@ -30,13 +30,24 @@ describe("pipeline de resultados", () => {
 	it("compacta, salva o original e adiciona handle", async () => {
 		const store = await fixture();
 		const original = JSON.stringify({ values: Array.from({ length: 80 }, (_, index) => index) }, null, 2);
-		const outcome = await compressToolOutput(original, "bash", config, store);
+		const outcome = await compressToolOutput(original, "custom_json_tool", config, store);
 
 		expect(outcome.changed).toBe(true);
 		expect(outcome.handle).toMatch(/^ccr_/);
 		expect(outcome.content).toContain(`<<ccr:${outcome.handle}>>`);
 		expect(await store.get(outcome.handle!)).toBe(original);
 		expect(outcome.outputBytes).toBeLessThan(outcome.originalBytes);
+	});
+
+	it("ignora tools nativas porque elas são donas da própria saída", async () => {
+		const store = await fixture();
+		const original = JSON.stringify({ values: Array.from({ length: 80 }, (_, index) => index) }, null, 2);
+		for (const toolName of ["read", "write", "edit", "bash", "grep", "find", "ls"]) {
+			const outcome = await compressToolOutput(original, toolName, config, store);
+			expect(outcome.changed, toolName).toBe(false);
+			expect(outcome.content, toolName).toBe(original);
+			expect(outcome.reason, toolName).toContain("tool nativa");
+		}
 	});
 
 	it("não recompacta a própria ferramenta de recuperação", async () => {

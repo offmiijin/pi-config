@@ -20,6 +20,11 @@
 - `pi-custom-theme`/`pi-sandbox`: exibe diretório original, branch sandbox abreviado e branch original no footer durante sessões isoladas.
 - `pi-todo`: corrige sobreposição da tela quando a última tarefa visível falha, ocultando o motivo do erro na linha da tarefa (issue [#90](https://github.com/offmiijin/pi-config/issues/90))
 
+### Changed
+
+- `pi-sandbox`: compacta contexto repetido do `grep` e saídas classificadas de testes/logs/JSON do `bash`, preservando falhas, warnings, stack traces e conteúdo desconhecido.
+- `pi-caveman`: deixa de processar `read`, `write`, `edit`, `bash`, `grep`, `find` e `ls`, evitando dupla compactação, armazenamento e notificações de recuperação desnecessários.
+
 ### Added
 
 - `pi-caveman`: adiciona compressão local de resultados JSON e logs no evento `tool_result`, armazenamento content-addressed com handles `ccr_...`, recuperação exata via `caveman_retrieve`, fallback fail-open, estatísticas de sessão e comando `/caveman`.

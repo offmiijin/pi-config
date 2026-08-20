@@ -6,6 +6,24 @@ import type { CavemanConfig, CompressionOutcome } from "../types.ts";
 
 export const RECOVERY_TOOL_NAME = "caveman_retrieve";
 
+/**
+ * Outputs dessas tools já são limitados/compactados pela própria implementação
+ * do Pi ou pelo pi-sandbox. O Caveman não deve fazer uma segunda passagem.
+ */
+export const PI_NATIVE_TOOL_NAMES = new Set([
+	"read",
+	"write",
+	"edit",
+	"bash",
+	"grep",
+	"find",
+	"ls",
+]);
+
+export function isPiNativeTool(toolName: string): boolean {
+	return PI_NATIVE_TOOL_NAMES.has(toolName);
+}
+
 function recoveryNotice(handle: string): string {
 	return `\n\n[pi-caveman] Conteúdo reduzido; original disponível em <<ccr:${handle}>>. Use caveman_retrieve para recuperar.`;
 }
@@ -23,6 +41,7 @@ export async function compressToolOutput(
 ): Promise<CompressionOutcome> {
 	const originalBytes = Buffer.byteLength(text, "utf8");
 	if (toolName === RECOVERY_TOOL_NAME) return unchanged(text, "unknown", "resultado de recuperação não é recompactado");
+	if (isPiNativeTool(toolName)) return unchanged(text, "unknown", "resultado já tratado pela tool nativa do Pi");
 	if (originalBytes < config.minBytes) return unchanged(text, "unknown", "abaixo do tamanho mínimo");
 	if (originalBytes > config.maxInputBytes) return unchanged(text, "unknown", "acima do limite de entrada");
 
