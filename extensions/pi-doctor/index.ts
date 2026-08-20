@@ -81,7 +81,8 @@ interface Pi {
 // ── Constantes ────────────────────────────────────────────────────────────
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
-const AGENT_ROOT = resolve(EXT_DIR, "..");
+const EXTENSIONS_DIR = resolve(EXT_DIR, "..");
+const AGENT_ROOT = resolve(EXTENSIONS_DIR, "..");
 const MIN_NODE = "22.19.0";
 
 const RUNTIME_PACKAGES = [
@@ -167,7 +168,7 @@ export interface RunChecksOptions {
 
 /** Raízes node_modules onde os pacotes das extensões são resolvidos. */
 export function defaultPkgRoots(): string[] {
-	return [join(AGENT_ROOT, "node_modules"), join(EXT_DIR, "node_modules")];
+	return [join(AGENT_ROOT, "node_modules"), join(EXTENSIONS_DIR, "node_modules")];
 }
 
 export function parseOsRelease(raw: string): OsRelease {
@@ -360,7 +361,7 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 	});
 
 	// Artefatos do sandbox
-	const devSandboxDir = join(EXT_DIR, "pi-sandbox");
+	const devSandboxDir = join(EXTENSIONS_DIR, "pi-sandbox");
 	const seccompOk = existsSync(join(devSandboxDir, "seccomp.bpf"));
 	checks.push({
 		id: "seccomp-bpf",
