@@ -47,7 +47,7 @@ describe("integração com Pi", () => {
 		const fixture = await extensionFixture();
 		const original = JSON.stringify({ values: Array.from({ length: 400 }, (_, index) => index) }, null, 2);
 		const patch = await fixture.handlers.get("tool_result")!({
-			toolName: "bash",
+			toolName: "custom_json_tool",
 			toolCallId: "call-1",
 			input: {},
 			content: [{ type: "text", text: original }],
@@ -63,6 +63,21 @@ describe("integração com Pi", () => {
 		expect(recovered.content[0].text).toBe(original);
 	});
 
+	it("ignora resultados das tools nativas sem invocar o pipeline", async () => {
+		const fixture = await extensionFixture();
+		const original = JSON.stringify({ values: Array.from({ length: 400 }, (_, index) => index) }, null, 2);
+		for (const toolName of ["read", "write", "edit", "bash", "grep", "find", "ls"]) {
+			const patch = await fixture.handlers.get("tool_result")!({
+				toolName,
+				toolCallId: `call-${toolName}`,
+				input: {},
+				content: [{ type: "text", text: original }],
+				isError: false,
+			}, context());
+			expect(patch, toolName).toBeUndefined();
+		}
+	});
+
 	it("registra a ferramenta de recuperação e o comando", async () => {
 		const fixture = await extensionFixture();
 		expect(fixture.tools.has("caveman_retrieve")).toBe(true);
@@ -75,7 +90,7 @@ describe("integração com Pi", () => {
 		await command.handler("off", context());
 		const original = JSON.stringify({ values: Array.from({ length: 400 }, (_, index) => index) }, null, 2);
 		const patch = await fixture.handlers.get("tool_result")!({
-			toolName: "bash",
+			toolName: "custom_json_tool",
 			toolCallId: "call-2",
 			input: {},
 			content: [{ type: "text", text: original }],
