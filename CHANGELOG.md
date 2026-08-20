@@ -48,6 +48,8 @@
 
 ### Changed
 
+- `pi-sandbox`: compacta contexto repetido do `grep` e saídas classificadas de testes/logs/JSON do `bash`, preservando falhas, warnings, stack traces e conteúdo desconhecido.
+- `pi-caveman`: deixa de processar `read`, `write`, `edit`, `bash`, `grep`, `find` e `ls`, evitando dupla compactação, armazenamento e notificações de recuperação desnecessários.
 - `pi-sandbox`: mounts de toolchains sob HOME passam a usar apenas diretórios necessários, sem expor árvores inteiras de `.local`, mise ou cargo.
 - `doctor_check`/`/doctor` passam a validar `pdftotext` (poppler-utils) para extração de PDF do pi-web-search, com hints de instalação por distro
 - `web_fetch` passa a baixar conteúdo não-texto (PDF, imagens, arquivos, ...) como binário para `.sandbox-cache/fetch/`, com extensão derivada do Content-Type (fallback: extensão da URL ou `.bin`), em vez de falhar com `UNSUPPORTED`
