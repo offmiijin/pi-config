@@ -195,6 +195,26 @@ describe("grep — exit codes e saída", () => {
     expect(res.content[0].text).toContain("[100 matches limit reached]");
   });
 
+  it("remove contexto duplicado entre matches sobrepostos", async () => {
+    const events = [
+      matchEvent("a.ts", 1, "x1"),
+      contextEvent("a.ts", 2, "shared"),
+      matchEvent("a.ts", 3, "x2"),
+      contextEvent("a.ts", 2, "shared"),
+    ];
+    execMock.mockResolvedValue(mockResult(events.join("\n")));
+    const res = await run({ pattern: "x", context: 1 });
+    expect(res.content[0].text.match(/a.ts:2:shared/g)).toHaveLength(1);
+  });
+
+  it("limita a saída por bytes sem descartar o match inteiro", async () => {
+    const longLine = "x".repeat(60 * 1024);
+    execMock.mockResolvedValue(mockResult(matchEvent("a.ts", 1, longLine)));
+    const res = await run({ pattern: "x" });
+    expect(res.content[0].text).toContain("[grep output limited to 51200 bytes]");
+    expect(res.details).toMatchObject({ outputTruncated: true, outputMaxBytes: 51200 });
+  });
+
   it("contexto NÃO conta pro limite; bloco completo preservado", async () => {
     const events = [
       contextEvent("a.ts", 0, "pre"),

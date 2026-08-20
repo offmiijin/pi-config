@@ -27,6 +27,7 @@ interface GrepToolResult {
 }
 
 const DEFAULT_GREP_LIMIT = 100;
+const DEFAULT_GREP_MAX_BYTES = 50 * 1024;
 
 interface RgJsonEventData {
   path?: { text?: string };
@@ -55,6 +56,7 @@ function formatRgEvent(data: RgJsonEventData | undefined): string {
  */
 function parseRgJsonOutput(raw: string, limit: number): { lines: string[]; matchCount: number } {
   const display: Array<{ type: "match" | "context"; text: string }> = [];
+  const contextSeen = new Set<string>();
   let matchCount = 0;
 
   for (const rawLine of raw.split("\n")) {
@@ -70,7 +72,13 @@ function parseRgJsonOutput(raw: string, limit: number): { lines: string[]; match
       matchCount++;
       display.push({ type: "match", text: formatRgEvent(ev.data) });
     } else if (ev.type === "context") {
-      display.push({ type: "context", text: formatRgEvent(ev.data) });
+      const text = formatRgEvent(ev.data);
+      // Contexto sobreposto entre matches não acrescenta informação. A chave
+      // inclui caminho e linha, portanto linhas iguais em arquivos diferentes
+      // continuam distintas.
+      if (contextSeen.has(text)) continue;
+      contextSeen.add(text);
+      display.push({ type: "context", text });
     }
   }
 
@@ -89,6 +97,24 @@ function parseRgJsonOutput(raw: string, limit: number): { lines: string[]; match
   }
 
   return { lines: display.slice(0, cut).map((d) => d.text), matchCount };
+}
+
+function fitOutput(lines: string[], maxBytes: number): { text: string; truncated: boolean } {
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const line of lines) {
+    const nextBytes = Buffer.byteLength(line, "utf8") + (kept.length > 0 ? 1 : 0);
+    if (bytes + nextBytes > maxBytes) {
+      if (kept.length === 0) {
+        const clipped = Buffer.from(line, "utf8").subarray(0, maxBytes).toString("utf8");
+        return { text: clipped, truncated: true };
+      }
+      return { text: kept.join("\n"), truncated: true };
+    }
+    kept.push(line);
+    bytes += nextBytes;
+  }
+  return { text: kept.join("\n"), truncated: false };
 }
 
 const GrepParamsSchema = Type.Object({
@@ -221,7 +247,8 @@ export function createGrepTool(cwd: string, config: SandboxConfig, workspaceRoot
         };
       }
 
-      const text = lines.join("\n");
+      const fitted = fitOutput(lines, DEFAULT_GREP_MAX_BYTES);
+      const text = fitted.text;
 
       if (!text.trim()) {
         return {
@@ -230,16 +257,18 @@ export function createGrepTool(cwd: string, config: SandboxConfig, workspaceRoot
         };
       }
 
-      if (limitReached) {
-        return {
-          content: [{ type: "text", text: text + `\n\n[${limit} matches limit reached]` }],
-          details: { matchLimitReached: limit },
-        };
-      }
-
+      const notices = [
+        ...(limitReached ? [`[${limit} matches limit reached]`] : []),
+        ...(fitted.truncated ? [`[grep output limited to ${DEFAULT_GREP_MAX_BYTES} bytes]`] : []),
+      ];
       return {
-        content: [{ type: "text", text }],
-        details: undefined,
+        content: [{ type: "text", text: notices.length > 0 ? `${text}\n\n${notices.join("\n")}` : text }],
+        details: notices.length > 0
+          ? {
+              ...(limitReached ? { matchLimitReached: limit } : {}),
+              ...(fitted.truncated ? { outputTruncated: true, outputMaxBytes: DEFAULT_GREP_MAX_BYTES } : {}),
+            }
+          : undefined,
       };
     },
   };
