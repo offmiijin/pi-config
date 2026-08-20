@@ -5,15 +5,24 @@ recuperação exata do conteúdo original.
 
 ## Escopo atual
 
-- Compactação determinística de JSON e logs.
+- Compactação determinística de JSON e logs de ferramentas customizadas,
+  extensões e integrações externas.
 - Armazenamento local content-addressed.
 - Ferramenta `caveman_retrieve` para recuperar o original.
 - Fallback automático para o resultado original quando a compactação não for
   segura, menor ou recuperável.
 - Estatísticas de sessão e comando `/caveman`.
 
+O Caveman não processa `read`, `write`, `edit`, `bash`, `grep`, `find` ou `ls`.
+Essas tools são built-ins do Pi e/ou wrappers do `pi-sandbox`; elas conhecem a
+semântica da própria saída e aplicam seus limites e compactações diretamente.
+Essa exclusão evita uma segunda passagem, armazenamento desnecessário e
+notificações duplicadas de recuperação.
+
 A extensão não altera providers, autenticação ou o catálogo de modelos e não
-inicia processos externos.
+inicia processos externos. Para ferramentas externas, o Caveman continua sendo
+um fallback genérico para JSON e logs quando a ferramenta produtora não possui
+compressor próprio.
 
 ## Instalação e teste manual
 
