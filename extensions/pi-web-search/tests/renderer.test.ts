@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const render = vi.hoisted(() => vi.fn());
+const rendererInstalling = vi.hoisted(() => vi.fn(() => false));
+
+vi.mock("../renderer-install", () => ({
+	isRendererInstallationInProgress: rendererInstalling,
+}));
 
 vi.mock("../renderer-client", () => ({
 	getSharedRendererClient: () => ({ render }),
@@ -35,10 +40,12 @@ describe("web_fetch — renderer JavaScript", () => {
 				'<html><body><div id="root"></div><script src="app.js"></script><script src="vendor.js"></script><script src="runtime.js"></script></body></html>',
 		}));
 		render.mockReset();
+		rendererInstalling.mockReturnValue(false);
 	});
 
 	afterEach(() => {
 		delete process.env.PI_WEB_RENDERER;
+		rendererInstalling.mockReturnValue(false);
 		vi.unstubAllGlobals();
 	});
 
@@ -69,6 +76,16 @@ describe("web_fetch — renderer JavaScript", () => {
 		expect(output.succeeded).toBe(1);
 		expect(output.results[0].rendered).toBe(false);
 		expect(output.results[0].note).toContain("renderer indisponível");
+	});
+
+	it("não usa o renderer enquanto a instalação está em andamento", async () => {
+		rendererInstalling.mockReturnValue(true);
+
+		const output = await fetchPages(["https://example.com/app"], "/tmp/project");
+
+		expect(render).not.toHaveBeenCalled();
+		expect(output.succeeded).toBe(1);
+		expect(output.results[0].note).toContain("em instalação");
 	});
 
 	it("falha explicitamente quando o renderer é obrigatório", async () => {

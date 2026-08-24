@@ -26,6 +26,7 @@ import {
 	DEFAULT_CONCURRENCY,
 } from "./utils";
 import { getRendererMode } from "./config";
+import { isRendererInstallationInProgress } from "./renderer-install";
 import { getSharedRendererClient } from "./renderer-client";
 
 // Types
@@ -315,9 +316,19 @@ export async function fetchPages(
 				let rendered = false;
 				let note: string | undefined;
 				const rendererMode = getRendererMode();
+				const rendererInstalling = isRendererInstallationInProgress();
 				const shouldRender =
+					!rendererInstalling &&
 					rendererMode !== "never" &&
 					(rendererMode === "required" || isLikelySpaShell(html, markdown));
+
+				if (rendererInstalling && rendererMode !== "never") {
+					if (rendererMode === "required") {
+						results.push({ url, error: "Renderer obrigatório: instalação em andamento" });
+						return;
+					}
+					note = "renderer em instalação; conteúdo estático utilizado";
+				}
 
 				if (shouldRender) {
 					try {

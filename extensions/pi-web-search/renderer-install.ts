@@ -13,6 +13,7 @@ export interface RendererInstallResult {
 	ok: boolean;
 	output: string;
 	command: string;
+	busy?: boolean;
 }
 
 export interface RendererValidationResult {
@@ -22,8 +23,34 @@ export interface RendererValidationResult {
 
 export type RendererInstallProgress = (chunk: string) => void;
 
+let rendererInstallInProgress = false;
+
+export function isRendererInstallationInProgress(): boolean {
+	return rendererInstallInProgress;
+}
+
 /** Executa o instalador versionado junto com a extensão, sem shell intermediário. */
 export function installRenderer(
+	signal?: AbortSignal,
+	onOutput?: RendererInstallProgress,
+): Promise<RendererInstallResult> {
+	const command = join(getRendererInstallDir(), "pi-web-renderer");
+	if (rendererInstallInProgress) {
+		return Promise.resolve({
+			ok: false,
+			busy: true,
+			output: "Outra instalação do renderer já está em andamento.",
+			command,
+		});
+	}
+
+	rendererInstallInProgress = true;
+	return runRendererInstall(signal, onOutput).finally(() => {
+		rendererInstallInProgress = false;
+	});
+}
+
+function runRendererInstall(
 	signal?: AbortSignal,
 	onOutput?: RendererInstallProgress,
 ): Promise<RendererInstallResult> {

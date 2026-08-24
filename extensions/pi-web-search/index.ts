@@ -14,7 +14,11 @@ import { getWebSearchArgumentCompletions } from "./command-completions";
 import { search, isSearxngReachable, validateProvider } from "./search";
 import { fetchPages } from "./fetch";
 import { registerWebAgent } from "./agent";
-import { installRenderer, validateRendererInstallation } from "./renderer-install";
+import {
+	installRenderer,
+	isRendererInstallationInProgress,
+	validateRendererInstallation,
+} from "./renderer-install";
 import { closeSharedRendererClient } from "./renderer-client";
 import {
 	getConfigSummary,
@@ -104,6 +108,10 @@ export default function (pi: ExtensionAPI) {
 				if (parts[1] === "renderer") {
 					const action = parts[2];
 					if (action === "install") {
+						if (isRendererInstallationInProgress()) {
+							ctx.ui.notify("⚠️ Uma instalação do renderer já está em andamento.", "warning");
+							return;
+						}
 						ctx.ui.notify(
 							"⏳ Instalação do renderer iniciada. Python, Playwright e Chromium serão configurados.",
 							"info",
@@ -111,7 +119,7 @@ export default function (pi: ExtensionAPI) {
 						ctx.ui.setStatus("pi-web-search-renderer", "Instalando renderer Python + Playwright…");
 						try {
 							const result = await installRenderer(ctx.signal, (chunk) => {
-								const lines = chunk.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
+								const lines = chunk.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 								const lastLine = lines.at(-1);
 								if (lastLine) {
 									ctx.ui.setStatus(
@@ -122,7 +130,7 @@ export default function (pi: ExtensionAPI) {
 							});
 							if (!result.ok) {
 								ctx.ui.notify(
-									`❌ Falha ao instalar o renderer.\\n${result.output.trim().slice(-2000)}`,
+									`❌ Falha ao instalar o renderer.\n${result.output.trim().slice(-2000)}`,
 									"error",
 								);
 								return;
@@ -151,6 +159,10 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					if (action === "status") {
+						if (isRendererInstallationInProgress()) {
+							ctx.ui.notify("⏳ A instalação do renderer ainda está em andamento.", "info");
+							return;
+						}
 						ctx.ui.setStatus("pi-web-search-renderer", "Validando renderer…");
 						try {
 							const validation = await validateRendererInstallation();
@@ -166,6 +178,10 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					if (action === "auto" || action === "never" || action === "required") {
+						if (isRendererInstallationInProgress()) {
+							ctx.ui.notify("⚠️ Aguarde a instalação do renderer terminar antes de alterar o modo.", "warning");
+							return;
+						}
 						setRendererMode(action);
 						ctx.ui.notify(`✅ Renderer configurado como ${action}.`, "info");
 						return;

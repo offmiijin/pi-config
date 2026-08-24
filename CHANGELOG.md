@@ -10,7 +10,7 @@
 ### Changed
 
 - `pi-web-search`: `web_fetch` detecta shells de SPA, renderiza JavaScript em modo `auto` e preserva fallback para o fetch HTTP quando o renderer não está disponível.
-- `pi-web-search`: exibe progresso e resultado da instalação, permite validar o renderer com `/web_search config renderer status` e encerra o Chromium durante `session_shutdown`.
+- `pi-web-search`: exibe progresso e resultado da instalação, permite validar o renderer com `/web_search config renderer status`, bloqueia instalações/uso concorrentes durante a configuração e encerra o Chromium durante `session_shutdown`.
 
 ## [1.2.0] - 2026-08-21
 
