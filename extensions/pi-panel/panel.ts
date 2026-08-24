@@ -8,9 +8,10 @@ import {
 	type TUI,
 	type Component,
 } from "@earendil-works/pi-tui";
-import type { ChangedFile, ChangeGroup, ChangesSnapshot } from "./types.ts";
+import type { ChangedFile, ChangeGroup, ChangesSnapshot, LineRange } from "./types.ts";
 
 const METADATA_RATIO = 0.3;
+const FILE_CONTEXT_LINES = 10;
 const MIN_PANEL_WIDTH = 32;
 
 /** Mantém o sufixo do caminho, útil para distinguir arquivos em pastas profundas. */
@@ -57,6 +58,32 @@ function formatNumber(value: number): string {
 	return value.toLocaleString("pt-BR");
 }
 
+function mergeLineRanges(ranges: LineRange[]): LineRange[] {
+	const sorted = [...ranges].sort((a, b) => a.start - b.start);
+	const merged: LineRange[] = [];
+	for (const range of sorted) {
+		const previous = merged.at(-1);
+		if (previous && range.start <= previous.end + 1) {
+			previous.end = Math.max(previous.end, range.end);
+		} else {
+			merged.push({ ...range });
+		}
+	}
+	return merged;
+}
+
+function contextRanges(ranges: LineRange[], totalLines: number): LineRange[] {
+	if (totalLines <= 0 || ranges.length === 0) return [{ start: 1, end: Math.max(1, totalLines) }];
+	return mergeLineRanges(ranges.map((range) => ({
+		start: Math.max(1, range.start - FILE_CONTEXT_LINES),
+		end: Math.min(totalLines, range.end + FILE_CONTEXT_LINES),
+	})));
+}
+
+function lineIsInRange(line: number, ranges: LineRange[]): boolean {
+	return ranges.some((range) => line >= range.start && line <= range.end);
+}
+
 type PanelFocus = "files" | "code";
 
 interface FileSelection {
@@ -76,6 +103,7 @@ export class ChangesPanel implements Component {
 	private snapshot: ChangesSnapshot;
 	private selectedIndex = 0;
 	private codeOffset = 0;
+	private showFullFile = false;
 	private focus: PanelFocus = "files";
 	private readonly tui: TUI;
 	private readonly theme: Theme;
@@ -105,7 +133,8 @@ export class ChangesPanel implements Component {
 			!previousSelection ||
 			!nextSelection ||
 			selectionKey(previousSelection) !== selectionKey(nextSelection) ||
-			previousSelection.file.diff !== nextSelection.file.diff
+			previousSelection.file.diff !== nextSelection.file.diff ||
+			previousSelection.file.content !== nextSelection.file.content
 		) {
 			this.codeOffset = 0;
 		}
@@ -128,7 +157,11 @@ export class ChangesPanel implements Component {
 
 		const moveUp = matchesKey(data, Key.up) || matchesKey(data, "k") || data === "K";
 		const moveDown = matchesKey(data, Key.down) || matchesKey(data, "j") || data === "J";
-		if (matchesKey(data, Key.enter)) {
+		if (data === "f" || data === "F") {
+			this.showFullFile = !this.showFullFile;
+			this.codeOffset = 0;
+			this.tui.requestRender();
+		} else if (matchesKey(data, Key.enter)) {
 			this.focus = this.focus === "files" ? "code" : "files";
 			this.tui.requestRender();
 		} else if (matchesKey(data, Key.left) && this.focus === "code") {
@@ -186,8 +219,8 @@ export class ChangesPanel implements Component {
 		}
 
 		const footerText = this.focus === "files"
-			? " ↑↓ K↑ J↓ arquivo  Enter diff  Alt+D/Esc fechar "
-			: " ↑↓ K↑ J↓ rolar diff  ← arquivos  Alt+D/Esc fechar ";
+			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `
+			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `;
 		const footer = this.theme.fg("dim", footerText);
 		lines.push(contentRow(footer));
 		lines.push(horizontalRow("╰", "╯"));
@@ -220,6 +253,40 @@ export class ChangesPanel implements Component {
 	}
 
 	private renderCodeLines(file: ChangedFile, width: number): string[] {
+		if (file.content === undefined) return this.renderDiffLines(file, width);
+
+		const rawLines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+		const totalLines = rawLines.length;
+		const ranges = this.showFullFile
+			? [{ start: 1, end: totalLines }]
+			: contextRanges(file.changedLineRanges, totalLines);
+		const lineNumberWidth = String(totalLines).length;
+		const lines: string[] = [];
+		let previousEnd = 0;
+
+		for (const range of ranges) {
+			if (range.start > previousEnd + 1) {
+				lines.push(this.theme.fg("dim", "      …"));
+			}
+			for (let lineNumber = range.start; lineNumber <= range.end; lineNumber++) {
+				const sourceLine = rawLines[lineNumber - 1] ?? "";
+				const number = String(lineNumber).padStart(lineNumberWidth, " ");
+				const color = lineIsInRange(lineNumber, file.changedLineRanges)
+					? "toolDiffAdded"
+					: "toolDiffContext";
+				lines.push(truncateToWidth(
+					`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, sourceLine)}`,
+					width,
+					"",
+				));
+			}
+			previousEnd = range.end;
+		}
+		if (!this.showFullFile && previousEnd < totalLines) lines.push(this.theme.fg("dim", "      …"));
+		return lines;
+	}
+
+	private renderDiffLines(file: ChangedFile, width: number): string[] {
 		const rawLines = file.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 		return rawLines.map((line) => truncateToWidth(
 			this.theme.fg(diffLineColor(line), line),
@@ -233,7 +300,7 @@ export class ChangesPanel implements Component {
 		if (fileSelections(this.snapshot).length === 0) {
 			return [truncateToWidth(this.theme.fg("dim", "Nenhuma alteração desde o início da sessão."), width, "")];
 		}
-		return [truncateToWidth(this.theme.fg("dim", "Selecione um arquivo para ver o diff."), width, "")];
+		return [truncateToWidth(this.theme.fg("dim", "Selecione um arquivo para ver o arquivo."), width, "")];
 	}
 
 	private renderMetadataLines(width: number): string[] {

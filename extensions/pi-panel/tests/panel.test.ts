@@ -23,15 +23,9 @@ function snapshot(): ChangesSnapshot {
 					status: "M",
 					additions: 12,
 					deletions: 4,
-					diff: [
-						"diff --git a/app.ts b/app.ts",
-						"--- a/app.ts",
-						"+++ b/app.ts",
-						"@@ -1,12 +1,12 @@",
-						"-old",
-						"+new",
-						...Array.from({ length: 12 }, (_, index) => ` context-${index + 1}`),
-					].join("\n"),
+					diff: "@@ -19,3 +19,4 @@",
+					content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\n"),
+					changedLineRanges: [{ start: 20, end: 20 }],
 				}],
 			},
 			{
@@ -43,7 +37,9 @@ function snapshot(): ChangesSnapshot {
 					status: "A",
 					additions: 3,
 					deletions: 0,
-					diff: "diff --git a/utils.ts b/utils.ts\n+++ b/utils.ts\n+const created = true;",
+					diff: "@@ -0,0 +1,3 @@",
+					content: "const created = true;",
+					changedLineRanges: [{ start: 1, end: 3 }],
 				}],
 			},
 		],
@@ -70,12 +66,13 @@ describe("painel — truncamento e layout", () => {
 		expect(visibleWidth(value)).toBeLessThanOrEqual(12);
 	});
 
-	it("renderiza o diff colorido à esquerda e grupos à direita", () => {
+	it("renderiza o conteúdo do arquivo com contexto e grupos à direita", () => {
 		const { panel } = setup();
 		const lines = panel.render(100);
 		const body = lines.join("\n");
-		expect(body).toContain("toolDiffRemoved:-old");
-		expect(body).toContain("toolDiffAdded:+new");
+		expect(body).toContain("line-10");
+		expect(body).toContain("line-20");
+		expect(body).not.toContain("@@ -19");
 		expect(body).toContain("abc123 feat: altera");
 		expect(body).toContain("Não commitadas");
 		expect(body).toContain("+12");
@@ -101,35 +98,41 @@ describe("painel — truncamento e layout", () => {
 });
 
 describe("painel — seleção", () => {
-	it("setas e J/K para cima/baixo selecionam arquivos e trocam o diff", () => {
+	it("setas e J/K para cima/baixo selecionam arquivos e trocam o conteúdo", () => {
 		const { panel, calls } = setup();
 		panel.handleInput("\x1b[B");
 		const selected = panel.render(100).join("\n");
-		expect(selected).toContain("toolDiffAdded:+const created = true;");
-		expect(selected).not.toContain("toolDiffRemoved:-old");
+		expect(selected).toContain("const created = true;");
+		expect(selected).not.toContain("line-20");
 		expect(calls.length).toBeGreaterThan(0);
 
 		panel.handleInput("k");
-		expect(panel.render(100).join("\n")).toContain("toolDiffRemoved:-old");
+		expect(panel.render(100).join("\n")).toContain("line-20");
 		panel.handleInput("J");
-		expect(panel.render(100).join("\n")).toContain("toolDiffAdded:+const created = true;");
+		expect(panel.render(100).join("\n")).toContain("const created = true;");
 	});
 
-	it("Enter move o foco para o diff e as setas passam a rolá-lo", () => {
+	it("Enter move o foco para o arquivo e F alterna todas as linhas", () => {
 		const { panel } = setup();
 		panel.handleInput("\r");
-		expect(panel.render(100).join("\n")).toContain("rolar diff");
+		expect(panel.render(100).join("\n")).toContain("rolar arquivo");
 
 		panel.handleInput("J");
+		panel.handleInput("J");
 		const scrolled = panel.render(100).join("\n");
-		expect(scrolled).not.toContain("diff --git a/app.ts b/app.ts");
-		expect(scrolled).toContain("context-7");
+		expect(scrolled).not.toContain("│ toolDiffContext:line-10");
+		expect(scrolled).toContain("line-21");
 
-		panel.handleInput("K");
-		expect(panel.render(100).join("\n")).toContain("diff --git a/app.ts b/app.ts");
+		panel.handleInput("F");
+		const fullFile = panel.render(100).join("\n");
+		expect(fullFile).toContain("line-1");
+		expect(fullFile).toContain("F contexto");
+
+		panel.handleInput("f");
+		expect(panel.render(100).join("\n")).not.toContain("│dim: 1 │ toolDiffContext:line-1");
 
 		panel.handleInput("\x1b[D");
-		expect(panel.render(100).join("\n")).toContain("Enter diff");
+		expect(panel.render(100).join("\n")).toContain("Enter arquivo");
 	});
 
 	it("Esc chama o fechamento", () => {

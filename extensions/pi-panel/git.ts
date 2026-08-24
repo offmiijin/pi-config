@@ -1,4 +1,6 @@
-import type { ChangedFile, ChangeGroup, ChangeStatus, ChangesSnapshot } from "./types.ts";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { ChangedFile, ChangeGroup, ChangeStatus, ChangesSnapshot, LineRange } from "./types.ts";
 
 export interface GitResult {
 	stdout: string;
@@ -105,6 +107,63 @@ export function parseNumstat(output: string): { additions: number; deletions: nu
 	};
 }
 
+/** Retorna as faixas de linhas do arquivo novo que foram modificadas. */
+export function parseChangedLineRanges(diff: string): LineRange[] {
+	const ranges: LineRange[] = [];
+	let newLine = 0;
+	let hunkStart = 0;
+	let hunkHadChange = false;
+	let hunkAddedLines: LineRange[] = [];
+
+	const finishHunk = (): void => {
+		if (hunkAddedLines.length > 0) {
+			ranges.push(...hunkAddedLines);
+		} else if (hunkHadChange && hunkStart > 0) {
+			// Uma deleção pura não possui linha nova para destacar; usa a linha vizinha.
+			ranges.push({ start: hunkStart, end: hunkStart });
+		}
+		hunkAddedLines = [];
+		hunkHadChange = false;
+	};
+
+	for (const line of diff.split("\n")) {
+		const header = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+		if (header) {
+			finishHunk();
+			hunkStart = Math.max(1, Number(header[1]));
+			newLine = hunkStart;
+			continue;
+		}
+		if (newLine === 0) continue;
+
+		if (line.startsWith("+") && !line.startsWith("+++")) {
+			hunkHadChange = true;
+			hunkAddedLines.push({ start: newLine, end: newLine });
+			newLine++;
+		} else if (line.startsWith("-") && !line.startsWith("---")) {
+			hunkHadChange = true;
+		} else if (!line.startsWith("\\")) {
+			newLine++;
+		}
+	}
+	finishHunk();
+	return mergeLineRanges(ranges);
+}
+
+function mergeLineRanges(ranges: LineRange[]): LineRange[] {
+	const sorted = [...ranges].sort((a, b) => a.start - b.start);
+	const merged: LineRange[] = [];
+	for (const range of sorted) {
+		const previous = merged.at(-1);
+		if (previous && range.start <= previous.end + 1) {
+			previous.end = Math.max(previous.end, range.end);
+		} else {
+			merged.push({ ...range });
+		}
+	}
+	return merged;
+}
+
 function parseCommits(output: string): CommitEntry[] {
 	const fields = output.split("\0");
 	const commits: CommitEntry[] = [];
@@ -124,23 +183,49 @@ function emptySnapshot(error?: string): ChangesSnapshot {
 	};
 }
 
+async function readWorkingTreeContent(cwd: string, entry: StatusEntry): Promise<string | undefined> {
+	if (entry.status === "D") return undefined;
+	try {
+		const content = await readFile(resolve(cwd, entry.path), "utf8");
+		return content.includes("\0") ? undefined : content;
+	} catch {
+		return undefined;
+	}
+}
+
+async function readCommitContent(
+	cwd: string,
+	runGit: GitRunner,
+	commitHash: string,
+	path: string,
+): Promise<string | undefined> {
+	const result = await runGit(["-C", cwd, "show", `${commitHash}:${path}`]);
+	if (result.code !== 0 || result.stdout.includes("\0")) return undefined;
+	return result.stdout;
+}
+
 async function collectFile(
 	entry: StatusEntry,
 	runGit: GitRunner,
 	diffArgs: string[],
 	numstatArgs: string[],
+	readContent: () => Promise<string | undefined>,
 ): Promise<ChangedFile> {
-	const [numstatResult, diffResult] = await Promise.all([
+	const [numstatResult, diffResult, content] = await Promise.all([
 		runGit(numstatArgs),
 		runGit(diffArgs),
+		readContent(),
 	]);
+	const diff = diffResult.stdout || "(Nenhum diff textual disponível.)";
 	const stats = parseNumstat(numstatResult.stdout);
 	return {
 		path: entry.path,
 		status: entry.status,
 		additions: stats.additions,
 		deletions: stats.deletions,
-		diff: diffResult.stdout || "(Nenhum diff textual disponível.)",
+		diff,
+		content,
+		changedLineRanges: parseChangedLineRanges(diff),
 	};
 }
 
@@ -193,6 +278,7 @@ async function collectCommitGroups(
 			runGit,
 			["-C", cwd, "show", "--format=", "--first-parent", "-m", "--no-color", "--unified=3", commit.hash, "--", entry.path],
 			["-C", cwd, "show", "--format=", "--first-parent", "-m", "--numstat", commit.hash, "--", entry.path],
+			() => readCommitContent(cwd, runGit, commit.hash, entry.path),
 		)));
 		files.sort((a, b) => a.path.localeCompare(b.path));
 		if (files.length > 0) {
@@ -238,7 +324,7 @@ async function collectWorkingTreeGroup(
 			"--numstat",
 			...diffArgs.slice(separatorIndex),
 		];
-		return collectFile(entry, runGit, diffArgs, numstatArgs);
+		return collectFile(entry, runGit, diffArgs, numstatArgs, () => readWorkingTreeContent(cwd, entry));
 	}));
 	files.sort((a, b) => a.path.localeCompare(b.path));
 	return {

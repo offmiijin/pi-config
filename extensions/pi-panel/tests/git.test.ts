@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	collectChanges,
+	parseChangedLineRanges,
 	parseNameStatus,
 	parseNumstat,
 	parsePorcelainStatus,
@@ -67,6 +68,27 @@ describe("git — numstat", () => {
 	});
 });
 
+describe("git — linhas alteradas", () => {
+	it("extrai e une as faixas de linhas novas dos hunks", () => {
+		expect(parseChangedLineRanges([
+			"@@ -1,4 +1,5 @@",
+			" context",
+			"-old",
+			"+new",
+			"@@ -10 +11,0 @@",
+			"-deleted",
+			"@@ -20,2 +20,3 @@",
+			" context",
+			"-old",
+			"+new",
+		].join("\n"))).toEqual([
+			{ start: 2, end: 2 },
+			{ start: 11, end: 11 },
+			{ start: 21, end: 21 },
+		]);
+	});
+});
+
 describe("git — coleta", () => {
 	it("combina status, estatísticas, diffs e totais", async () => {
 		const calls: string[][] = [];
@@ -116,7 +138,10 @@ describe("git — coleta", () => {
 			expect(snapshot.groups[0]?.label).toContain("altera app");
 			expect(snapshot.groups[0]?.files[0]?.diff).toContain("-const value = 1;");
 			expect(snapshot.groups[0]?.files[0]?.diff).toContain("+const value = 2;");
+			expect(snapshot.groups[0]?.files[0]?.content).toBe("const value = 2;\n");
+			expect(snapshot.groups[0]?.files[0]?.changedLineRanges).toEqual([{ start: 1, end: 1 }]);
 			expect(snapshot.groups[1]?.files.map((file) => file.path)).toEqual(["committed.ts"]);
+			expect(snapshot.groups[1]?.files[0]?.content).toBe("export const committed = true;\n");
 			expect(snapshot.groups[2]?.files.map((file) => file.path)).toEqual(["working.ts"]);
 		} finally {
 			rmSync(cwd, { recursive: true, force: true });
