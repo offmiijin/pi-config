@@ -273,6 +273,7 @@ export default function (pi: ExtensionAPI) {
 			"Fetch full page content from a list of URLs. " +
 			"Converts each page's HTML to Markdown (.md) and saves to " +
 			".sandbox-cache/fetch/page_<id>/. " +
+			"Pages that appear to be SPAs can optionally be rendered with the local Python + Playwright renderer. " +
 			"Non-text content (PDF, images, archives, ...) is downloaded as-is to the same dir. " +
 			"Processes up to 10 URLs in parallel; excess URLs are queued. " +
 			"Each request uses a random User-Agent and a small random delay to avoid blocking. " +

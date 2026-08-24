@@ -18,6 +18,7 @@ MAX_TIMEOUT_MS = 60_000
 DEFAULT_TIMEOUT_MS = 20_000
 DEFAULT_SETTLE_MS = 1_000
 MAX_SETTLE_MS = 10_000
+MAX_HTML_CHARS = 10_000_000
 
 
 def write_response(response: dict[str, Any]) -> None:
@@ -66,12 +67,16 @@ def render_page(browser: Any, request: dict[str, Any]) -> dict[str, Any]:
         if settle_ms:
             page.wait_for_timeout(settle_ms)
 
+        html = page.content()
+        if len(html) > MAX_HTML_CHARS:
+            raise ValueError(f"rendered HTML exceeds {MAX_HTML_CHARS} characters")
+
         return {
             "id": request_id,
             "ok": True,
             "finalUrl": page.url,
             "status": response.status if response is not None else None,
-            "html": page.content(),
+            "html": html,
             "elapsedMs": int((time.monotonic() - started) * 1000),
         }
     finally:
