@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { setRendererCommand, getRendererCommand } from "./config";
+import { join } from "node:path";
+import { getRendererInstallDir, setRendererCommand } from "./config";
 
 export interface RendererInstallResult {
 	ok: boolean;
@@ -11,7 +12,7 @@ export interface RendererInstallResult {
 /** Executa o instalador versionado junto com a extensão, sem shell intermediário. */
 export function installRenderer(signal?: AbortSignal): Promise<RendererInstallResult> {
 	const script = fileURLToPath(new URL("./renderer/install.sh", import.meta.url));
-	const command = getRendererCommand();
+	const command = join(getRendererInstallDir(), "pi-web-renderer");
 
 	return new Promise((resolve) => {
 		const child = spawn("bash", [script], {
