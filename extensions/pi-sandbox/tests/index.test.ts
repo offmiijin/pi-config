@@ -91,6 +91,7 @@ interface FakeCtx {
     notify: ReturnType<typeof vi.fn>;
     setStatus: ReturnType<typeof vi.fn>;
     select: ReturnType<typeof vi.fn>;
+    custom: ReturnType<typeof vi.fn>;
   };
   sessionManager?: { getBranch: () => unknown[] };
 }
@@ -117,7 +118,12 @@ function fakeCtx(entries: unknown[] = []): FakeCtx {
   return {
     cwd: process.cwd(),
     hasUI: false,
-    ui: { notify: vi.fn(), setStatus: vi.fn(), select: vi.fn(async () => undefined) },
+    ui: {
+      notify: vi.fn(),
+      setStatus: vi.fn(),
+      select: vi.fn(async () => undefined),
+      custom: vi.fn(async () => undefined),
+    },
     sessionManager: { getBranch: () => entries },
   };
 }
@@ -189,7 +195,7 @@ describe("index — orquestração", () => {
     );
   });
 
-  it("/sandbox abre as configurações e alterna a opção selecionada", async () => {
+  it("/sandbox abre as configurações interativas", async () => {
     const { pi, handlers, commands } = fakePi();
     extension(pi as never);
     const ctx = fakeCtx();
@@ -201,13 +207,8 @@ describe("index — orquestração", () => {
 
     await commands.get("sandbox")!.handler("", ctx);
 
-    expect(state.saveBooleanSettingCalls).toEqual([
-      [process.cwd(), "enabled", false, "global"],
-    ]);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Sandbox: true → false"),
-      "info",
-    );
+    expect(ctx.ui.custom).toHaveBeenCalledTimes(1);
+    expect(state.saveBooleanSettingCalls).toHaveLength(0);
   });
 
   it("/sandbox info mostra informações da sessão", async () => {

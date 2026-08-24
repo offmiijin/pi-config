@@ -37,6 +37,7 @@
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
+  getSettingsListTheme,
   createReadTool,
   createWriteTool,
   createEditTool,
@@ -88,6 +89,7 @@ import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
 import { dependencyBootstrapHint } from "./dependency-bootstrap";
 import { createNpmInstallPlan } from "./dependency-install";
 import { Type } from "typebox";
+import { Container, SettingsList, Text, type SettingItem } from "@earendil-works/pi-tui";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
 import { createEditOps } from "./tools/edit-ops";
@@ -738,36 +740,55 @@ export default function (pi: ExtensionAPI) {
     if (!scope) return;
 
     const settingsConfig = config ?? loadConfig(originalCwd, { projectTrusted });
-    const options = SANDBOX_BOOLEAN_SETTINGS.map((setting) =>
-      `${setting.label}: ${getSandboxBooleanSetting(settingsConfig, setting.key)} — ${setting.description}`,
-    );
-    const selectedSetting = await ctx.ui.select("Configuração do sandbox (Enter alterna)", options);
-    if (!selectedSetting) return;
+    const items: SettingItem[] = SANDBOX_BOOLEAN_SETTINGS.map((setting) => ({
+      id: setting.key,
+      label: setting.label,
+      description: setting.description,
+      currentValue: getSandboxBooleanSetting(settingsConfig, setting.key) ? "true" : "false",
+      values: ["true", "false"],
+    }));
 
-    const selectedIndex = options.indexOf(selectedSetting);
-    const setting = SANDBOX_BOOLEAN_SETTINGS[selectedIndex];
-    if (!setting) return;
-
-    const current = getSandboxBooleanSetting(settingsConfig, setting.key);
-    const next = !current;
-    try {
-      const filePath = saveBooleanSetting(
-        originalCwd,
-        setting.key as SandboxBooleanSettingKey,
-        next,
-        scope,
+    await ctx.ui.custom((tui: any, theme: any, _keybindings: any, done: () => void) => {
+      const container = new Container();
+      container.addChild(new Text(theme.fg("accent", theme.bold("Configuração do sandbox")), 1, 1));
+      const settingsList = new SettingsList(
+        items,
+        Math.min(items.length + 2, 15),
+        getSettingsListTheme(),
+        (id: string, newValue: string) => {
+          const setting = SANDBOX_BOOLEAN_SETTINGS.find((candidate) => candidate.key === id);
+          if (!setting) return;
+          const next = newValue === "true";
+          try {
+            const filePath = saveBooleanSetting(
+              originalCwd,
+              setting.key as SandboxBooleanSettingKey,
+              next,
+              scope,
+            );
+            if (config) setSandboxBooleanSetting(config, setting.key, next);
+            const restart = setting.key === "enabled" ? " Reinicie a sessão para aplicar." : "";
+            ctx.ui.notify(`${setting.label}: ${newValue}. Salvo em ${filePath}.${restart}`, "info");
+          } catch (error) {
+            ctx.ui.notify(
+              `Falha ao salvar configuração: ${error instanceof Error ? error.message : String(error)}`,
+              "error",
+            );
+          }
+        },
+        () => done(),
+        { enableSearch: true },
       );
-      if (config && setting.key !== "enabled") {
-        setSandboxBooleanSetting(config, setting.key, next);
-      }
-      const restart = setting.key === "enabled" ? " Reinicie a sessão para aplicar." : "";
-      ctx.ui.notify(`${setting.label}: ${current} → ${next}. Salvo em ${filePath}.${restart}`, "info");
-    } catch (error) {
-      ctx.ui.notify(
-        `Falha ao salvar configuração: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
-    }
+      container.addChild(settingsList);
+      return {
+        render: (width: number) => container.render(width),
+        invalidate: () => container.invalidate(),
+        handleInput: (data: string) => {
+          settingsList.handleInput?.(data);
+          tui.requestRender();
+        },
+      };
+    });
   }
 
   // ── /sandbox command ──────────────────────────
