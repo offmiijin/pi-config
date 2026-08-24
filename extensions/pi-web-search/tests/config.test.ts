@@ -12,6 +12,9 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import {
 	getConfiguredProviders,
+	getRendererCommand,
+	getRendererMode,
+	getRendererTimeoutMs,
 	getSearxngTargetUrl,
 	isDockerSocketAvailable,
 } from "../config";
@@ -21,6 +24,9 @@ describe("config — portabilidade", () => {
 		delete process.env.SEARXNG_URL;
 		delete process.env.SEARXNG_KEY;
 		delete process.env.SERPER_API_KEY;
+		delete process.env.PI_WEB_RENDERER;
+		delete process.env.PI_WEB_RENDERER_COMMAND;
+		delete process.env.PI_WEB_RENDERER_TIMEOUT_MS;
 	});
 
 	it("searxng via URL (sem chave) conta como provider configurado", () => {
@@ -48,5 +54,18 @@ describe("config — portabilidade", () => {
 
 	it("isDockerSocketAvailable retorna boolean (sem lançar)", () => {
 		expect(typeof isDockerSocketAvailable()).toBe("boolean");
+	});
+
+	it("renderer usa modo auto por padrão e aceita override por ambiente", () => {
+		expect(getRendererMode()).toBe("auto");
+		process.env.PI_WEB_RENDERER = "required";
+		expect(getRendererMode()).toBe("required");
+	});
+
+	it("renderer respeita comando e timeout configurados no ambiente", () => {
+		process.env.PI_WEB_RENDERER_COMMAND = "/tmp/pi-web-renderer";
+		process.env.PI_WEB_RENDERER_TIMEOUT_MS = "90000";
+		expect(getRendererCommand()).toBe("/tmp/pi-web-renderer");
+		expect(getRendererTimeoutMs()).toBe(60_000);
 	});
 });

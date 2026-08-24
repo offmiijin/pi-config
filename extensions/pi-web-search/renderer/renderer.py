@@ -102,7 +102,10 @@ def main() -> int:
                     if not isinstance(request, dict):
                         raise ValueError("request must be a JSON object")
                     request_id = request.get("id")
-                    response = render_page(browser, request)
+                    if request.get("action") == "health":
+                        response = {"id": request_id, "ok": True, "action": "health"}
+                    else:
+                        response = render_page(browser, request)
                 except json.JSONDecodeError as error:
                     response = error_response(request_id, f"invalid JSON: {error.msg}")
                 except Exception as error:
