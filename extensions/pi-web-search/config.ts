@@ -132,7 +132,10 @@ export function getRendererInstallDir(): string {
 export function getRendererCommand(): string {
 	const env = process.env.PI_WEB_RENDERER_COMMAND?.trim();
 	if (env) return env;
-	return load().renderer?.command?.trim() || join(getRendererInstallDir(), "pi-web-renderer");
+	const configured = load().renderer?.command;
+	return typeof configured === "string" && configured.trim()
+		? configured.trim()
+		: join(getRendererInstallDir(), "pi-web-renderer");
 }
 
 export function getRendererTimeoutMs(): number {
