@@ -17,9 +17,23 @@ export default function (pi: ExtensionAPI): void {
 	let openingPanel = false;
 	let lastToggleAt = Number.NEGATIVE_INFINITY;
 	let removeTerminalInputListener: (() => void) | undefined;
+	let sandboxSession: { worktreePath?: string; workspaceCwd?: string; baseCommit?: string } | undefined;
 
-	const loadChanges = (ctx: ExtensionContext) =>
-		collectChanges(ctx.cwd, async (args) => pi.exec("git", args, { timeout: 5000 }));
+	pi.events?.on("custom:dev-sandbox-session", (event: unknown) => {
+		sandboxSession = event as typeof sandboxSession;
+	});
+	pi.events?.on("custom:dev-sandbox-session-shutdown", () => {
+		sandboxSession = undefined;
+	});
+
+	const loadChanges = (ctx: ExtensionContext) => {
+		const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ?? ctx.cwd;
+		return collectChanges(
+			cwd,
+			async (args) => pi.exec("git", args, { timeout: 5000 }),
+			{ baseCommit: sandboxSession?.baseCommit },
+		);
+	};
 
 	const refreshPanel = (ctx: ExtensionContext): void => {
 		const panel = activePanel;
@@ -93,6 +107,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => {
 		removeTerminalInputListener?.();
 		removeTerminalInputListener = undefined;
+		sandboxSession = undefined;
 	});
 
 	// Atualiza rapidamente após operações do agente; o polling cobre alterações

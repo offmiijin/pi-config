@@ -103,6 +103,7 @@ function fakePi() {
     handler: (args: string, ctx: unknown) => unknown;
     getArgumentCompletions?: (prefix: string) => unknown;
   }>();
+  const emit = vi.fn();
   const pi = {
     registerFlag: vi.fn(),
     getFlag: vi.fn(() => false),
@@ -110,8 +111,9 @@ function fakePi() {
     registerTool: (t: { name: string; execute: (...a: unknown[]) => Promise<unknown> }) => tools.push(t),
     registerCommand: (n: string, d: { handler: (args: string, ctx: unknown) => unknown }) => commands.set(n, d),
     appendEntry: vi.fn(),
+    events: { emit },
   };
-  return { pi, handlers, tools, commands };
+  return { pi, handlers, tools, commands, emit };
 }
 
 function fakeCtx(entries: unknown[] = []): FakeCtx {
@@ -139,6 +141,19 @@ beforeEach(() => {
 });
 
 describe("index — orquestração", () => {
+  it("emite worktree e commit-base para extensões consumidoras", async () => {
+    const { pi, handlers, emit } = fakePi();
+    extension(pi as never);
+
+    await handlers.get("session_start")!({}, fakeCtx());
+
+    expect(emit).toHaveBeenCalledWith("custom:dev-sandbox-session", expect.objectContaining({
+      workspaceCwd: process.cwd(),
+      worktreePath: `${DEFAULT_CONFIG.worktree.root}/test-session`,
+      baseCommit: "base-commit",
+    }));
+  });
+
   it("before_agent_start injeta nota com dirs persistentes e aviso de /tmp", async () => {
     const { pi, handlers } = fakePi();
     extension(pi as never);
