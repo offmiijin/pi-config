@@ -149,7 +149,7 @@ export default function (pi: ExtensionAPI) {
 							ctx.ui.notify(
 								`✅ Renderer instalado e validado: ${result.command}`,
 								"info",
-						);
+							);
 						} catch (error) {
 							const message = error instanceof Error ? error.message : String(error);
 							ctx.ui.notify(`❌ Falha ao instalar o renderer: ${message}`, "error");

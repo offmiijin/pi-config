@@ -87,7 +87,13 @@ function runRendererInstall(
 		});
 		child.on("close", (code) => {
 			if (code === 0) {
-				setRendererCommand(command);
+				try {
+					setRendererCommand(command);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					finish({ ok: false, output: `${chunks.join("")}\n${message}`, command });
+					return;
+				}
 			}
 			finish({
 				ok: code === 0,

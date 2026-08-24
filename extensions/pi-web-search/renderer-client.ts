@@ -76,8 +76,22 @@ export class RendererClient {
 		this.rejectPending(new Error("Renderer encerrado"));
 		this.reader?.close();
 		this.reader = undefined;
-		if (this.child && this.child.exitCode === null) this.child.kill();
+
+		const child = this.child;
 		this.child = undefined;
+		if (!child || child.exitCode !== null) return;
+
+		const forceKillTimer = setTimeout(() => {
+			if (child.exitCode === null) child.kill();
+		}, 1_000);
+		forceKillTimer.unref?.();
+		child.once("close", () => clearTimeout(forceKillTimer));
+		try {
+			// EOF lets the Python context manager close Chromium cleanly.
+			child.stdin.end();
+		} catch {
+			child.kill();
+		}
 	}
 
 	private request(
