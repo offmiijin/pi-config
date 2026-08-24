@@ -310,6 +310,7 @@ export async function fetchPages(
 				// após redirects, para resolver links relativos no conteúdo convertido)
 				let html = await response.text();
 				let baseUrl = response.url || url;
+				let status = response.status;
 				let { markdown } = htmlToMarkdown(html, { baseUrl });
 				let rendered = false;
 				let note: string | undefined;
@@ -326,6 +327,7 @@ export async function fetchPages(
 						);
 						html = renderedPage.html;
 						baseUrl = renderedPage.finalUrl || baseUrl;
+						status = renderedPage.status ?? status;
 						({ markdown } = htmlToMarkdown(html, { baseUrl }));
 						rendered = true;
 						note = "conteúdo renderizado com Playwright";
@@ -348,7 +350,7 @@ export async function fetchPages(
 					url,
 					file: filename,
 					size: Buffer.byteLength(markdown, "utf-8"),
-					status: response.status,
+					status,
 					note,
 					rendered,
 				});
