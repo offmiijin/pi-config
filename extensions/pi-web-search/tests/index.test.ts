@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 const fetchPages = vi.hoisted(() => vi.fn());
+const installRenderer = vi.hoisted(() => vi.fn());
+const validateRendererInstallation = vi.hoisted(() => vi.fn());
+const isRendererInstallationInProgress = vi.hoisted(() => vi.fn(() => false));
+const closeSharedRendererClient = vi.hoisted(() => vi.fn());
 
 vi.mock("../fetch", () => ({ fetchPages }));
+vi.mock("../renderer-install", () => ({
+  installRenderer,
+  isRendererInstallationInProgress,
+  validateRendererInstallation,
+}));
+vi.mock("../renderer-client", () => ({ closeSharedRendererClient }));
 vi.mock("../agent", () => ({ registerWebAgent: vi.fn() }));
 vi.mock("../search", () => ({
   search: vi.fn(),
@@ -51,6 +61,85 @@ describe("web_fetch — workspace efetivo", () => {
       undefined,
       undefined,
       "session",
+    );
+  });
+
+  it("encerra o renderer no session_shutdown", async () => {
+    const handlers = new Map<string, () => Promise<void>>();
+    const pi = {
+      events: { on: vi.fn() },
+      on: (name: string, handler: () => Promise<void>) => handlers.set(name, handler),
+      registerCommand: vi.fn(),
+      registerTool: vi.fn(),
+    };
+
+    const { default: extension } = await import("../index");
+    extension(pi as never);
+    await handlers.get("session_shutdown")?.();
+
+    expect(closeSharedRendererClient).toHaveBeenCalled();
+  });
+
+  it("recusa uma instalação concorrente", async () => {
+    isRendererInstallationInProgress.mockReturnValueOnce(true);
+    installRenderer.mockClear();
+
+    const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
+    const pi = {
+      events: { on: vi.fn() },
+      on: vi.fn(),
+      registerCommand: (name: string, command: { handler: (args: string, ctx: any) => Promise<void> }) => {
+        commands.set(name, command);
+      },
+      registerTool: vi.fn(),
+    };
+    const notify = vi.fn();
+
+    const { default: extension } = await import("../index");
+    extension(pi as never);
+    await commands.get("web_search")?.handler("config renderer install", {
+      hasUI: false,
+      ui: { notify, setStatus: vi.fn() },
+    });
+
+    expect(installRenderer).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining("já está em andamento"),
+      "warning",
+    );
+  });
+
+  it("instala o renderer via comando de configuração", async () => {
+    validateRendererInstallation.mockResolvedValueOnce({ ok: true });
+    installRenderer.mockResolvedValueOnce({
+      ok: true,
+      command: "/tmp/pi-web-renderer",
+      output: "instalado",
+    });
+
+    const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>();
+    const pi = {
+      events: { on: vi.fn() },
+      on: vi.fn(),
+      registerCommand: (name: string, command: { handler: (args: string, ctx: any) => Promise<void> }) => {
+        commands.set(name, command);
+      },
+      registerTool: vi.fn(),
+    };
+    const notify = vi.fn();
+    const setStatus = vi.fn();
+
+    const { default: extension } = await import("../index");
+    extension(pi as never);
+    await commands.get("web_search")?.handler("config renderer install", {
+      hasUI: false,
+      ui: { notify, setStatus },
+    });
+
+    expect(installRenderer).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining("Renderer instalado"),
+      "info",
     );
   });
 });
