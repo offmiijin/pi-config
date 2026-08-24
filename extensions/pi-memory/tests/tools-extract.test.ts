@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: tool memory_extract (Fase 6 — enfileirador assíncrono).
+ * pi-memory — Tests: tool memory_extract (enfileirador assíncrono).
  *
  * A extração síncrona legada foi substituída: a tool agora normaliza
  * episódios pendentes, cria um job forçado (reason manual) e acorda o worker,
@@ -59,6 +59,8 @@ function makeState(worker: PipelineWorker | null = null): ToolState {
 		consecutiveEmptySearches: 0,
 		cachedIndexText: null,
 		index: null,
+		retention: null,
+		retentionScheduler: null,
 		pipeline,
 		worker,
 	};
@@ -76,7 +78,7 @@ afterAll(() => {
 	rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("memory_extract (Fase 6 — async)", () => {
+describe("memory_extract (async)", () => {
 	it("sem episódios elegíveis → não cria job vazio", async () => {
 		const tool = captureTool(makeState());
 		const res = await tool.execute("id1", {}, undefined, undefined, {});

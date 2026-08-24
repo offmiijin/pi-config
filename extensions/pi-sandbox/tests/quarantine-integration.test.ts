@@ -1,0 +1,183 @@
+/**
+ * Testes de integração da quarentena com bwrap real (namespace aninhado).
+ *
+ * Pulados se o ambiente não suportar (mesmo critério do integration.test.ts):
+ * bwrap ausente OU já dentro de um sandbox com seccomp (exit 159).
+ *
+ * Cobre as fronteiras de isolamento dos perfis fetch/quarantine:
+ *   - fetch: não lê nem escreve no workspace
+ *   - quarantine: não lê workspace, sem rede (curl falha)
+ *   - quarantine: executa comandos normalmente no workdir
+ *   - promote: copia artefato da quarentena de volta ao workspace
+ */
+
+import { describe, it, expect, afterAll } from "vitest";
+import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execInProfile, resolveQuarantineDirs } from "../bwrap-executor";
+import { promoteArtifact } from "../quarantine";
+import { DEFAULT_CONFIG } from "../types";
+
+const bwrapAvailable =
+  existsSync("/usr/bin/bwrap") || existsSync("/usr/local/bin/bwrap") || existsSync("/bin/bwrap");
+
+const fixtures: string[] = [];
+function fixture(): string {
+  const dir = mkdtempSync(join(tmpdir(), "sb-qint-"));
+  fixtures.push(dir);
+  return dir;
+}
+
+afterAll(() => {
+  for (const f of fixtures.splice(0)) rmSync(f, { recursive: true, force: true });
+});
+
+// Config sem Landlock — o helper landlock-exec não é montado no ambiente de teste.
+const config = structuredClone(DEFAULT_CONFIG);
+config.landlock.enabled = false;
+
+let nestedBwrapWorks = false;
+if (bwrapAvailable) {
+  try {
+    const probeCwd = fixture();
+    const probe = await execInProfile(config, {
+      command: ["echo", "probe"],
+      cwd: resolveQuarantineDirs(config, probeCwd).fetch,
+      baseCwd: probeCwd,
+    }, "fetch");
+    nestedBwrapWorks = probe.exitCode === 0;
+  } catch {
+    nestedBwrapWorks = false;
+  }
+}
+
+describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () => {
+  it("fetch: não lê arquivo do workspace", async () => {
+    const cwd = fixture();
+    writeFileSync(join(cwd, "sentinel.txt"), "MUST_NOT_LEAK");
+    const dirs = resolveQuarantineDirs(config, cwd);
+
+    const res = await execInProfile(config, {
+      command: ["bash", "-lc", `cat "${join(cwd, "sentinel.txt")}"`],
+      cwd: dirs.fetch,
+      baseCwd: cwd,
+    }, "fetch");
+    expect(res.exitCode).not.toBe(0);
+  });
+
+  it("fetch: não escreve no workspace", async () => {
+    const cwd = fixture();
+    writeFileSync(join(cwd, "sentinel.txt"), "MUST_NOT_LEAK");
+    const dirs = resolveQuarantineDirs(config, cwd);
+
+    const res = await execInProfile(config, {
+      command: ["bash", "-lc", `echo hacked > "${join(cwd, "sentinel.txt")}"`],
+      cwd: dirs.fetch,
+      baseCwd: cwd,
+    }, "fetch");
+    expect(res.exitCode).not.toBe(0);
+    expect(readFileSync(join(cwd, "sentinel.txt"), "utf8")).toBe("MUST_NOT_LEAK");
+  });
+
+  it("quarantine: não lê workspace e roda sem rede", async () => {
+    const cwd = fixture();
+    writeFileSync(join(cwd, "sentinel.txt"), "MUST_NOT_LEAK");
+    const dirs = resolveQuarantineDirs(config, cwd);
+
+    // sem acesso ao workspace
+    const read = await execInProfile(config, {
+      command: ["bash", "-lc", `cat "${join(cwd, "sentinel.txt")}"`],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(read.exitCode).not.toBe(0);
+
+    // sem rede — curl não resolve/estabelece conexão
+    const net = await execInProfile(config, {
+      command: ["bash", "-lc", "curl -m 3 -s https://example.com || echo CURLE_$?"],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(net.exitCode).toBe(0);
+    expect(net.stdout.toString()).toContain("CURLE_");
+  });
+
+  it("quarantine: executa comandos normalmente no workdir persistente", async () => {
+    const cwd = fixture();
+    const dirs = resolveQuarantineDirs(config, cwd);
+
+    const a = await execInProfile(config, {
+      command: ["bash", "-lc", "echo build > out.txt"],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(a.exitCode).toBe(0);
+
+    const b = await execInProfile(config, {
+      command: ["bash", "-lc", "cat out.txt"],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(b.stdout.toString()).toContain("build");
+  });
+
+  it("quarantine: caches de ferramentas e venv persistem separadamente", async () => {
+    const cwd = fixture();
+    const dirs = resolveQuarantineDirs(config, cwd);
+    const npmCache = join(cwd, ".sandbox-cache", "npm");
+    const pipCache = join(cwd, ".sandbox-cache", "pip");
+    const clonesCache = join(cwd, ".sandbox-cache", "clones");
+
+    const first = await execInProfile(config, {
+      command: ["bash", "-lc", [
+        "set -eu",
+        'test "$NPM_CONFIG_CACHE" = ' + JSON.stringify(npmCache),
+        'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        'test "$SANDBOX_CLONE_DIR" = ' + JSON.stringify(clonesCache),
+        "python3 -m venv .venv",
+        "test -x .venv/bin/python",
+        'test "$(.venv/bin/python -m pip cache dir)" = "$PIP_CACHE_DIR"',
+        'mkdir -p "$NPM_CONFIG_CACHE/issue-97" "$PIP_CACHE_DIR/issue-97" "$SANDBOX_CLONE_DIR/issue-97"',
+        'echo npm-cached > "$NPM_CONFIG_CACHE/issue-97/marker"',
+        'echo pip-cached > "$PIP_CACHE_DIR/issue-97/marker"',
+        'echo clone-cached > "$SANDBOX_CLONE_DIR/issue-97/marker"',
+      ].join("\n")],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(first.exitCode).toBe(0);
+
+    const second = await execInProfile(config, {
+      command: ["bash", "-lc", [
+        "set -eu",
+        'test "$NPM_CONFIG_CACHE" = ' + JSON.stringify(npmCache),
+        'test "$PIP_CACHE_DIR" = ' + JSON.stringify(pipCache),
+        'test "$SANDBOX_CLONE_DIR" = ' + JSON.stringify(clonesCache),
+        "test -x .venv/bin/python",
+        'test "$(cat \"$NPM_CONFIG_CACHE/issue-97/marker\")" = npm-cached',
+        'test "$(cat \"$PIP_CACHE_DIR/issue-97/marker\")" = pip-cached',
+        'test "$(cat \"$SANDBOX_CLONE_DIR/issue-97/marker\")" = clone-cached',
+        'test "$(.venv/bin/python -c \'import sys; print(sys.prefix)\')" != "$PIP_CACHE_DIR"',
+      ].join("\n")],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+    expect(second.exitCode).toBe(0);
+  });
+
+  it("promote: copia artefato da quarentena para o workspace", async () => {
+    const cwd = fixture();
+    const dirs = resolveQuarantineDirs(config, cwd);
+
+    await execInProfile(config, {
+      command: ["bash", "-lc", "echo dist > out.txt"],
+      cwd: dirs.runs,
+      baseCwd: cwd,
+    }, "quarantine");
+
+    const target = await promoteArtifact(config, cwd, "out.txt", "dist/out.txt");
+    expect(target).toBe(join(cwd, "dist", "out.txt"));
+    expect(readFileSync(target, "utf8")).toBe("dist");
+  });
+});

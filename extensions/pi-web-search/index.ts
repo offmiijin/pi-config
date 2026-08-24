@@ -16,6 +16,17 @@ import { registerWebAgent } from "./agent";
 import { getConfigSummary, setKey, getConfiguredProviders, getSearxngUrl, getSearxngKey } from "./config";
 
 export default function (pi: ExtensionAPI) {
+	// O pi-sandbox cria um worktree após o ctx.cwd original já ter sido
+	// definido. web_fetch precisa gravar no workspace efetivo da sessão para
+	// que read/ls possam acessar os arquivos dentro do mesmo namespace.
+	let sandboxWorkspaceCwd: string | undefined;
+	pi.events?.on("custom:dev-sandbox-session", (event: { workspaceCwd?: string }) => {
+		sandboxWorkspaceCwd = event.workspaceCwd;
+	});
+	pi.events?.on("custom:dev-sandbox-session-shutdown", () => {
+		sandboxWorkspaceCwd = undefined;
+	});
+
 	// Aviso de startup — 1x por processo, só quando nada está funcionando
 	let startupNotified = false;
 	pi.on("session_start", async (_event, ctx) => {
@@ -254,7 +265,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const cwd = (_ctx as any)?.cwd ?? process.cwd();
+			const cwd = sandboxWorkspaceCwd ?? (_ctx as any)?.cwd ?? process.cwd();
 			// Escopa a saída por sessão do pi: um único dir por sessão
 			const sessionKey = (_ctx as any)?.sessionManager?.getSessionId?.() ?? "default";
 

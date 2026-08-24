@@ -29,7 +29,7 @@ import { DatabaseCtor, type DatabaseLike, type StatementLike } from "../db.ts";
 
 export const INDEX_DB_FILENAME = ".index.sqlite";
 export const INDEX_DB_PATH = join(MEMORIES_ROOT, INDEX_DB_FILENAME);
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memory_documents (
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS memory_documents (
   project_id TEXT,
   type TEXT NOT NULL,
   context TEXT NOT NULL,
+  memory_id TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL,
   summary TEXT,
   tags_json TEXT NOT NULL DEFAULT '[]',
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS memory_documents (
   updated TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  modified_at TEXT NOT NULL
+  modified_at TEXT NOT NULL,
+  retention_score REAL NOT NULL DEFAULT 1.0
 );
 CREATE INDEX IF NOT EXISTS idx_docs_scope_project ON memory_documents(scope, project_id);
 CREATE INDEX IF NOT EXISTS idx_docs_type ON memory_documents(type);
@@ -78,6 +80,10 @@ export interface IndexDocument {
 	/** Corpo limpo: sem frontmatter, sem cabeçalhos de entrada, sem linhas confidence:. */
 	body: string;
 	contentHash: string;
+	/** Relevância operacional por desuso (derivada do .retention.sqlite). */
+	retentionScore: number;
+	/** Identidade estável (frontmatter v3) — vazia quando ausente (v2 não migrado). */
+	memoryId: string;
 }
 
 /** SHA-256 hex do conteúdo bruto do arquivo (detecção de edição manual). */
@@ -185,6 +191,10 @@ export interface IndexSearchResult {
 	summary: string | null;
 	confidence: number;
 	updated: string;
+	/** Relevância operacional por desuso — critério secundário de ordenação. */
+	retentionScore: number;
+	/** Identidade estável (frontmatter v3) — usada para registrar uso. */
+	memoryId: string;
 	/** Trecho relevante (coluna body), vazio quando o corpo é vazio. */
 	snippet: string;
 	/** Maior = melhor (BM25 ponderado — apenas lexical; metadados não entram). */
@@ -241,6 +251,11 @@ export function readMemoryDocFromFile(absPath: string, relPath: string): IndexDo
 		updated: typeof meta.updated === "string" ? meta.updated : "",
 		body: cleanBody(body),
 		contentHash: hashContent(raw),
+		// O score vive no .retention.sqlite (derivado) — o markdown é canônico
+		// e não carrega atividade. Default 1.0; o scheduler reaplica os scores
+		// reais após reconcile/recompute (e após rebuild, que zera tudo).
+		retentionScore: 1.0,
+		memoryId: typeof meta.memory_id === "string" ? meta.memory_id : "",
 	};
 }
 
@@ -359,10 +374,27 @@ export class MemoryIndex {
 	 * ausente/ilegível ⇒ doc removido (índice derivado; markdown é canônico).
 	 * Falha ⇒ ROLLBACK (banco volta ao estado antigo) e relança.
 	 */
-	private migrateSchema(_oldVersion: number): void {
+	private migrateSchema(oldVersion: number): void {
 		const db = this.requireDb();
 		db.exec("BEGIN");
 		try {
+			// v2 → v3: colunas retention_score e memory_id no memory_documents.
+			// CREATE TABLE IF NOT EXISTS não altera tabela existente — ALTER
+			// explícito; idempotente contra erro de coluna duplicada (migração
+			// parcial).
+			if (oldVersion < 3) {
+				for (const ddl of [
+					"ALTER TABLE memory_documents ADD COLUMN retention_score REAL NOT NULL DEFAULT 1.0",
+					"ALTER TABLE memory_documents ADD COLUMN memory_id TEXT NOT NULL DEFAULT ''",
+				]) {
+					try {
+						db.exec(ddl);
+					} catch (err) {
+						if (!/duplicate column/i.test((err as Error).message)) throw err;
+					}
+				}
+			}
+
 			db.exec("DROP TABLE IF EXISTS memory_fts");
 			this.ensureSchema();
 
@@ -566,6 +598,31 @@ export class MemoryIndex {
 	}
 
 	/**
+	 * Aplica retention_scores vindos do .retention.sqlite (scheduler) ou o
+	 * reset imediato pós-acesso (memory_search). Paths fora do índice são
+	 * no-op silencioso. Transação única — falha relança e não deixa o índice
+	 * meio-atualizado.
+	 */
+	updateRetentionScores(scores: Map<string, number>): void {
+		if (scores.size === 0) return;
+		const db = this.requireDb();
+		db.exec("BEGIN");
+		try {
+			const stmt = db.prepare(
+				"UPDATE memory_documents SET retention_score = ?, modified_at = ? WHERE path = ?",
+			);
+			const now = new Date().toISOString();
+			for (const [path, score] of scores) {
+				stmt.run(score, now, path);
+			}
+			db.exec("COMMIT");
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/**
 	 * Cruza disco × banco por content_hash (global + projeto alvo).
 	 * - arquivo novo no disco → insere
 	 * - hash divergente (edição manual fora das tools) → atualiza
@@ -691,7 +748,7 @@ export class MemoryIndex {
 		const rows = db
 			.prepare(
 				`SELECT d.path, d.scope, d.project_id, d.type, d.context, d.title, d.summary,
-				        d.confidence, d.updated,
+				        d.confidence, d.updated, d.retention_score, d.memory_id,
 				        snippet(memory_fts, 3, '', '', '…', 24) AS snippet_text,
 				        -bm25(memory_fts, 8.0, 4.0, 2.0, 1.0, 0.5) AS score
 				 FROM memory_fts
@@ -699,6 +756,7 @@ export class MemoryIndex {
 				 WHERE memory_fts MATCH ? AND ${scopeSql}
 				 ORDER BY bm25(memory_fts, 8.0, 4.0, 2.0, 1.0, 0.5) ASC,
 				          d.confidence DESC,
+				          d.retention_score DESC,
 				          d.updated DESC,
 				          d.path ASC
 				 LIMIT ?`,
@@ -715,6 +773,8 @@ export class MemoryIndex {
 			summary: r.summary === null ? null : String(r.summary),
 			confidence: Number(r.confidence),
 			updated: String(r.updated),
+			retentionScore: Number(r.retention_score),
+			memoryId: String(r.memory_id ?? ""),
 			snippet: r.snippet_text === null ? "" : String(r.snippet_text),
 			score: Number(r.score),
 		}));
@@ -735,15 +795,16 @@ export class MemoryIndex {
 		db
 			.prepare(
 				`INSERT INTO memory_documents
-				   (path, scope, project_id, type, context, title, summary, tags_json,
+				   (path, scope, project_id, type, context, memory_id, title, summary, tags_json,
 				    confidence, updated, content_hash, created_at, modified_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT(path) DO UPDATE SET
 				   scope=excluded.scope, project_id=excluded.project_id, type=excluded.type,
-				   context=excluded.context, title=excluded.title, summary=excluded.summary,
-				   tags_json=excluded.tags_json, confidence=excluded.confidence,
-				   updated=excluded.updated, content_hash=excluded.content_hash,
-				   modified_at=excluded.modified_at`,
+				   context=excluded.context, memory_id=excluded.memory_id, title=excluded.title,
+				   summary=excluded.summary, tags_json=excluded.tags_json,
+				   confidence=excluded.confidence, updated=excluded.updated,
+				   content_hash=excluded.content_hash, modified_at=excluded.modified_at,
+				   retention_score=memory_documents.retention_score`,
 			)
 			.run(
 				doc.path,
@@ -751,6 +812,7 @@ export class MemoryIndex {
 				doc.projectId,
 				doc.type,
 				doc.context,
+				doc.memoryId,
 				doc.title,
 				doc.summary,
 				JSON.stringify(doc.tags),

@@ -26,9 +26,7 @@ import type {
 	GhIssueDetail,
 } from "./types";
 
-// ---------------------------------------------------------------------------
 // Tipos internos
-// ---------------------------------------------------------------------------
 
 type ExecFn = (
 	command: string,
@@ -36,9 +34,7 @@ type ExecFn = (
 	options?: { timeout?: number },
 ) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
 
-// ---------------------------------------------------------------------------
 // Helper: executa gh e retorna stdout parseado ou texto puro
-// ---------------------------------------------------------------------------
 
 async function execGh<T>(
 	exec: ExecFn,
@@ -71,9 +67,7 @@ async function execGh<T>(
 	return result.stdout.trim();
 }
 
-// ---------------------------------------------------------------------------
 // Factory
-// ---------------------------------------------------------------------------
 
 export function createGh(exec: ExecFn) {
 	return {

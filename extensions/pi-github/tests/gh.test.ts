@@ -7,9 +7,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createGh } from "../gh";
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function makeExec(
 	overrides?: Partial<{
@@ -30,9 +28,7 @@ function makeGhResult(data: unknown): string {
 	return JSON.stringify(data);
 }
 
-// ---------------------------------------------------------------------------
 // createGh
-// ---------------------------------------------------------------------------
 describe("createGh", () => {
 	// ── prCreate ─────────────────────────────────────────────────────
 	describe("prCreate", () => {

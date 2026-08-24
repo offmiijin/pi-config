@@ -1,11 +1,7 @@
 /**
- * pi-memory — Helpers de sessão e estimativa de tokens.
- *
- * O pipeline antigo de observações markdown (turn_dedup, formatação de
- * observações, arquivo de sessão em sessions/*.md, threshold 50) foi
- * substituído pelas Fases 0-6: a fonte bruta é o JSONL do Pi (lido por
- * evidence.ts) e memórias duram em snapshot v2. Aqui restam apenas helpers
- * usados pelo pipeline atual.
+ * pi-memory — Helpers de sessão e estimativa de tokens usados pelo pipeline.
+ * A fonte bruta é o JSONL do Pi, lido por evidence.ts; memórias duram em
+ * snapshots consolidados.
  */
 
 import { createHash } from "node:crypto";

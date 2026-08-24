@@ -6,7 +6,7 @@
  * ricos agrupados por contexto, buscáveis via índice SQLite FTS5/BM25
  * (fallback ripgrep).
  *
- * Arquitetura (Fases 0-6):
+ * Arquitetura:
  *   sessão JSONL do Pi → episódios (agent_settled) → evidências →
  *   jobs de extração (gatilhos automáticos ou memory_extract) → worker em
  *   background (prompt + modelo → validação → revisor → commit snapshot).
@@ -16,16 +16,16 @@
  *   constants.ts        — constantes compartilhadas + setup de projeto
  *   db.ts               — driver SQLite compartilhado (node/bun)
  *   pipeline.ts         — pipeline operacional (episódios, evidências, jobs)
- *   evidence.ts         — normalização de evidências (Fase 1)
- *   worker.ts           — fila de jobs + consumer assíncrono (Fase 2)
- *   config.ts           — modelo de extração (Fase 3)
- *   extractor.ts        — prompt de extração + parsing (Fase 3)
- *   processor.ts        — extração → validação → commit (Fases 3-4)
- *   validator.ts        — validação/política/revisor (Fase 4)
+ *   evidence.ts         — normalização de evidências
+ *   worker.ts           — fila de jobs + consumer assíncrono
+ *   config.ts           — modelo de extração
+ *   extractor.ts        — prompt de extração + parsing
+ *   processor.ts        — extração → validação → commit
+ *   validator.ts        — validação/política/revisor
  *   memory.ts           — CRUD de memórias snapshot v2 + save
  *   memory-index.ts     — índice FTS5 derivado
  *   memory-search.ts    — fallback de busca via ripgrep
- *   session.ts          — helpers legados (estimativa de tokens)
+ *   session.ts          — helpers de sessão e estimativa de tokens
  *   schemas.ts          — schemas de parâmetros das tools
  *   tools/*.ts          — um arquivo por tool (status, save, search, decay, extract)
  */
@@ -35,6 +35,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	ensureDirectories,
 	identifyProject,
+	RETENTION_ENABLED,
+	RETENTION_DB_PATH,
 } from "./constants.ts";
 import {
 	formatMemoryIndexText,
@@ -43,6 +45,7 @@ import {
 	migrateLegacyMemories,
 	parseFrontmatter,
 	saveMemory,
+	ensureMemoryIdentities,
 } from "./memory/memory.ts";
 import {
 	INDEX_DB_PATH,
@@ -71,8 +74,11 @@ import {
 	type ModelRegistryLike,
 } from "./pipeline/processor.ts";
 import type { MemoryFileRef } from "./pipeline/validator.ts";
+import { RetentionScheduler } from "./memory/retention-scheduler.ts";
+import { MemoryActivityStore } from "./memory/retention-store.ts";
 import { registerMemoryDecay } from "./tools/decay.ts";
 import { registerMemoryExtract } from "./tools/extract.ts";
+import { registerMemoryRetention } from "./tools/retention.ts";
 import { registerMemorySave } from "./tools/save.ts";
 import { registerMemorySearch } from "./tools/search.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
@@ -88,6 +94,8 @@ export default function (pi: ExtensionAPI) {
 		index: null,
 		pipeline: null,
 		worker: null,
+		retention: null,
+		retentionScheduler: null,
 	};
 
 	// Pipeline operacional (episódios → worker). Null se indisponível —
@@ -100,6 +108,9 @@ export default function (pi: ExtensionAPI) {
 	// extração resolve o modelo FIXO de config.ts em runtime (não herda o
 	// modelo interativo da sessão).
 	let extractionModelRegistry: ModelRegistryLike | null = null;
+	// Scheduler de retenção por desuso (feature flag RETENTION_ENABLED).
+	// Null quando desativado/indisponível — busca e escrita seguem sem ele.
+	let retentionScheduler: RetentionScheduler | null = null;
 
 	// Resolução do modelo de extração + contexto de memórias relacionadas
 	// (FTS5). Melhor-esforço — falha degrada o prompt, não o job.
@@ -230,6 +241,18 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] migração falhou: ${(err as Error).message}`);
 		}
 
+		// Frontmatter v3: atribui memory_id/retention_policy a memórias sem
+		// identidade (v2). Idempotente e NÃO altera updated/confidence — a
+		// ordenação por recência e o estado factual ficam intactos.
+		try {
+			const identified = ensureMemoryIdentities(state.projectId);
+			if (identified > 0) {
+				console.warn(`[pi-memory] identificadas ${identified} memória(s) (frontmatter v3)`);
+			}
+		} catch (err) {
+			console.warn(`[pi-memory] atribuição de identidade falhou: ${(err as Error).message}`);
+		}
+
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		state.currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
 		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
@@ -302,9 +325,37 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] worker indisponível: ${(err as Error).message}`);
 		}
 
-		// Tools (Fase 6) consomem pipeline/worker via state
+		// Tools consomem pipeline/worker via state
 		state.pipeline = pipeline;
 		state.worker = worker;
+
+		// Retenção por inatividade (feature flag — default OFF). Abre o banco
+		// de atividade, agenda o sweep periódico e roda um sweep inicial para
+		// popular os scores no índice antes da primeira busca. Falha degrada:
+		// store fechado + scheduler null — busca segue sem registrar uso.
+		if (RETENTION_ENABLED) {
+			try {
+				const retentionStore = new MemoryActivityStore(RETENTION_DB_PATH);
+				retentionStore.open();
+				state.retention = retentionStore;
+				const scheduler = new RetentionScheduler(retentionStore, state.index);
+				retentionScheduler = scheduler;
+				state.retentionScheduler = scheduler;
+				scheduler.setProject(state.projectId);
+				scheduler.start(state.projectId);
+				await scheduler.sweep();
+			} catch (err) {
+				try {
+					state.retention?.close();
+				} catch {
+					// close best-effort
+				}
+				state.retention = null;
+				retentionScheduler = null;
+				state.retentionScheduler = null;
+				console.warn(`[pi-memory] retenção indisponível: ${(err as Error).message}`);
+			}
+		}
 
 		state.consecutiveEmptySearches = 0;
 		// Reseta o cache do índice de memória da sessão
@@ -322,6 +373,7 @@ export default function (pi: ExtensionAPI) {
 		state.projectId = nextProjectId;
 		// Worker segue aberto entre projetos; passa a consumir o novo.
 		worker?.setProject(nextProjectId);
+		retentionScheduler?.setProject(nextProjectId);
 		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
 
 		// Sincroniza o índice para o novo projeto (global + projeto novo).
@@ -422,6 +474,14 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		// Retenção: para o ciclo e fecha o banco de atividade ANTES do índice
+		// (sweep em voo aborta na próxima checagem; escrita não fica órfã).
+		retentionScheduler?.stop();
+		retentionScheduler = null;
+		state.retention?.close();
+		state.retention = null;
+		state.retentionScheduler = null;
+
 		state.index?.close();
 		state.index = null;
 		state.pipeline = null;
@@ -437,4 +497,5 @@ export default function (pi: ExtensionAPI) {
 	registerMemorySearch(pi, state);
 	registerMemoryDecay(pi, state);
 	registerMemoryExtract(pi, state);
+	registerMemoryRetention(pi, state);
 }

@@ -17,9 +17,7 @@ const mockFs = vi.hoisted(() => {
 
 vi.mock("node:fs", () => mockFs);
 
-// ---------------------------------------------------------------------------
 // getInstallGuide
-// ---------------------------------------------------------------------------
 describe("getInstallGuide", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();

@@ -4,17 +4,13 @@
  * Orchestrates multi-branch web research via web_search and web_fetch.
  * Tracks session state through pi events so the LLM can focus on strategy.
  *
- * Phase 1: Tool registration + state management (no event listeners yet).
- * Phase 2: Event-driven query/fetch tracking.
- * Phase 3: Contextual suggestions.
+ * Registra a tool, acompanha eventos de pesquisa/coleta e oferece sugestões contextuais.
  */
 
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 export interface QueryRecord {
 	toolCallId: string;
@@ -43,9 +39,7 @@ export interface ResearchState {
 	fetches: Map<string, FetchRecord>;
 }
 
-// ---------------------------------------------------------------------------
 // State — 1 active session at a time
-// ---------------------------------------------------------------------------
 
 let currentState: ResearchState = {
 	goal: null,
@@ -67,9 +61,7 @@ function resetState(goal: string): void {
 	};
 }
 
-// ---------------------------------------------------------------------------
 // Output formatters
-// ---------------------------------------------------------------------------
 
 function formatInactive(): string {
 	return [
@@ -253,24 +245,20 @@ function formatState(): string {
 	return lines.join("\n");
 }
 
-// ---------------------------------------------------------------------------
 // Public API — called from index.ts
-// ---------------------------------------------------------------------------
 
 /**
  * Register the `web_agent` tool.
  *
  * Call **after** web_search and web_fetch so the event interceptors
- * (Phase 2+) can distinguish our tools from built-in ones.
+ * pode distinguir nossas tools das tools built-in.
  */
 export function registerWebAgent(pi: ExtensionAPI): void {
 	registerTool(pi);
 	registerListeners(pi);
 }
 
-// ---------------------------------------------------------------------------
 // Tool registration
-// ---------------------------------------------------------------------------
 
 function registerTool(pi: ExtensionAPI): void {
 	pi.registerTool({
@@ -323,9 +311,7 @@ function registerTool(pi: ExtensionAPI): void {
 	});
 }
 
-// ---------------------------------------------------------------------------
 // Event listeners — auto-track web_search and web_fetch
-// ---------------------------------------------------------------------------
 
 function registerListeners(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event) => {
@@ -412,9 +398,7 @@ function registerListeners(pi: ExtensionAPI): void {
 	});
 }
 
-// ---------------------------------------------------------------------------
 // State helpers (for testing)
-// ---------------------------------------------------------------------------
 
 /** @visibleForTesting */
 export function __resetState(): void {

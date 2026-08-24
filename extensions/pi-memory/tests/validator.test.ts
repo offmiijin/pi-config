@@ -1,6 +1,5 @@
 /**
- * pi-memory — Tests: validação de candidatos, política e revisor (Fase 4,
- * módulo puro).
+ * pi-memory — Tests: validação de candidatos, política e revisor (módulo puro).
  */
 
 import { describe, it } from "node:test";

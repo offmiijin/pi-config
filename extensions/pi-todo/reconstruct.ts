@@ -10,9 +10,7 @@
 import type { TodoItem, TodoState } from "./types.ts";
 import { createTodoState, isTodoStatus } from "./state.ts";
 
-// ---------------------------------------------------------------------------
 // Normalização (dados estrangeiros)
-// ---------------------------------------------------------------------------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -71,9 +69,7 @@ export function normalizeTodoState(value: unknown): TodoState | null {
 	return { items, nextId };
 }
 
-// ---------------------------------------------------------------------------
 // Reconstrução a partir do branch
-// ---------------------------------------------------------------------------
 
 /** Chave da entrada custom usada para persistir estado fora da tool (erro automático). */
 export const TODO_STATE_ENTRY = "pi-todo-state";

@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: prompt de extração e parsing (Fase 3, módulo puro).
+ * pi-memory — Tests: prompt de extração e parsing (módulo puro).
  */
 
 import { describe, it } from "node:test";

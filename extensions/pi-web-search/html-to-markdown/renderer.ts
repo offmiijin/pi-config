@@ -1,11 +1,11 @@
 /**
  * Renderer HTML → Markdown (pi-web-search).
  *
- * Fase 1 — núcleo CommonMark seguro:
+ * Núcleo CommonMark seguro:
  *   containers, títulos, separadores, parágrafos, blockquote, blocos de
  *   código, listas (aninhadas, start), definições (dl/dt/dd), ênfase
  *   inline, links, imagens e mídia com representação textual, e remoção
- *   integral de tags perigosas. Tabelas (GFM) e formulários nas fases 3-4.
+ *   integral de tags perigosas. Tabelas GFM e formulários.
  */
 
 import type { AnyNode, Element, Text } from "domhandler";
@@ -40,7 +40,7 @@ const COMPLEX_CELL_TAGS = new Set([
 	"figure", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
 ]);
 
-/** Tags removidas integralmente (com descendentes) — Fase 1.8 + 6. */
+/** Tags removidas integralmente, com seus descendentes. */
 const REMOVED_TAGS = new Set([
 	"script", "style", "template", "noscript", "iframe", "frame", "frameset",
 	"portal", "svg", "math", "canvas", "object", "embed", "applet", "base",
@@ -60,7 +60,7 @@ const FLATTEN_TAGS = new Set([
 	"span", "bdi", "bdo", "wbr", "small", "big", "u", "mark",
 	"cite", "dfn", "abbr", "acronym", "time", "data", "sub", "sup",
 	"ruby", "rb", "rtc", "rbc", "ins", "menuitem",
-	// Obsoletas (Fase 6)
+	// Tags obsoletas
 	"font", "basefont", "tt", "marquee", "blink", "content",
 ]);
 
@@ -87,9 +87,7 @@ function attr($: CheerioAPI, el: Element, name: string): string | undefined {
 	return $(el).attr(name);
 }
 
-// ---------------------------------------------------------------------------
 // Filhos — separação de blocos e espaços inline
-// ---------------------------------------------------------------------------
 
 /**
  * Renderiza os filhos de `el`: blocos separados por linha em branco,
@@ -142,9 +140,7 @@ function renderChildren($: CheerioAPI, el: AnyNode | undefined, opts: RenderOpti
 	return out;
 }
 
-// ---------------------------------------------------------------------------
 // Dispatch
-// ---------------------------------------------------------------------------
 
 function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string | null {
 	if (node.type === "comment") return null;
@@ -269,7 +265,7 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 			return t ? `*${t}*` : null;
 		}
 
-		// Conteúdo editorial (Fase 5): strikethrough GFM
+		// Conteúdo editorial: strikethrough GFM
 		case "del":
 		case "s":
 		case "strike": {
@@ -310,7 +306,7 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 		case "track":
 			return null;
 
-		// ── Formulários (Fase 4) ────────────────────────────────────
+		// ── Formulários ─────────────────────────────────────────────
 		case "form":
 		case "fieldset": {
 			const t = renderChildren($, node, opts).trim();
@@ -371,9 +367,7 @@ function renderNode($: CheerioAPI, node: AnyNode, opts: RenderOptions): string |
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Blocos específicos
-// ---------------------------------------------------------------------------
 
 /** Bloco de código cercado; linguagem de `class="language-*"` quando segura. */
 function renderPre($: CheerioAPI, node: Element): string | null {
@@ -459,7 +453,7 @@ function renderDl($: CheerioAPI, node: Element, opts: RenderOptions): string | n
 
 /**
  * <article>: container transparente; com <article> aninhado (direto), os
- * blocos são separados por `---` (Fase 5).
+ * blocos são separados por `---`.
  */
 function renderArticle($: CheerioAPI, node: Element, opts: RenderOptions): string | null {
 	const kids = (node.children ?? []).filter(isElement);
@@ -492,9 +486,7 @@ function renderArticle($: CheerioAPI, node: Element, opts: RenderOptions): strin
 	return out.trim() || null;
 }
 
-// ---------------------------------------------------------------------------
-// Tabelas (Fase 3 — GFM com fallback seguro)
-// ---------------------------------------------------------------------------
+// Tabelas (GFM com fallback seguro)
 
 /** Coleta as <tr> diretas da tabela (ignora tabelas aninhadas em células). */
 function collectRows($: CheerioAPI, table: Element): Element[] {
@@ -612,9 +604,7 @@ function renderTable($: CheerioAPI, node: Element, opts: RenderOptions): string 
 	return prefix + groups.join("\n\n");
 }
 
-// ---------------------------------------------------------------------------
 // Links, imagens e mídia
-// ---------------------------------------------------------------------------
 
 /**
  * Contexto de escape para inline aninhado: dentro de célula de tabela o
@@ -681,9 +671,7 @@ function renderMedia($: CheerioAPI, node: Element, opts: RenderOptions): string 
 	return `[${text ? `${label}: ${text}` : label}](${escapeUrl(src)})`;
 }
 
-// ---------------------------------------------------------------------------
-// Formulários (Fase 4)
-// ---------------------------------------------------------------------------
+// Formulários
 
 /**
  * <input>: checkbox → `[x]`/`[ ]`, radio → `(x)`/`( )`,

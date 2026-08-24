@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: worker assíncrono e fila de jobs (Fase 2).
+ * pi-memory — Tests: worker assíncrono e fila de jobs.
  *
  * Usa banco temporário (mkdtemp). Testa: CRUD de jobs, fila (queued/retry),
  * seleção de episódios, gatilhos de criação, consumer loop (sucesso, retry,

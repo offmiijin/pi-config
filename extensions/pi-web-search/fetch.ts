@@ -7,10 +7,9 @@
  * PDFs additionally get text extracted via `pdftotext` (poppler-utils) so the
  * agent can read the content (saved as <name>.txt beside the .pdf).
  *
- * Uses project-local cache so files are accessible inside dev-sandbox's bwrap
+ * Uses project-local cache so files are accessible inside pi-sandbox's bwrap
  * namespace (which mounts $CWD read-write but has isolated /tmp). The fetch root
- * is the same dir used by dev-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch);
- * page dirs (page_*) live inside it and are cleaned after 7 days.
+ * is the same dir used by pi-sandbox's sandbox_fetch (QUARANTINE_DIR_DEFAULTS.fetch).
  */
 
 import { htmlToMarkdown } from "./html-to-markdown";
@@ -27,9 +26,7 @@ import {
 	DEFAULT_CONCURRENCY,
 } from "./utils";
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 export interface FetchItemResult {
 	url: string;
 	file?: string;
@@ -54,9 +51,7 @@ export interface FetchOutput {
 	results: FetchItemResult[];
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function randomHex(length: number): string {
 	return Math.random().toString(16).slice(2, 2 + length);
@@ -68,9 +63,7 @@ function sanitizeSessionKey(key: string): string {
 	return (clean || "default").slice(0, 64);
 }
 
-// ---------------------------------------------------------------------------
 // Binary content
-// ---------------------------------------------------------------------------
 
 /**
  * Extensão de arquivo a partir do Content-Type.
@@ -137,9 +130,7 @@ function uniqueFilename(filename: string, used: Set<string>): string {
 }
 
 
-// ---------------------------------------------------------------------------
 // PDF text extraction (pdftotext / poppler-utils)
-// ---------------------------------------------------------------------------
 
 const PDF_TEXT_TIMEOUT_MS = 30_000;
 
@@ -198,39 +189,7 @@ function isPdfBuffer(buf: Buffer): boolean {
 	return buf.subarray(0, 5).toString("latin1") === "%PDF-";
 }
 
-// ---------------------------------------------------------------------------
-// Cache cleanup
-// ---------------------------------------------------------------------------
-
-const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-/**
- * Remove page directories (page_*, um por sessão do pi) older than 7 days.
- * Only touches dirs with the page_ prefix — artifacts of sandbox_fetch
- * at the fetch root (files, ca-extract/, ...) are never removed.
- * Silently ignores errors (permission, race, etc.).
- */
-async function cleanOldPages(baseDir: string): Promise<void> {
-	const now = Date.now();
-	try {
-		const entries = await fs.readdir(baseDir, { withFileTypes: true });
-		await Promise.all(entries.map(async (entry) => {
-			if (!entry.isDirectory()) return;
-			if (!entry.name.startsWith("page_")) return;
-			const fullPath = path.join(baseDir, entry.name);
-			try {
-				const stat = await fs.stat(fullPath);
-				if (now - stat.mtimeMs > CACHE_MAX_AGE_MS) {
-					await fs.rm(fullPath, { recursive: true, force: true });
-				}
-			} catch { /* ignorar */ }
-		}));
-	} catch { /* baseDir ainda nao existe -- ok */ }
-}
-
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /**
  * Fetch all `urls` concurrently (max `maxConcurrent` at a time).
@@ -249,7 +208,7 @@ async function cleanOldPages(baseDir: string): Promise<void> {
  * `sessionKey` escopa a saída: um único diretório por sessão do pi (todas as
  * chamadas de web_fetch da mesma sessão compartilham o dir). Fallback: "default".
  *
- * Uses project-local .sandbox-cache/ so files are accessible inside dev-sandbox's
+ * Uses project-local .sandbox-cache/ so files are accessible inside pi-sandbox's
  * bwrap namespace (which mounts $CWD read-write but has isolated /tmp).
  */
 export async function fetchPages(
@@ -259,10 +218,8 @@ export async function fetchPages(
 	maxConcurrent: number = DEFAULT_CONCURRENCY,
 	sessionKey: string = "default",
 ): Promise<FetchOutput> {
-	// 1. Clean pages older than 7 days, then resolve the session dir
-	const fetchRoot = path.join(cwd, ".sandbox-cache", "fetch");
-	await cleanOldPages(fetchRoot);
 	// Um único dir por sessão — texto e binário juntos
+	const fetchRoot = path.join(cwd, ".sandbox-cache", "fetch");
 	const sessionDir = path.join(fetchRoot, `page_${sanitizeSessionKey(sessionKey)}`);
 	await fs.mkdir(sessionDir, { recursive: true });
 	const outputDir = sessionDir;
@@ -333,7 +290,7 @@ export async function fetchPages(
 			let filename: string;
 			if (isText) {
 				// HTML → Markdown (.md) via html-to-markdown (baseUrl = URL final,
-				// após redirects, para resolver links relativos nas fases seguintes)
+				// após redirects, para resolver links relativos no conteúdo convertido)
 				const html = await response.text();
 				const { markdown } = htmlToMarkdown(html, {
 					baseUrl: response.url || url,

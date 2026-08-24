@@ -104,6 +104,8 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 			cachedIndexText: null,
 			pipeline: null,
 			worker: null,
+			retention: null,
+			retentionScheduler: null,
 			index: idx,
 		};
 		const tool = captureTool(registerMemoryDecay, state);
@@ -139,6 +141,8 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 			cachedIndexText: null,
 			pipeline: null,
 			worker: null,
+			retention: null,
+			retentionScheduler: null,
 			index: failingIndex,
 		};
 		const tool = captureTool(registerMemoryDecay, state);
@@ -164,6 +168,8 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 			cachedIndexText: null,
 			pipeline: null,
 			worker: null,
+			retention: null,
+			retentionScheduler: null,
 			index: failingIndex,
 		};
 		const tool = captureTool(registerMemoryDecay, state);
@@ -193,6 +199,8 @@ describe("memory_decay — falha de índice não derruba operação", () => {
 			cachedIndexText: null,
 			pipeline: null,
 			worker: null,
+			retention: null,
+			retentionScheduler: null,
 			index: null,
 		};
 		const tool = captureTool(registerMemoryDecay, state);

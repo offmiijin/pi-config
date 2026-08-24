@@ -1,5 +1,5 @@
 /**
- * pi-memory — Tests: normalização de evidências (Fase 1).
+ * pi-memory — Tests: normalização de evidências.
  *
  * Usa diretório e banco temporários (mkdtemp) — nunca toca em produção.
  * Testa: parsing do JSONL, branch, sanitização, matriz de relevância por

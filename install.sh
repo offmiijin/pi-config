@@ -336,12 +336,12 @@ ensure_landlock() {
     x86_64) arch=x86_64 ;; aarch64) arch=aarch64 ;; riscv64) arch=riscv64 ;;
     *) arch="$(uname -m)" ;;
   esac
-  local bin="$AGENT_DIR/extensions/dev-sandbox/landlock-exec-$arch"
+  local bin="$AGENT_DIR/extensions/pi-sandbox/landlock-exec-$arch"
   [ -x "$bin" ] && log "✓ landlock-exec-$arch presente" && return
 
   if has_cmd cargo; then
     if confirm_opt "Compilar landlock-exec-$arch (Rust encontrado)?"; then
-      run bash -c "cd '$AGENT_DIR/extensions/dev-sandbox/gen-seccomp' && ./build.sh"
+      run bash -c "cd '$AGENT_DIR/extensions/pi-sandbox/gen-seccomp' && ./build.sh"
       [ -x "$bin" ] && log "✓ landlock-exec-$arch compilado" || warn "build.sh não gerou $bin"
       return
     fi
@@ -481,7 +481,7 @@ main() {
   check_pi
 
   echo
-  log "✔ Concluído! Inicie o pi — a extensão doctor (00-doctor) valida o ambiente:"
+  log "✔ Concluído! Inicie o pi — a extensão doctor (pi-doctor) valida o ambiente:"
   log "    pi   (ou /reload se já estiver aberto)"
   print_backup_notice
   if [ "$ASSUME_YES" -eq 0 ]; then
