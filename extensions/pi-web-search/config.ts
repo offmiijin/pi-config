@@ -12,12 +12,21 @@ import { join } from "node:path";
 export const CONFIG_DIR = join(homedir(), ".config", "pi-web-search");
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
+export type RendererMode = "auto" | "never" | "required";
+
+export interface RendererConfig {
+	mode?: RendererMode;
+	command?: string;
+	timeoutMs?: number;
+}
+
 export interface SearchConfig {
 	serperApiKey?: string;
 	exaApiKey?: string;
 	tavilyApiKey?: string;
 	searxngKey?: string;
 	searxngUrl?: string;
+	renderer?: RendererConfig;
 }
 
 let cached: SearchConfig | null = null;
@@ -103,6 +112,58 @@ export function setKey(provider: string, key: string): void {
 	save(cfg);
 }
 
+const DEFAULT_RENDERER_TIMEOUT_MS = 20_000;
+
+export function getRendererMode(): RendererMode {
+	const env = process.env.PI_WEB_RENDERER?.trim().toLowerCase();
+	if (env === "auto" || env === "never" || env === "required") return env;
+
+	const configured = load().renderer?.mode;
+	return configured === "auto" || configured === "never" || configured === "required"
+		? configured
+		: "auto";
+}
+
+export function getRendererInstallDir(): string {
+	return process.env.PI_WEB_RENDERER_DIR?.trim() ||
+		join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "pi-web-search", "renderer");
+}
+
+export function getRendererCommand(): string {
+	const env = process.env.PI_WEB_RENDERER_COMMAND?.trim();
+	if (env) return env;
+	return load().renderer?.command?.trim() || join(getRendererInstallDir(), "pi-web-renderer");
+}
+
+export function getRendererTimeoutMs(): number {
+	const env = Number.parseInt(process.env.PI_WEB_RENDERER_TIMEOUT_MS ?? "", 10);
+	if (Number.isFinite(env) && env > 0) return Math.min(env, 60_000);
+	const configured = load().renderer?.timeoutMs;
+	return typeof configured === "number" && Number.isFinite(configured) && configured > 0
+		? Math.min(configured, 60_000)
+		: DEFAULT_RENDERER_TIMEOUT_MS;
+}
+
+export function setRendererMode(mode: RendererMode): void {
+	const cfg = load();
+	cfg.renderer = { ...cfg.renderer, mode };
+	save(cfg);
+}
+
+export function setRendererCommand(command: string): void {
+	const cfg = load();
+	cfg.renderer = { ...cfg.renderer, command };
+	save(cfg);
+}
+
+export function getRendererConfigSummary(): string {
+	return [
+		`  Renderer mode: ${getRendererMode()}`,
+		`  Renderer command: ${getRendererCommand()}`,
+		`  Renderer timeout: ${getRendererTimeoutMs()} ms`,
+	].join("\n");
+}
+
 export function getConfiguredProviders(): string[] {
 	const providers: string[] = [];
 	if (getSerperKey()) providers.push("serper.dev");
@@ -135,6 +196,8 @@ export function getConfigSummary(): string {
 	lines.push("");
 	lines.push(`  SearXNG URL: ${getSearxngTargetUrl()}`);
 	lines.push(`  Docker socket: ${isDockerSocketAvailable() ? "acessível" : "não acessível (no sandbox é esperado — roda no host)"}`);
+	lines.push("");
+	lines.push(getRendererConfigSummary());
 	lines.push("");
 	lines.push("Set keys via:");
 	lines.push("  /web_search config <provider> <key>");

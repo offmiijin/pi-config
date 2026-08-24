@@ -13,7 +13,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { search, isSearxngReachable, validateProvider } from "./search";
 import { fetchPages } from "./fetch";
 import { registerWebAgent } from "./agent";
-import { getConfigSummary, setKey, getConfiguredProviders, getSearxngUrl, getSearxngKey } from "./config";
+import { installRenderer } from "./renderer-install";
+import { closeSharedRendererClient } from "./renderer-client";
+import {
+	getConfigSummary,
+	setKey,
+	setRendererMode,
+	getConfiguredProviders,
+	getSearxngUrl,
+	getSearxngKey,
+} from "./config";
 
 export default function (pi: ExtensionAPI) {
 	// O pi-sandbox cria um worktree após o ctx.cwd original já ter sido
@@ -25,6 +34,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.events?.on("custom:dev-sandbox-session-shutdown", () => {
 		sandboxWorkspaceCwd = undefined;
+		closeSharedRendererClient();
 	});
 
 	// Aviso de startup — 1x por processo, só quando nada está funcionando
@@ -69,6 +79,8 @@ export default function (pi: ExtensionAPI) {
 			"  /web_search config tavily <key>     → save Tavily key directly\n" +
 			"  /web_search config searxng <key>    → save SearXNG key directly\n" +
 			"  /web_search config searxng-url <url>→ set custom SearXNG URL (default: http://localhost:4000)\n" +
+			"  /web_search config renderer install → install optional Python + Playwright renderer\n" +
+			"  /web_search config renderer <auto|never|required> → set renderer mode\n" +
 			"Providers: serper (2.5k/mo free), exa (1k/mo free), tavily (1k/mo free), searxng (local, free)",
 		handler: async (args, ctx) => {
 			const parts = (args ?? "").trim().split(/\s+/);
@@ -81,6 +93,32 @@ export default function (pi: ExtensionAPI) {
 
 			// /web_search config ...
 			if (parts[0] === "config") {
+				// Renderer é uma configuração local, não uma chave de provider.
+				if (parts[1] === "renderer") {
+					const action = parts[2];
+					if (action === "install") {
+						const result = await installRenderer();
+						const output = result.output.trim();
+						ctx.ui.notify(
+							result.ok
+								? `✅ Renderer instalado em ${result.command}${output ? `\\n${output}` : ""}`
+								: `❌ Falha ao instalar o renderer${output ? `\\n${output}` : ""}`,
+							result.ok ? "info" : "error",
+						);
+						return;
+					}
+					if (action === "auto" || action === "never" || action === "required") {
+						setRendererMode(action);
+						ctx.ui.notify(`✅ Renderer configurado como ${action}.`, "info");
+						return;
+					}
+					ctx.ui.notify(
+						"Uso: /web_search config renderer <install|auto|never|required>",
+						"error",
+					);
+					return;
+				}
+
 				// /web_search config <provider> <key> — direct
 				if (parts.length >= 3) {
 					const [, provider, ...rest] = parts;
