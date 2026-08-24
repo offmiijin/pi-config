@@ -10,10 +10,11 @@
 
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getWebSearchArgumentCompletions } from "./command-completions";
 import { search, isSearxngReachable, validateProvider } from "./search";
 import { fetchPages } from "./fetch";
 import { registerWebAgent } from "./agent";
-import { installRenderer } from "./renderer-install";
+import { installRenderer, validateRendererInstallation } from "./renderer-install";
 import { closeSharedRendererClient } from "./renderer-client";
 import {
 	getConfigSummary,
@@ -71,7 +72,7 @@ export default function (pi: ExtensionAPI) {
 	// ── Command: /web_search ───────────────────────────────────────────
 	pi.registerCommand("web_search", {
 		description:
-			"Configure search API keys. Examples:\n" +
+			"Configure search providers and the optional JavaScript renderer. Examples:\n" +
 			"  /web_search                         → show current keys\n" +
 			"  /web_search config                  → interactive setup (pick provider, enter key)\n" +
 			"  /web_search config serper <key>     → save Serper.dev key directly\n" +
@@ -79,14 +80,17 @@ export default function (pi: ExtensionAPI) {
 			"  /web_search config tavily <key>     → save Tavily key directly\n" +
 			"  /web_search config searxng <key>    → save SearXNG key directly\n" +
 			"  /web_search config searxng-url <url>→ set custom SearXNG URL (default: http://localhost:4000)\n" +
+			"  /web_search help                    → show all configuration commands\n" +
 			"  /web_search config renderer install → install optional Python + Playwright renderer\n" +
+			"  /web_search config renderer status  → validate renderer installation\n" +
 			"  /web_search config renderer <auto|never|required> → set renderer mode\n" +
 			"Providers: serper (2.5k/mo free), exa (1k/mo free), tavily (1k/mo free), searxng (local, free)",
+		getArgumentCompletions: getWebSearchArgumentCompletions,
 		handler: async (args, ctx) => {
 			const parts = (args ?? "").trim().split(/\s+/);
 
-			// /web_search — show status
-			if (parts.length === 0 || parts[0] === "") {
+			// /web_search — show status; /web_search help — show the same help explicitly
+			if (parts.length === 0 || parts[0] === "" || parts[0] === "help") {
 				ctx.ui.notify(getConfigSummary(), "info");
 				return;
 			}
@@ -97,14 +101,65 @@ export default function (pi: ExtensionAPI) {
 				if (parts[1] === "renderer") {
 					const action = parts[2];
 					if (action === "install") {
-						const result = await installRenderer();
-						const output = result.output.trim();
 						ctx.ui.notify(
-							result.ok
-								? `✅ Renderer instalado em ${result.command}${output ? `\\n${output}` : ""}`
-								: `❌ Falha ao instalar o renderer${output ? `\\n${output}` : ""}`,
-							result.ok ? "info" : "error",
+							"⏳ Instalação do renderer iniciada. Python, Playwright e Chromium serão configurados.",
+							"info",
 						);
+						ctx.ui.setStatus("pi-web-search-renderer", "Instalando renderer Python + Playwright…");
+						try {
+							const result = await installRenderer(ctx.signal, (chunk) => {
+								const lines = chunk.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
+								const lastLine = lines.at(-1);
+								if (lastLine) {
+									ctx.ui.setStatus(
+										"pi-web-search-renderer",
+										`Instalando renderer: ${lastLine.slice(-120)}`,
+									);
+								}
+							});
+							if (!result.ok) {
+								ctx.ui.notify(
+									`❌ Falha ao instalar o renderer.\\n${result.output.trim().slice(-2000)}`,
+									"error",
+								);
+								return;
+							}
+
+							ctx.ui.setStatus("pi-web-search-renderer", "Validando Playwright, Chromium e protocolo JSONL…");
+							const validation = await validateRendererInstallation(result.command);
+							if (!validation.ok) {
+								ctx.ui.notify(
+									`⚠️ Instalação concluída, mas a validação falhou: ${validation.error}`,
+									"warning",
+								);
+								return;
+							}
+
+							ctx.ui.notify(
+								`✅ Renderer instalado e validado: ${result.command}`,
+								"info",
+						);
+						} catch (error) {
+							const message = error instanceof Error ? error.message : String(error);
+							ctx.ui.notify(`❌ Falha ao instalar o renderer: ${message}`, "error");
+						} finally {
+							ctx.ui.setStatus("pi-web-search-renderer", undefined);
+						}
+						return;
+					}
+					if (action === "status") {
+						ctx.ui.setStatus("pi-web-search-renderer", "Validando renderer…");
+						try {
+							const validation = await validateRendererInstallation();
+							ctx.ui.notify(
+								validation.ok
+									? "✅ Renderer instalado e validado (Playwright + Chromium + JSONL)."
+									: `❌ Renderer indisponível: ${validation.error}`,
+								validation.ok ? "info" : "error",
+							);
+						} finally {
+							ctx.ui.setStatus("pi-web-search-renderer", undefined);
+						}
 						return;
 					}
 					if (action === "auto" || action === "never" || action === "required") {
@@ -113,7 +168,7 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					ctx.ui.notify(
-						"Uso: /web_search config renderer <install|auto|never|required>",
+						"Uso: /web_search config renderer <install|status|auto|never|required>",
 						"error",
 					);
 					return;

@@ -159,8 +159,13 @@ export function setRendererCommand(command: string): void {
 	save(cfg);
 }
 
+export function isRendererLauncherPresent(): boolean {
+	return existsSync(getRendererCommand());
+}
+
 export function getRendererConfigSummary(): string {
 	return [
+		`  Renderer launcher: ${isRendererLauncherPresent() ? "✅ installed" : "❌ not installed"}`,
 		`  Renderer mode: ${getRendererMode()}`,
 		`  Renderer command: ${getRendererCommand()}`,
 		`  Renderer timeout: ${getRendererTimeoutMs()} ms`,
@@ -202,8 +207,14 @@ export function getConfigSummary(): string {
 	lines.push("");
 	lines.push(getRendererConfigSummary());
 	lines.push("");
-	lines.push("Set keys via:");
+	lines.push("Commands:");
+	lines.push("  /web_search help");
 	lines.push("  /web_search config <provider> <key>");
-	lines.push("  Or env vars: SERPER_API_KEY, EXA_API_KEY, TAVILY_API_KEY, SEARXNG_KEY, SEARXNG_URL");
+	lines.push("  /web_search config renderer install");
+	lines.push("  /web_search config renderer status");
+	lines.push("  /web_search config renderer <auto|never|required>");
+	lines.push("");
+	lines.push("Environment variables:");
+	lines.push("  SERPER_API_KEY, EXA_API_KEY, TAVILY_API_KEY, SEARXNG_KEY, SEARXNG_URL");
 	return lines.join("\n");
 }

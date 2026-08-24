@@ -11,8 +11,10 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import {
+	getConfigSummary,
 	getConfiguredProviders,
 	getRendererCommand,
+	isRendererLauncherPresent,
 	getRendererMode,
 	getRendererTimeoutMs,
 	getSearxngTargetUrl,
@@ -67,5 +69,12 @@ describe("config — portabilidade", () => {
 		process.env.PI_WEB_RENDERER_TIMEOUT_MS = "90000";
 		expect(getRendererCommand()).toBe("/tmp/pi-web-renderer");
 		expect(getRendererTimeoutMs()).toBe(60_000);
+	});
+
+	it("resumo mostra o estado e os comandos do renderer", () => {
+		const summary = getConfigSummary();
+		expect(typeof isRendererLauncherPresent()).toBe("boolean");
+		expect(summary).toContain("/web_search config renderer install");
+		expect(summary).toContain("Renderer launcher:");
 	});
 });

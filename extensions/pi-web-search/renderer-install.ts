@@ -1,7 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { getRendererInstallDir, setRendererCommand } from "./config";
+import {
+	getRendererCommand,
+	getRendererInstallDir,
+	getRendererTimeoutMs,
+	setRendererCommand,
+} from "./config";
+import { RendererClient } from "./renderer-client";
 
 export interface RendererInstallResult {
 	ok: boolean;
@@ -9,8 +15,18 @@ export interface RendererInstallResult {
 	command: string;
 }
 
+export interface RendererValidationResult {
+	ok: boolean;
+	error?: string;
+}
+
+export type RendererInstallProgress = (chunk: string) => void;
+
 /** Executa o instalador versionado junto com a extensão, sem shell intermediário. */
-export function installRenderer(signal?: AbortSignal): Promise<RendererInstallResult> {
+export function installRenderer(
+	signal?: AbortSignal,
+	onOutput?: RendererInstallProgress,
+): Promise<RendererInstallResult> {
 	const script = fileURLToPath(new URL("./renderer/install.sh", import.meta.url));
 	const command = join(getRendererInstallDir(), "pi-web-renderer");
 
@@ -32,7 +48,9 @@ export function installRenderer(signal?: AbortSignal): Promise<RendererInstallRe
 			finish({ ok: false, output: "ABORTED", command });
 		};
 		const collect = (chunk: Buffer) => {
-			chunks.push(chunk.toString());
+			const text = chunk.toString();
+			chunks.push(text);
+			onOutput?.(text);
 		};
 
 		child.stdout.on("data", collect);
@@ -52,4 +70,23 @@ export function installRenderer(signal?: AbortSignal): Promise<RendererInstallRe
 		});
 		signal?.addEventListener("abort", onAbort, { once: true });
 	});
+}
+
+/** Valida o protocolo JSONL e a inicialização real do Chromium. */
+export async function validateRendererInstallation(
+	command = getRendererCommand(),
+	timeoutMs = getRendererTimeoutMs(),
+): Promise<RendererValidationResult> {
+	const client = new RendererClient(command, timeoutMs);
+	try {
+		await client.health();
+		return { ok: true };
+	} catch (error) {
+		return {
+			ok: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	} finally {
+		client.close();
+	}
 }

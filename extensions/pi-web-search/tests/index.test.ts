@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 const fetchPages = vi.hoisted(() => vi.fn());
 const installRenderer = vi.hoisted(() => vi.fn());
+const validateRendererInstallation = vi.hoisted(() => vi.fn());
 
 vi.mock("../fetch", () => ({ fetchPages }));
-vi.mock("../renderer-install", () => ({ installRenderer }));
+vi.mock("../renderer-install", () => ({ installRenderer, validateRendererInstallation }));
 vi.mock("../agent", () => ({ registerWebAgent: vi.fn() }));
 vi.mock("../search", () => ({
   search: vi.fn(),
@@ -57,6 +58,7 @@ describe("web_fetch — workspace efetivo", () => {
   });
 
   it("instala o renderer via comando de configuração", async () => {
+    validateRendererInstallation.mockResolvedValueOnce({ ok: true });
     installRenderer.mockResolvedValueOnce({
       ok: true,
       command: "/tmp/pi-web-renderer",
@@ -73,12 +75,13 @@ describe("web_fetch — workspace efetivo", () => {
       registerTool: vi.fn(),
     };
     const notify = vi.fn();
+    const setStatus = vi.fn();
 
     const { default: extension } = await import("../index");
     extension(pi as never);
     await commands.get("web_search")?.handler("config renderer install", {
       hasUI: false,
-      ui: { notify },
+      ui: { notify, setStatus },
     });
 
     expect(installRenderer).toHaveBeenCalledOnce();
