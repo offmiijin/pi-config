@@ -37,6 +37,9 @@ export default function (pi: ExtensionAPI) {
 		sandboxWorkspaceCwd = undefined;
 		closeSharedRendererClient();
 	});
+	pi.on("session_shutdown", async () => {
+		closeSharedRendererClient();
+	});
 
 	// Aviso de startup — 1x por processo, só quando nada está funcionando
 	let startupNotified = false;

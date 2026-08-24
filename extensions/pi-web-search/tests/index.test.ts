@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 const fetchPages = vi.hoisted(() => vi.fn());
 const installRenderer = vi.hoisted(() => vi.fn());
 const validateRendererInstallation = vi.hoisted(() => vi.fn());
+const closeSharedRendererClient = vi.hoisted(() => vi.fn());
 
 vi.mock("../fetch", () => ({ fetchPages }));
 vi.mock("../renderer-install", () => ({ installRenderer, validateRendererInstallation }));
+vi.mock("../renderer-client", () => ({ closeSharedRendererClient }));
 vi.mock("../agent", () => ({ registerWebAgent: vi.fn() }));
 vi.mock("../search", () => ({
   search: vi.fn(),
@@ -55,6 +57,22 @@ describe("web_fetch — workspace efetivo", () => {
       undefined,
       "session",
     );
+  });
+
+  it("encerra o renderer no session_shutdown", async () => {
+    const handlers = new Map<string, () => Promise<void>>();
+    const pi = {
+      events: { on: vi.fn() },
+      on: (name: string, handler: () => Promise<void>) => handlers.set(name, handler),
+      registerCommand: vi.fn(),
+      registerTool: vi.fn(),
+    };
+
+    const { default: extension } = await import("../index");
+    extension(pi as never);
+    await handlers.get("session_shutdown")?.();
+
+    expect(closeSharedRendererClient).toHaveBeenCalled();
   });
 
   it("instala o renderer via comando de configuração", async () => {
