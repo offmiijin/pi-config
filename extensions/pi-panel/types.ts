@@ -6,11 +6,17 @@ export interface ChangedFile {
 	additions: number;
 	deletions: number;
 	diff: string;
-	content: string;
+}
+
+export interface ChangeGroup {
+	id: string;
+	label: string;
+	kind: "commit" | "working-tree";
+	files: ChangedFile[];
 }
 
 export interface ChangesSnapshot {
-	files: ChangedFile[];
+	groups: ChangeGroup[];
 	totalAdditions: number;
 	totalDeletions: number;
 	error?: string;

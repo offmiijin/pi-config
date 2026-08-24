@@ -9,8 +9,10 @@ describe("extensão pi-panel", () => {
 		expect(shouldTogglePanel("\x1b[100;3:2u", 2000, 0)).toBe(false);
 	});
 
-	it("intercepta Alt+D pelo terminal antes do editor", async () => {
+	it("intercepta Alt+D e usa o worktree/base emitidos pelo sandbox", async () => {
 		const handlers: Record<string, (event: any, ctx: any) => unknown> = {};
+		const eventHandlers: Record<string, (event: any) => unknown> = {};
+		const execCalls: string[][] = [];
 		let inputListener: ((data: string) => unknown) | undefined;
 		let customOptions: any;
 		let shortcutRegistered = false;
@@ -28,11 +30,21 @@ describe("extensão pi-panel", () => {
 		};
 		const pi = {
 			on: (name: string, handler: (event: any, ctx: any) => unknown) => { handlers[name] = handler; },
+			events: {
+				on: (name: string, handler: (event: any) => unknown) => { eventHandlers[name] = handler; },
+			},
 			registerShortcut: () => { shortcutRegistered = true; },
-			exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+			exec: async (_command: string, args: string[]) => {
+				execCalls.push(args);
+				return { stdout: "", stderr: "", code: 0 };
+			},
 		};
 
 		registerChanges(pi as any);
+		eventHandlers["custom:dev-sandbox-session"]!({
+			worktreePath: "/tmp/worktree",
+			baseCommit: "base123",
+		});
 		await handlers.session_start!({}, ctx);
 
 		expect(shortcutRegistered).toBe(false);
@@ -40,5 +52,6 @@ describe("extensão pi-panel", () => {
 		expect(inputListener!("\x1bd")).toEqual({ consume: true });
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(customOptions.overlayOptions.anchor).toBe("center");
+		expect(execCalls[0]).toEqual(expect.arrayContaining(["-C", "/tmp/worktree", "base123^{commit}"]));
 	});
 });

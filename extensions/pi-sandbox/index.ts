@@ -149,6 +149,8 @@ export default function (pi: ExtensionAPI) {
     pi.events?.emit("custom:dev-sandbox-session", {
       originalCwd: session.originalCwd,
       workspaceCwd: session.workspaceCwd,
+      worktreePath: session.worktreePath,
+      baseCommit: session.baseCommit,
       branchName: session.branchName,
       originalBranchName: session.originalBranchName,
     });

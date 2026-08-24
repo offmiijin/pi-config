@@ -8,7 +8,7 @@ import {
 	type TUI,
 	type Component,
 } from "@earendil-works/pi-tui";
-import type { ChangedFile, ChangesSnapshot } from "./types.ts";
+import type { ChangedFile, ChangeGroup, ChangesSnapshot } from "./types.ts";
 
 const METADATA_RATIO = 0.3;
 const MIN_PANEL_WIDTH = 32;
@@ -40,11 +40,37 @@ function statusColor(status: ChangedFile["status"]): "success" | "error" | "warn
 	}
 }
 
+function diffLineColor(line: string): "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext" | "accent" | "dim" {
+	if (line.startsWith("+") && !line.startsWith("+++")) return "toolDiffAdded";
+	if (line.startsWith("-") && !line.startsWith("---")) return "toolDiffRemoved";
+	if (line.startsWith("@@")) return "accent";
+	if (
+		line.startsWith("diff --git ") ||
+		line.startsWith("index ") ||
+		line.startsWith("---") ||
+		line.startsWith("+++")
+	) return "dim";
+	return "toolDiffContext";
+}
+
 function formatNumber(value: number): string {
 	return value.toLocaleString("pt-BR");
 }
 
 type PanelFocus = "files" | "code";
+
+interface FileSelection {
+	group: ChangeGroup;
+	file: ChangedFile;
+}
+
+function fileSelections(snapshot: ChangesSnapshot): FileSelection[] {
+	return snapshot.groups.flatMap((group) => group.files.map((file) => ({ group, file })));
+}
+
+function selectionKey(selection: FileSelection | undefined): string | undefined {
+	return selection ? `${selection.group.id}\0${selection.file.path}` : undefined;
+}
 
 export class ChangesPanel implements Component {
 	private snapshot: ChangesSnapshot;
@@ -63,18 +89,24 @@ export class ChangesPanel implements Component {
 	}
 
 	setSnapshot(snapshot: ChangesSnapshot): void {
-		const previousFile = this.snapshot.files[this.selectedIndex];
-		const selectedPath = previousFile?.path;
+		const previousSelection = fileSelections(this.snapshot)[this.selectedIndex];
+		const previousKey = selectionKey(previousSelection);
 		this.snapshot = snapshot;
-		const nextIndex = selectedPath
-			? snapshot.files.findIndex((file) => file.path === selectedPath)
+		const nextSelections = fileSelections(snapshot);
+		const nextIndex = previousKey
+			? nextSelections.findIndex((selection) => selectionKey(selection) === previousKey)
 			: -1;
 		this.selectedIndex = nextIndex >= 0
 			? nextIndex
-			: Math.min(this.selectedIndex, Math.max(0, snapshot.files.length - 1));
+			: Math.min(this.selectedIndex, Math.max(0, nextSelections.length - 1));
 
-		const nextFile = snapshot.files[this.selectedIndex];
-		if (!previousFile || !nextFile || previousFile.path !== nextFile.path || previousFile.content !== nextFile.content) {
+		const nextSelection = nextSelections[this.selectedIndex];
+		if (
+			!previousSelection ||
+			!nextSelection ||
+			selectionKey(previousSelection) !== selectionKey(nextSelection) ||
+			previousSelection.file.diff !== nextSelection.file.diff
+		) {
 			this.codeOffset = 0;
 		}
 		this.tui.requestRender();
@@ -122,8 +154,8 @@ export class ChangesPanel implements Component {
 		const metadataWidth = Math.max(18, Math.floor(innerWidth * METADATA_RATIO));
 		const codeWidth = Math.max(1, innerWidth - metadataWidth - 1);
 		const viewportRows = this.viewportRows();
-		const file = this.snapshot.files[this.selectedIndex];
-		const codeLines = file ? this.renderCodeLines(file, codeWidth) : this.emptyCodeLines(codeWidth);
+		const selection = fileSelections(this.snapshot)[this.selectedIndex];
+		const codeLines = selection ? this.renderCodeLines(selection.file, codeWidth) : this.emptyCodeLines(codeWidth);
 		const metadataLines = this.renderMetadataLines(metadataWidth);
 		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadataLines.length)));
 		const maxOffset = Math.max(0, codeLines.length - bodyRows);
@@ -154,8 +186,8 @@ export class ChangesPanel implements Component {
 		}
 
 		const footerText = this.focus === "files"
-			? " ↑↓ K↑ J↓ arquivo  Enter código  Alt+D/Esc fechar "
-			: " ↑↓ K↑ J↓ rolar código  ← arquivos  Alt+D/Esc fechar ";
+			? " ↑↓ K↑ J↓ arquivo  Enter diff  Alt+D/Esc fechar "
+			: " ↑↓ K↑ J↓ rolar diff  ← arquivos  Alt+D/Esc fechar ";
 		const footer = this.theme.fg("dim", footerText);
 		lines.push(contentRow(footer));
 		lines.push(horizontalRow("╰", "╯"));
@@ -171,8 +203,9 @@ export class ChangesPanel implements Component {
 	}
 
 	private selectFile(index: number): void {
-		if (this.snapshot.files.length === 0) return;
-		this.selectedIndex = Math.max(0, Math.min(index, this.snapshot.files.length - 1));
+		const selections = fileSelections(this.snapshot);
+		if (selections.length === 0) return;
+		this.selectedIndex = Math.max(0, Math.min(index, selections.length - 1));
 		this.codeOffset = 0;
 		this.tui.requestRender();
 	}
@@ -187,42 +220,44 @@ export class ChangesPanel implements Component {
 	}
 
 	private renderCodeLines(file: ChangedFile, width: number): string[] {
-		const rawLines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-		const lineNumberWidth = String(rawLines.length).length;
-		return rawLines.map((line, index) => {
-			const number = String(index + 1).padStart(lineNumberWidth, " ");
-			return truncateToWidth(
-				`${this.theme.fg("dim", number)} │ ${this.theme.fg("toolDiffContext", line)}`,
-				width,
-				"",
-			);
-		});
+		const rawLines = file.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+		return rawLines.map((line) => truncateToWidth(
+			this.theme.fg(diffLineColor(line), line),
+			width,
+			"",
+		));
 	}
 
 	private emptyCodeLines(width: number): string[] {
 		if (this.snapshot.error) return [truncateToWidth(this.theme.fg("error", this.snapshot.error), width, "")];
-		if (this.snapshot.files.length === 0) {
-			return [truncateToWidth(this.theme.fg("dim", "Nenhum arquivo modificado."), width, "")];
+		if (fileSelections(this.snapshot).length === 0) {
+			return [truncateToWidth(this.theme.fg("dim", "Nenhuma alteração desde o início da sessão."), width, "")];
 		}
-		return [truncateToWidth(this.theme.fg("dim", "Selecione um arquivo para ver o código."), width, "")];
+		return [truncateToWidth(this.theme.fg("dim", "Selecione um arquivo para ver o diff."), width, "")];
 	}
 
 	private renderMetadataLines(width: number): string[] {
-		if (this.snapshot.files.length === 0) {
+		if (fileSelections(this.snapshot).length === 0) {
 			return [this.theme.fg("dim", "Nenhum arquivo")];
 		}
 
 		const lines: string[] = [];
-		for (let index = 0; index < this.snapshot.files.length; index++) {
-			const file = this.snapshot.files[index]!;
-			const selected = index === this.selectedIndex;
-			const marker = selected ? (this.focus === "files" ? "▶ " : "• ") : "  ";
-			const filename = `${marker}${truncatePathFromLeft(file.path, Math.max(1, width - visibleWidth(marker)))}`;
-			const nameLine = selected
-				? this.theme.bg("selectedBg", padToWidth(filename, width))
-				: padToWidth(filename, width);
-			const stats = `${file.status} ${this.theme.fg("success", `+${formatNumber(file.additions)}`)} ${this.theme.fg("error", `-${formatNumber(file.deletions)}`)}`;
-			lines.push(nameLine, padToWidth(`  ${stats}`, width));
+		let fileIndex = 0;
+		for (const group of this.snapshot.groups) {
+			const groupColor = group.kind === "commit" ? "accent" : "warning";
+			lines.push(padToWidth(this.theme.fg(groupColor, ` ${group.label}`), width));
+			for (const file of group.files) {
+				const selected = fileIndex === this.selectedIndex;
+				const marker = selected ? (this.focus === "files" ? "▶ " : "• ") : "  ";
+				const filename = `${marker}${truncatePathFromLeft(file.path, Math.max(1, width - visibleWidth(marker)))}`;
+				const nameLine = selected
+					? this.theme.bg("selectedBg", padToWidth(filename, width))
+					: padToWidth(filename, width);
+				const status = this.theme.fg(statusColor(file.status), file.status);
+				const stats = `${status} ${this.theme.fg("success", `+${formatNumber(file.additions)}`)} ${this.theme.fg("error", `-${formatNumber(file.deletions)}`)}`;
+				lines.push(nameLine, padToWidth(`  ${stats}`, width));
+				fileIndex++;
+			}
 		}
 		return lines;
 	}
