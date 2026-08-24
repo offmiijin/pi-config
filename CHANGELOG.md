@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `pi-web-search`: adiciona renderer local opcional em Python + Playwright para páginas SPA, com comunicação JSONL, instalação posterior via `/web_search config renderer install` e validação de Playwright, Chromium e protocolo.
+- `pi-web-search`: adiciona auto-complete para providers, renderer, instalação, status e modos de renderização, além de ajuda detalhada no `/web_search help` e no resumo de configuração.
+
+### Changed
+
+- `pi-web-search`: `web_fetch` detecta shells de SPA, renderiza JavaScript em modo `auto` e preserva fallback para o fetch HTTP quando o renderer não está disponível.
+- `pi-web-search`: exibe progresso e resultado da instalação, permite validar o renderer com `/web_search config renderer status` e encerra o Chromium durante `session_shutdown`.
+
 ## [1.2.0] - 2026-08-21
 
 ### Fixed
