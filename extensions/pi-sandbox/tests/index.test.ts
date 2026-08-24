@@ -8,7 +8,13 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const state = vi.hoisted(() => ({ agentDir: "/tmp/sb-agent", bwrapAvailable: true, loadConfigCalls: [] as unknown[], loadConfigReturn: null as unknown }));
+const state = vi.hoisted(() => ({
+  agentDir: "/tmp/sb-agent",
+  bwrapAvailable: true,
+  loadConfigCalls: [] as unknown[],
+  loadConfigReturn: null as unknown,
+  saveBooleanSettingCalls: [] as unknown[],
+}));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: () => state.agentDir,
@@ -67,6 +73,10 @@ vi.mock("../config", async (importOriginal) => {
       if (state.loadConfigReturn !== null) return state.loadConfigReturn;
       return structuredClone(DEFAULT_CONFIG);
     },
+    saveBooleanSetting: (...args: unknown[]) => {
+      state.saveBooleanSettingCalls.push(args);
+      return "/tmp/sandbox-config.json";
+    },
   };
 });
 
@@ -77,14 +87,22 @@ import { DEFAULT_CONFIG } from "../types";
 interface FakeCtx {
   cwd: string;
   hasUI: boolean;
-  ui: { notify: ReturnType<typeof vi.fn>; setStatus: ReturnType<typeof vi.fn> };
+  ui: {
+    notify: ReturnType<typeof vi.fn>;
+    setStatus: ReturnType<typeof vi.fn>;
+    select: ReturnType<typeof vi.fn>;
+    custom: ReturnType<typeof vi.fn>;
+  };
   sessionManager?: { getBranch: () => unknown[] };
 }
 
 function fakePi() {
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
   const tools: Array<{ name: string; execute: (...a: unknown[]) => Promise<unknown> }> = [];
-  const commands = new Map<string, { handler: (args: string, ctx: unknown) => unknown }>();
+  const commands = new Map<string, {
+    handler: (args: string, ctx: unknown) => unknown;
+    getArgumentCompletions?: (prefix: string) => unknown;
+  }>();
   const pi = {
     registerFlag: vi.fn(),
     getFlag: vi.fn(() => false),
@@ -100,7 +118,12 @@ function fakeCtx(entries: unknown[] = []): FakeCtx {
   return {
     cwd: process.cwd(),
     hasUI: false,
-    ui: { notify: vi.fn(), setStatus: vi.fn() },
+    ui: {
+      notify: vi.fn(),
+      setStatus: vi.fn(),
+      select: vi.fn(async () => undefined),
+      custom: vi.fn(async () => undefined),
+    },
     sessionManager: { getBranch: () => entries },
   };
 }
@@ -109,6 +132,7 @@ beforeEach(() => {
   state.bwrapAvailable = true;
   state.loadConfigCalls = [];
   state.loadConfigReturn = null;
+  state.saveBooleanSettingCalls = [];
   vi.mocked(cleanupWorktree).mockClear();
   vi.mocked(createWorktree).mockClear();
   vi.mocked(refreshWorktreeBranch).mockClear();
@@ -171,20 +195,44 @@ describe("index — orquestração", () => {
     );
   });
 
-  it("comando /sandbox mostra caches e clone dir", async () => {
+  it("/sandbox abre as configurações interativas", async () => {
+    const { pi, handlers, commands } = fakePi();
+    extension(pi as never);
+    const ctx = fakeCtx();
+    ctx.hasUI = true;
+    ctx.ui.select
+      .mockResolvedValueOnce("Global (~/.pi/agent/extensions/pi-sandbox.json)")
+      .mockImplementationOnce(async (_title: string, options: string[]) => options[0]);
+    await handlers.get("session_start")!({}, ctx);
+
+    await commands.get("sandbox")!.handler("", ctx);
+
+    expect(ctx.ui.custom).toHaveBeenCalledTimes(1);
+    expect(state.saveBooleanSettingCalls).toHaveLength(0);
+  });
+
+  it("/sandbox info mostra informações da sessão", async () => {
     const { pi, handlers, commands } = fakePi();
     extension(pi as never);
     const ctx = fakeCtx();
     ctx.hasUI = true;
     await handlers.get("session_start")!({}, ctx);
 
-    commands.get("sandbox")!.handler("", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalled();
-    // 1ª chamada é o notify de inicialização; a do /sandbox contém Caches:/Clones:
+    await commands.get("sandbox")!.handler("info", ctx);
+
     const calls = ctx.ui.notify.mock.calls.map((c) => c[0] as string);
     const msg = calls.find((m) => m.includes("Caches:"))!;
     expect(msg).toContain("Clones:");
     expect(msg).toContain(".sandbox-cache/clones");
+  });
+
+  it("/sandbox oferece autocomplete para info", () => {
+    const { pi, commands } = fakePi();
+    extension(pi as never);
+
+    expect(commands.get("sandbox")!.getArgumentCompletions?.("in")).toEqual([
+      expect.objectContaining({ value: "info" }),
+    ]);
   });
 
   it("registra tools e comandos de preview e restore", async () => {

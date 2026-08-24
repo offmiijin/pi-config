@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,7 +40,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import {
   deepMerge, normalizeSshConfig, loadConfig, sanitizeConfig,
-  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson,
+  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson, saveBooleanSetting,
 } from "../config";
 import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
 
@@ -73,6 +73,20 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const f of fixtures.splice(0)) rmSync(f, { recursive: true, force: true });
+});
+
+describe("configuração booleana", () => {
+  it("salva no arquivo global e no arquivo do projeto", () => {
+    const agentDir = fixture();
+    state.agentDir = agentDir;
+    const cwd = fixture();
+
+    const globalPath = saveBooleanSetting(cwd, "internet.enabled", false, "global");
+    const projectPath = saveBooleanSetting(cwd, "seccomp.enabled", false, "project");
+
+    expect(JSON.parse(readFileSync(globalPath, "utf8"))).toEqual({ internet: { enabled: false } });
+    expect(JSON.parse(readFileSync(projectPath, "utf8"))).toEqual({ seccomp: { enabled: false } });
+  });
 });
 
 describe("deepMerge", () => {

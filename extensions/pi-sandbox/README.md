@@ -231,8 +231,16 @@ Funciona porque:
 - `~/.gitconfig` montado read-only — `user.name`/`user.email` OK
 - SSH agent socket montado (modo `agent`) — repos privados OK, chaves nunca entram
 
-O diretório de clones é informado ao modelo no system prompt e via `/sandbox`,
+O diretório de clones é informado ao modelo no system prompt e via `/sandbox info`,
 e exposto como `$SANDBOX_CLONE_DIR` dentro do sandbox.
+
+### Configurações interativas
+
+`/sandbox` usa o mesmo padrão de `/settings`: cada opção exibe seu valor atual
+(`true` ou `false`). Pressione `Enter` sobre uma opção para abrir seus valores e
+selecione o novo valor; a lista permanece aberta para alterar outras opções.
+As alterações são persistidas no escopo global ou no projeto confiável escolhido
+na abertura do menu.
 
 ## Comandos
 
@@ -240,7 +248,8 @@ e exposto como `$SANDBOX_CLONE_DIR` dentro do sandbox.
 |---|---|
 | Iniciar pi normalmente | Sandbox ativo por padrão |
 | `pi --no-sandbox` | Desabilita sandbox para esta sessão |
-| `/sandbox` | Mostra status, perfis e configuração atual |
+| `/sandbox` | Abre as configurações interativas do sandbox |
+| `/sandbox info` | Mostra informações da sessão do sandbox |
 | `/promote-preview` | Aplica alterações do worktree no projeto original para live preview |
 | `/promote-restore` | Restaura estado original após o último preview |
 
