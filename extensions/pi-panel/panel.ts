@@ -12,6 +12,7 @@ import type { ChangedFile, ChangeGroup, ChangesSnapshot, LineRange } from "./typ
 
 const METADATA_RATIO = 0.3;
 const FILE_CONTEXT_LINES = 10;
+// TESTE MANUAL: região superior para validar o contexto do arquivo.
 const MIN_PANEL_WIDTH = 32;
 
 /** Mantém o sufixo do caminho, útil para distinguir arquivos em pastas profundas. */
@@ -218,6 +219,7 @@ export class ChangesPanel implements Component {
 			lines.push(`│${padToWidth(codeLine, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
 		}
 
+		// TESTE MANUAL: região inferior para validar a separação entre trechos.
 		const footerText = this.focus === "files"
 			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `
 			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `;
