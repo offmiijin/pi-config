@@ -7,12 +7,13 @@
  *   3. .pi/sandbox.json (projeto)
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getAgentDir, CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "./types";
 import { DEFAULT_CONFIG, PROFILE_NAMES } from "./types";
+import type { SandboxBooleanSettingKey } from "./sandbox-settings";
 
 // ── Detecção de SO ────────────────────────────────────────────────────
 
@@ -110,6 +111,44 @@ export interface LoadConfigOptions {
    * (projeto não confiável). A config global continua valendo.
    */
   projectTrusted?: boolean;
+}
+
+export type SandboxConfigScope = "global" | "project";
+
+/** Persiste uma opção booleana sem expor listas, caminhos ou enums ao UI. */
+export function saveBooleanSetting(
+  cwd: string,
+  key: SandboxBooleanSettingKey,
+  value: boolean,
+  scope: SandboxConfigScope,
+): string {
+  const filePath = scope === "global"
+    ? join(getAgentDir(), "extensions", "pi-sandbox.json")
+    : join(cwd, CONFIG_DIR_NAME, "sandbox.json");
+
+  let data: Record<string, unknown> = {};
+  if (existsSync(filePath)) {
+    const parsed: unknown = JSON.parse(readFileSync(filePath, "utf-8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`Configuração do sandbox inválida: ${filePath}`);
+    }
+    data = parsed as Record<string, unknown>;
+  }
+
+  const parts = key.split(".");
+  let target = data;
+  for (const part of parts.slice(0, -1)) {
+    const current = target[part];
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      target[part] = {};
+    }
+    target = target[part] as Record<string, unknown>;
+  }
+  target[parts[parts.length - 1]] = value;
+
+  mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
+  writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  return filePath;
 }
 
 /**

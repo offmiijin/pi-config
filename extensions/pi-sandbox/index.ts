@@ -31,7 +31,8 @@
  * Uso:
  *   pi                          → sandbox ativo por padrão
  *   pi --no-sandbox             → desabilita sandbox (tools do host)
- *   /sandbox                    → mostra status e configuração
+ *   /sandbox                    → abre as configurações interativas
+ *   /sandbox info               → mostra informações da sessão
  */
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -47,7 +48,16 @@ import {
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
+import { getSandboxArgumentCompletions } from "./command-completions";
+import {
+  loadConfig,
+  isBwrapAvailable,
+  getBwrapInstallGuide,
+  isRgAvailable,
+  getRgInstallGuide,
+  saveBooleanSetting,
+  type SandboxConfigScope,
+} from "./config";
 import {
   resolveLandlockExecPath,
   resolveSeccompBpfPath,
@@ -55,6 +65,12 @@ import {
   archTriplet,
 } from "./portability";
 import type { SandboxConfig } from "./types";
+import {
+  getSandboxBooleanSetting,
+  SANDBOX_BOOLEAN_SETTINGS,
+  setSandboxBooleanSetting,
+  type SandboxBooleanSettingKey,
+} from "./sandbox-settings";
 import type { SandboxSession } from "./session";
 import {
   cleanupOrphanedWorktrees,
@@ -671,41 +687,104 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}${dependencyNote}${landlockNote}${quarantineNote}` };
   });
 
+  function showSandboxInfo(ctx: any): void {
+    if (!enabled || !config) {
+      ctx.ui.notify(
+        "Sandbox desabilitado.\nUse '--no-sandbox' ou verifique a instalação do bubblewrap.",
+        "info",
+      );
+      return;
+    }
+
+    const caches = resolveCacheDirs(config, localCwd);
+    const qdirs = resolveQuarantineDirs(config, localCwd);
+    const prof = config.profiles;
+    const lines = [
+      `🔒 Sandbox de Desenvolvimento`,
+      ``,
+      `Status: ativo`,
+      `Workspace: ${localCwd}`,
+      `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
+      `Branch: ${session?.branchName || "detached HEAD"}`,
+      `Worktree cleanup: ${config.worktree.cleanup}`,
+      `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
+      `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
+      `Landlock: ${config.landlock.enabled ? "ativo (ABI min: " + config.landlock.minAbi + ")" : "desabilitado"}`,
+      `Seccomp: ${config.seccomp.enabled ? "ativo (" + config.seccomp.bpfPath + ")" : "desabilitado"}`,
+      `Capabilities: ${config.capabilities.drop.length} droppadas`,
+      `Perfis: normal=${prof.normal.enabled ? "ok" : "off"} | fetch=${prof.fetch.enabled ? "ok" : "off"} | quarantine=${prof.quarantine.enabled ? "ok" : "off"}`,
+      `Quarentena: fetch=${qdirs.fetch} | runs=${qdirs.runs}`,
+      `Caches: npm=${caches.npm} | pip=${caches.pip}`,
+      `Clones: ${caches.clones}`,
+    ];
+
+    ctx.ui.notify(lines.join("\n"), "info");
+  }
+
+  async function showSandboxSettings(ctx: any): Promise<void> {
+    if (!ctx.hasUI) {
+      ctx.ui.notify("As configurações do sandbox exigem uma sessão interativa.", "warning");
+      return;
+    }
+
+    const scopes: Array<{ value: SandboxConfigScope; label: string }> = [
+      { value: "global", label: "Global (~/.pi/agent/extensions/pi-sandbox.json)" },
+    ];
+    if (projectTrusted) scopes.push({ value: "project", label: "Projeto (.pi/sandbox.json)" });
+
+    const selectedScope = await ctx.ui.select("Escopo da configuração do sandbox", scopes.map((scope) => scope.label));
+    if (!selectedScope) return;
+    const scope = scopes.find((candidate) => candidate.label === selectedScope)?.value;
+    if (!scope) return;
+
+    const settingsConfig = config ?? loadConfig(originalCwd, { projectTrusted });
+    const options = SANDBOX_BOOLEAN_SETTINGS.map((setting) =>
+      `${setting.label}: ${getSandboxBooleanSetting(settingsConfig, setting.key)} — ${setting.description}`,
+    );
+    const selectedSetting = await ctx.ui.select("Configuração do sandbox (Enter alterna)", options);
+    if (!selectedSetting) return;
+
+    const selectedIndex = options.indexOf(selectedSetting);
+    const setting = SANDBOX_BOOLEAN_SETTINGS[selectedIndex];
+    if (!setting) return;
+
+    const current = getSandboxBooleanSetting(settingsConfig, setting.key);
+    const next = !current;
+    try {
+      const filePath = saveBooleanSetting(
+        originalCwd,
+        setting.key as SandboxBooleanSettingKey,
+        next,
+        scope,
+      );
+      if (config && setting.key !== "enabled") {
+        setSandboxBooleanSetting(config, setting.key, next);
+      }
+      const restart = setting.key === "enabled" ? " Reinicie a sessão para aplicar." : "";
+      ctx.ui.notify(`${setting.label}: ${current} → ${next}. Salvo em ${filePath}.${restart}`, "info");
+    } catch (error) {
+      ctx.ui.notify(
+        `Falha ao salvar configuração: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    }
+  }
+
   // ── /sandbox command ──────────────────────────
   pi.registerCommand("sandbox", {
-    description: "Mostra status e configuração do sandbox",
-    handler: async (_args, ctx) => {
-      if (!enabled || !config) {
-        ctx.ui.notify(
-          "Sandbox desabilitado.\nUse '--no-sandbox' para desabilitar ou verifique a instalação do bubblewrap.",
-          "info",
-        );
+    description: "Configura o sandbox; use /sandbox info para informações da sessão",
+    getArgumentCompletions: getSandboxArgumentCompletions,
+    handler: async (args, ctx) => {
+      const command = args.trim();
+      if (command === "info") {
+        showSandboxInfo(ctx);
         return;
       }
-
-      const caches = resolveCacheDirs(config, localCwd);
-      const qdirs = resolveQuarantineDirs(config, localCwd);
-      const prof = config.profiles;
-      const lines = [
-        `🔒 Sandbox de Desenvolvimento`,
-        ``,
-        `Status: ativo`,
-        `Workspace: ${localCwd}`,
-        `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
-        `Branch: ${session?.branchName || "detached HEAD"}`,
-        `Worktree cleanup: ${config.worktree.cleanup}`,
-        `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
-        `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
-        `Landlock: ${config.landlock.enabled ? "ativo (ABI min: " + config.landlock.minAbi + ")" : "desabilitado"}`,
-        `Seccomp: ${config.seccomp.enabled ? "ativo (" + config.seccomp.bpfPath + ")" : "desabilitado"}`,
-        `Capabilities: ${config.capabilities.drop.length} droppadas`,
-        `Perfis: normal=${prof.normal.enabled ? "ok" : "off"} | fetch=${prof.fetch.enabled ? "ok" : "off"} | quarantine=${prof.quarantine.enabled ? "ok" : "off"}`,
-        `Quarentena: fetch=${qdirs.fetch} | runs=${qdirs.runs}`,
-        `Caches: npm=${caches.npm} | pip=${caches.pip}`,
-        `Clones: ${caches.clones}`,
-      ];
-
-      ctx.ui.notify(lines.join("\n"), "info");
+      if (command === "") {
+        await showSandboxSettings(ctx);
+        return;
+      }
+      ctx.ui.notify("Uso: /sandbox ou /sandbox info", "warning");
     },
   });
 
