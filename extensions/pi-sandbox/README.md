@@ -247,10 +247,10 @@ e exposto como `$SANDBOX_CLONE_DIR` dentro do sandbox.
 ### Configurações interativas
 
 `/sandbox` usa o mesmo padrão de `/settings`: cada opção exibe seu valor atual
-(`true` ou `false`). Pressione `Enter` sobre uma opção para abrir seus valores e
-selecione o novo valor; a lista permanece aberta para alterar outras opções.
+(`true`, `false` ou um valor enum). Pressione `Enter` sobre uma opção para abrir seus
+valores e selecione o novo valor; a lista permanece aberta para alterar outras opções.
 As alterações são persistidas no escopo global ou no projeto confiável escolhido
-na abertura do menu.
+na abertura do menu. A troca de `worktree.mode` exige reiniciar a sessão.
 
 ## Comandos
 

@@ -40,7 +40,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import {
   deepMerge, normalizeSshConfig, loadConfig, sanitizeConfig,
-  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson, saveBooleanSetting,
+  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson, saveBooleanSetting, saveSetting,
 } from "../config";
 import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
 
@@ -76,6 +76,15 @@ afterEach(() => {
 });
 
 describe("configuração booleana", () => {
+  it("salva modo enum no arquivo do projeto", () => {
+    const cwd = fixture();
+    const filePath = saveSetting(cwd, "worktree.mode", "in-place", "project");
+
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toEqual({
+      worktree: { mode: "in-place" },
+    });
+  });
+
   it("salva no arquivo global e no arquivo do projeto", () => {
     const agentDir = fixture();
     state.agentDir = agentDir;

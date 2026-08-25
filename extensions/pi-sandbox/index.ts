@@ -57,6 +57,7 @@ import {
   isRgAvailable,
   getRgInstallGuide,
   saveBooleanSetting,
+  saveSetting,
   type SandboxConfigScope,
 } from "./config";
 import {
@@ -68,9 +69,13 @@ import {
 import type { SandboxConfig } from "./types";
 import {
   getSandboxBooleanSetting,
+  getSandboxEnumSetting,
   SANDBOX_BOOLEAN_SETTINGS,
+  SANDBOX_ENUM_SETTINGS,
   setSandboxBooleanSetting,
+  setSandboxEnumSetting,
   type SandboxBooleanSettingKey,
+  type SandboxEnumSettingKey,
 } from "./sandbox-settings";
 import type { SandboxSession } from "./session";
 import {
@@ -747,13 +752,22 @@ export default function (pi: ExtensionAPI) {
     if (!scope) return;
 
     const settingsConfig = config ?? loadConfig(originalCwd, { projectTrusted });
-    const items: SettingItem[] = SANDBOX_BOOLEAN_SETTINGS.map((setting) => ({
-      id: setting.key,
-      label: setting.label,
-      description: setting.description,
-      currentValue: getSandboxBooleanSetting(settingsConfig, setting.key) ? "true" : "false",
-      values: ["true", "false"],
-    }));
+    const items: SettingItem[] = [
+      ...SANDBOX_BOOLEAN_SETTINGS.map((setting) => ({
+        id: setting.key,
+        label: setting.label,
+        description: setting.description,
+        currentValue: getSandboxBooleanSetting(settingsConfig, setting.key) ? "true" : "false",
+        values: ["true", "false"],
+      })),
+      ...SANDBOX_ENUM_SETTINGS.map((setting) => ({
+        id: setting.key,
+        label: setting.label,
+        description: setting.description,
+        currentValue: getSandboxEnumSetting(settingsConfig, setting.key),
+        values: [...setting.values],
+      })),
+    ];
 
     await ctx.ui.custom((tui: any, theme: any, _keybindings: any, done: () => void) => {
       const container = new Container();
@@ -763,19 +777,27 @@ export default function (pi: ExtensionAPI) {
         Math.min(items.length + 2, 15),
         getSettingsListTheme(),
         (id: string, newValue: string) => {
-          const setting = SANDBOX_BOOLEAN_SETTINGS.find((candidate) => candidate.key === id);
-          if (!setting) return;
-          const next = newValue === "true";
+          const booleanSetting = SANDBOX_BOOLEAN_SETTINGS.find((candidate) => candidate.key === id);
+          const enumSetting = SANDBOX_ENUM_SETTINGS.find((candidate) => candidate.key === id);
+          if (!booleanSetting && !enumSetting) return;
           try {
-            const filePath = saveBooleanSetting(
-              originalCwd,
-              setting.key as SandboxBooleanSettingKey,
-              next,
-              scope,
-            );
-            if (config) setSandboxBooleanSetting(config, setting.key, next);
-            const restart = setting.key === "enabled" ? " Reinicie a sessão para aplicar." : "";
-            ctx.ui.notify(`${setting.label}: ${newValue}. Salvo em ${filePath}.${restart}`, "info");
+            const filePath = booleanSetting
+              ? saveBooleanSetting(
+                originalCwd,
+                booleanSetting.key as SandboxBooleanSettingKey,
+                newValue === "true",
+                scope,
+              )
+              : saveSetting(originalCwd, enumSetting!.key as SandboxEnumSettingKey, newValue, scope);
+            if (config) {
+              if (booleanSetting) setSandboxBooleanSetting(config, booleanSetting.key, newValue === "true");
+              else setSandboxEnumSetting(config, enumSetting!.key, newValue);
+            }
+            const label = booleanSetting?.label ?? enumSetting!.label;
+            const restart = booleanSetting?.key === "enabled" || enumSetting?.key === "worktree.mode"
+              ? " Reinicie a sessão para aplicar."
+              : "";
+            ctx.ui.notify(`${label}: ${newValue}. Salvo em ${filePath}.${restart}`, "info");
           } catch (error) {
             ctx.ui.notify(
               `Falha ao salvar configuração: ${error instanceof Error ? error.message : String(error)}`,

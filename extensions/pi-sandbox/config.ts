@@ -115,11 +115,11 @@ export interface LoadConfigOptions {
 
 export type SandboxConfigScope = "global" | "project";
 
-/** Persiste uma opção booleana sem expor listas, caminhos ou enums ao UI. */
-export function saveBooleanSetting(
+/** Persiste uma opção simples sem expor listas, caminhos ou enums ao UI. */
+export function saveSetting(
   cwd: string,
-  key: SandboxBooleanSettingKey,
-  value: boolean,
+  key: string,
+  value: boolean | string,
   scope: SandboxConfigScope,
 ): string {
   const filePath = scope === "global"
@@ -149,6 +149,15 @@ export function saveBooleanSetting(
   mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
   writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
   return filePath;
+}
+
+export function saveBooleanSetting(
+  cwd: string,
+  key: SandboxBooleanSettingKey,
+  value: boolean,
+  scope: SandboxConfigScope,
+): string {
+  return saveSetting(cwd, key, value, scope);
 }
 
 /**

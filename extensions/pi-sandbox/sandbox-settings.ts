@@ -13,6 +13,39 @@ export const SANDBOX_BOOLEAN_SETTINGS = [
 
 export type SandboxBooleanSettingKey = (typeof SANDBOX_BOOLEAN_SETTINGS)[number]["key"];
 
+export const SANDBOX_ENUM_SETTINGS = [
+  {
+    key: "worktree.mode",
+    label: "Workspace Git",
+    description: "Escolhe entre worktree temporário e a raiz original isolada",
+    values: ["worktree", "in-place"],
+  },
+] as const;
+
+export type SandboxEnumSettingKey = (typeof SANDBOX_ENUM_SETTINGS)[number]["key"];
+
+export function getSandboxEnumSetting(config: SandboxConfig, key: SandboxEnumSettingKey): string {
+  let current: unknown = config;
+  for (const part of key.split(".")) {
+    if (!current || typeof current !== "object") return "";
+    current = (current as Record<string, unknown>)[part];
+  }
+  return typeof current === "string" ? current : "";
+}
+
+export function setSandboxEnumSetting(
+  config: SandboxConfig,
+  key: SandboxEnumSettingKey,
+  value: string,
+): void {
+  const parts = key.split(".");
+  let current = config as unknown as Record<string, unknown>;
+  for (const part of parts.slice(0, -1)) {
+    current = current[part] as Record<string, unknown>;
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
 export function getSandboxBooleanSetting(config: SandboxConfig, key: SandboxBooleanSettingKey): boolean {
   let current: unknown = config;
   for (const part of key.split(".")) {
