@@ -163,6 +163,16 @@ describe("loadConfig", () => {
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
+  it("preserva worktree como modo padrão", () => {
+    expect(loadConfig("/cwd/proj").worktree.mode).toBe("worktree");
+  });
+
+  it("global configura o modo in-place", () => {
+    const agentDir = writeGlobal('{"worktree": {"mode": "in-place"}}');
+    state.agentDir = agentDir;
+    expect(loadConfig("/cwd/proj").worktree.mode).toBe("in-place");
+  });
+
   it("global parcial mergeia com defaults", () => {
     const agentDir = writeGlobal('{"internet": {"enabled": false}}');
     state.agentDir = agentDir;

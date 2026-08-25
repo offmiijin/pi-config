@@ -162,6 +162,7 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
   if (raw.worktree && typeof raw.worktree === "object") {
     const wt = raw.worktree as unknown as Record<string, unknown>;
     if (typeof wt.enabled === "boolean") out.worktree.enabled = wt.enabled;
+    if (wt.mode === "worktree" || wt.mode === "in-place") out.worktree.mode = wt.mode;
     if (typeof wt.root === "string" && wt.root.trim() !== "") out.worktree.root = wt.root;
     if (wt.cleanup === "always" || wt.cleanup === "never") out.worktree.cleanup = wt.cleanup;
   }

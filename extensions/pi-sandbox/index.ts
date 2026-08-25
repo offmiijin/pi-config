@@ -153,11 +153,12 @@ export default function (pi: ExtensionAPI) {
       baseCommit: session.baseCommit,
       branchName: session.branchName,
       originalBranchName: session.originalBranchName,
+      inPlace: session.inPlace,
     });
   }
 
   function persistActiveBranch(): void {
-    if (!session?.gitRoot || !session.branchName || session.branchName === session.temporaryBranchName) return;
+    if (!session?.gitRoot || session.inPlace || !session.branchName || session.branchName === session.temporaryBranchName) return;
     if (session.branchName === persistedBranchName) return;
     try {
       pi.appendEntry(SANDBOX_STATE_ENTRY, { version: 1, branchName: session.branchName });
@@ -254,13 +255,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Worktree temporário ───────────────────
-      if (!config.worktree.enabled && isGitRepository(originalCwd)) {
+      const inPlace = config.worktree.mode === "in-place";
+      if (!inPlace && !config.worktree.enabled && isGitRepository(originalCwd)) {
         throw new Error("[pi-sandbox] Worktree temporário desabilitado na configuração.");
       }
-      const persistedState = readPersistedSandboxState(ctx);
+      const persistedState = inPlace ? null : readPersistedSandboxState(ctx);
       persistedBranchName = persistedState?.branchName ?? "";
       try {
         session = createWorktree(originalCwd, config.worktree.root, {
+          mode: config.worktree.mode,
           restoreBranch: persistedState?.branchName,
         });
       } catch (err) {
@@ -270,7 +273,7 @@ export default function (pi: ExtensionAPI) {
           `A branch persistida '${err.branchName}' não existe mais. ` +
           `Novo sandbox criado em '${session.branchName}' a partir da branch original atual.`;
       }
-      if (session.gitRoot) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
+      if (session.gitRoot && !session.inPlace) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
       localCwd = session.workspaceCwd;
       emitSessionState();
 
@@ -477,7 +480,7 @@ export default function (pi: ExtensionAPI) {
     name: "sandbox_install_dependencies",
     label: "Sandbox Install Dependencies",
     description:
-      "Installs npm dependencies in the current trusted temporary worktree. " +
+      "Installs npm dependencies in the current trusted sandbox workspace. " +
       "Uses npm ci/install with --ignore-scripts and persistent npm cache. " +
       "Does not accept arbitrary commands or run lifecycle scripts.",
     parameters: Type.Object({}),
@@ -669,6 +672,7 @@ export default function (pi: ExtensionAPI) {
     const sandboxNote =
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
       `Active Git branch: ${session?.branchName || "detached HEAD"}.\n` +
+      `Git workspace mode: ${session?.inPlace ? "in-place (commits update the checked-out reference branch)" : "temporary worktree (commits stay on the sandbox branch)"}.\n` +
       (restoreWarning ? `Warning: ${restoreWarning}\n` : "") +
       `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}. ` +
       `Clone remote repos for this session in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
@@ -682,7 +686,7 @@ export default function (pi: ExtensionAPI) {
       "\nInstalling or executing external code (npm install, pip install, curl|bash) is BLOCKED in bash. " +
       "Download/run external code through the quarantine profiles:\n" +
       "- sandbox_fetch: download a file/URL (network ON, NO access to the project).\n" +
-      "- sandbox_install_dependencies: install npm dependencies in trusted worktree with --ignore-scripts.\n" +
+      "- sandbox_install_dependencies: install npm dependencies in the trusted sandbox workspace with --ignore-scripts.\n" +
       "- sandbox_quarantine_exec: install (npm/pip) or run downloaded code (NO network, NO project " +
       "access, writes only under .sandbox-cache/runs/<work> and configured caches).\n" +
       "- sandbox_promote: copy ONE specific artifact from runs/ back into the project — explicit, " +
@@ -710,6 +714,7 @@ export default function (pi: ExtensionAPI) {
       `Workspace: ${localCwd}`,
       `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
       `Branch: ${session?.branchName || "detached HEAD"}`,
+      `Workspace Git: ${session?.inPlace ? "in-place (raiz original)" : "worktree temporário"}`,
       `Worktree cleanup: ${config.worktree.cleanup}`,
       `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
       `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,

@@ -102,19 +102,26 @@ NÃO montado:
   Dispositivos de bloco           → sem /dev/sda
 ```
 
-## Worktree temporário
+## Workspace Git
 
-Para projetos Git limpos, sandbox cria branch temporária e worktree em `/tmp/pi-worktrees/<session-id>`.
-Somente esse worktree é montado no bubblewrap; diretório original não é exposto. Projetos
-com alterações locais são recusados para evitar perder estado; faça commit ou stash antes.
-Sessões iniciadas dentro de `/tmp/pi-worktrees` também são recusadas para impedir worktrees
-aninhados.
+Por padrão, para projetos Git limpos, o sandbox cria branch temporária e worktree em
+`/tmp/pi-worktrees/<session-id>`. Somente esse worktree é montado no bubblewrap; o diretório
+original não é exposto. Projetos com alterações locais são recusados nesse modo para evitar
+misturar estado; faça commit ou stash antes. Sessões iniciadas dentro de `/tmp/pi-worktrees`
+também são recusadas para impedir worktrees aninhados.
 
-Ao encerrar sessão, o último preview é restaurado antes da remoção do worktree. A branch
-criada automaticamente pelo sandbox é removida, mas branches de trabalho nomeadas criadas
-pelo usuário ou pelo modelo (por exemplo, `feat/new-feature`) permanecem no repositório.
-O branch de trabalho ativo é persistido na sessão do pi; ao usar `resume`, um novo worktree
-aleatório é anexado diretamente a esse branch, quando ele ainda existe e está livre.
+Quando `worktree.mode` é `"in-place"`, o sandbox mantém as mesmas camadas de isolamento
+(bubblewrap, capabilities, Seccomp, Landlock e filtros de arquivos), mas monta a raiz Git
+original como workspace. Assim, alterações e commits avançam diretamente a branch de
+referência atualmente checkoutada. Alterações locais existentes são preservadas nesse modo.
+Como a raiz original já é o workspace, preview/promoção para o projeto original não se aplica.
+
+Ao encerrar sessão no modo `worktree`, o último preview é restaurado antes da remoção do
+worktree. A branch criada automaticamente pelo sandbox é removida, mas branches de trabalho
+nomeadas criadas pelo usuário ou pelo modelo (por exemplo, `feat/new-feature`) permanecem no
+repositório. O branch de trabalho ativo é persistido na sessão do pi; ao usar `resume`, um
+novo worktree aleatório é anexado diretamente a esse branch, quando ele ainda existe e está
+livre.
 
 Se a branch persistida estiver ocupada em outro worktree, a inicialização é bloqueada sem
 forçar o checkout. Se ela tiver sido apagada, o sandbox cria um novo `sandbox/<session-id>`
@@ -156,6 +163,7 @@ original não é exposto como um todo.
   "enabled": true,
   "worktree": {
     "enabled": true,
+    "mode": "worktree",
     "root": "/tmp/pi-worktrees",
     "cleanup": "always"
   },
@@ -173,7 +181,9 @@ original não é exposto como um todo.
 
 ### Projeto (`.pi/sandbox.json`)
 
-Mesmo formato — sobrescreve campos do global.
+Mesmo formato — sobrescreve campos do global. Para fazer commits diretamente na branch
+checkoutada do projeto, use `"worktree": { "mode": "in-place" }`. O campo `enabled` continua
+controlando o modo `worktree`; com `mode: "in-place"`, a raiz original é usada diretamente.
 
 Exemplo: `/meu-projeto/.pi/sandbox.json`
 
@@ -250,7 +260,7 @@ na abertura do menu.
 | `pi --no-sandbox` | Desabilita sandbox para esta sessão |
 | `/sandbox` | Abre as configurações interativas do sandbox |
 | `/sandbox info` | Mostra informações da sessão do sandbox |
-| `/promote-preview` | Aplica alterações do worktree no projeto original para live preview |
+| `/promote-preview` | Aplica alterações do worktree no projeto original para live preview (modo `worktree`) |
 | `/promote-restore` | Restaura estado original após o último preview |
 
 As tools `sandbox_promote_preview` e `sandbox_promote_restore` oferecem as mesmas ações

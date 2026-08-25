@@ -222,7 +222,7 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	// Guarda o último valor: o editor só existe após session_start — se o
 	// evento chegar antes, aplica quando o editor for criado.
 	let lastMemoryTotal = 0;
-	let sandboxSession: { originalCwd?: string; branchName?: string; originalBranchName?: string } = {};
+	let sandboxSession: { originalCwd?: string; branchName?: string; originalBranchName?: string; inPlace?: boolean } = {};
 	let footerTui: TUI | null = null;
 	pi.events?.on("custom:dev-sandbox-session", (session: typeof sandboxSession) => {
 		sandboxSession = session;
@@ -312,8 +312,12 @@ export function registerStatusBar(pi: ExtensionAPI) {
 					theme.fg("accent", " " + folderName),
 					theme.fg("muted", " on "),
 					theme.fg("borderAccent", branch),
-					originalBranch ? theme.fg("muted", " refs ") : theme.fg("warning", " \u{3bb}"),
-					originalBranch ? theme.fg("warning", originalBranch) : "",
+					sandboxSession.inPlace
+						? theme.fg("muted", " in-place")
+						: originalBranch
+							? theme.fg("muted", " base ")
+							: theme.fg("warning", " \u{3bb}"),
+					!sandboxSession.inPlace && originalBranch ? theme.fg("warning", originalBranch) : "",
 				].join("");
 
 				return [truncateToWidth(leftPart, width)];

@@ -12,6 +12,7 @@
 - `pi-panel`: separa alterações do `pi-sandbox` por commit e mantém alterações não commitadas em grupo próprio, usando o worktree e o commit-base da sessão.
 - `pi-panel`: exibe o conteúdo do arquivo com pelo menos 10 linhas de contexto por região modificada e permite alternar para o arquivo completo com `F`.
 - `pi-sandbox`: transforma `/sandbox` em uma tela interativa de configurações booleanas, com valores `true`/`false`, persistência por escopo e `/sandbox info` para diagnóstico.
+- `pi-sandbox`: adiciona `worktree.mode: "in-place"`, mantendo o isolamento do sandbox enquanto permite alterar e commitar diretamente a raiz Git original.
 - `pi-web-search`: `web_fetch` detecta shells de SPA, renderiza JavaScript em modo `auto` e preserva fallback para o fetch HTTP quando o renderer não está disponível.
 - `pi-web-search`: exibe progresso e resultado da instalação, permite validar o renderer com `/web_search config renderer status`, bloqueia instalações/uso concorrentes durante a configuração e encerra o Chromium durante `session_shutdown`.
 
