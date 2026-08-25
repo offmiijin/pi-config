@@ -15,9 +15,10 @@ import { describe, expect, it } from "vitest";
 import { runChecks, buildReportText, readOsRelease, detectPackageManager } from "../pi-doctor";
 
 describe("doctor smoke (ambiente real)", () => {
+	// runChecks consulta binários reais; spawnSync permite até 8s por probe.
 	it("ambiente sem pendências (nenhum erro)", async () => {
 		const checks = await runChecks({ skipNetwork: true });
 		const errors = checks.filter((c) => c.status === "error");
 		expect(errors, buildReportText(checks, readOsRelease(), detectPackageManager())).toEqual([]);
-	});
+	}, 15_000);
 });
