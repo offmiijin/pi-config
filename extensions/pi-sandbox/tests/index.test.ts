@@ -42,7 +42,7 @@ vi.mock("../worktree", () => ({
   cleanupWorktree: vi.fn(),
   refreshWorktreeBranch: vi.fn(() => false),
   isGitRepository: vi.fn(() => true),
-  createWorktree: vi.fn((originalCwd: string, worktreeRoot: string, options?: { restoreBranch?: string }) => ({
+  createWorktree: vi.fn((originalCwd: string, worktreeRoot: string, options?: { restoreBranch?: string; mode?: "worktree" | "in-place" }) => ({
     sessionId: "test-session",
     originalCwd,
     workspaceCwd: originalCwd,
@@ -53,6 +53,7 @@ vi.mock("../worktree", () => ({
     temporaryBranchName: options?.restoreBranch ? "" : "sandbox/test-session",
     originalBranchName: "main",
     baseCommit: "base-commit",
+    inPlace: options?.mode === "in-place",
     worktreeRoot,
     worktreePath: `${worktreeRoot}/test-session`,
     startedAt: new Date().toISOString(),
@@ -184,7 +185,7 @@ describe("index — orquestração", () => {
     expect(createWorktree).toHaveBeenCalledWith(
       process.cwd(),
       DEFAULT_CONFIG.worktree.root,
-      { restoreBranch: "feat/new-feature" },
+      { mode: "worktree", restoreBranch: "feat/new-feature" },
     );
     const prompt = handlers.get("before_agent_start")!(
       { systemPrompt: "base" },

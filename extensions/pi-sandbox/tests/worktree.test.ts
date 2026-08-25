@@ -74,6 +74,25 @@ describe("worktree", () => {
     expect(readFileSync(join(session.workspaceCwd, "main.ts"), "utf8")).toBe("original\n");
   });
 
+  it("usa a raiz original no modo in-place e permite commit na branch de referência", () => {
+    const original = repo();
+    writeFileSync(join(original, "file.txt"), "in-place\n");
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
+    const session = createWorktree(original, root, { mode: "in-place" });
+
+    expect(session.inPlace).toBe(true);
+    expect(session.workspaceCwd).toBe(original);
+    expect(session.worktreePath).toBe(original);
+    expect(session.branchName).toBe(session.originalBranchName);
+    expect(session.temporaryBranchName).toBe("");
+    git(original, ["add", "file.txt"]);
+    git(original, ["commit", "-qm", "in-place"]);
+
+    cleanupWorktree(session);
+    expect(existsSync(original)).toBe(true);
+    expect(git(original, ["log", "-1", "--format=%s"])).toBe("in-place");
+  });
+
   it("cria worktree temporário em branch própria", () => {
     const original = repo();
     const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
@@ -180,6 +199,16 @@ describe("worktree", () => {
     expect(cleanupOrphanedWorktrees(root, original)).toBe(1);
     expect(existsSync(session.worktreePath)).toBe(false);
     expect(git(original, ["branch", "--list", session.branchName])).toBe("");
+  });
+
+  it("não oferece preview no modo in-place", () => {
+    const original = repo();
+    const root = mkdtempSync(join(tmpdir(), "pi-sandbox-worktrees-"));
+    const session = createWorktree(original, root, { mode: "in-place" });
+    sessions.push(session);
+
+    expect(() => promoteWorktreePreview(session)).toThrow(/modo in-place/);
+    expect(() => promoteWorktreeChanges(session)).toThrow(/modo in-place/);
   });
 
   it("promove alterações rastreadas e untracked", () => {

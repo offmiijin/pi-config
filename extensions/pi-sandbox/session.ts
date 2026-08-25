@@ -25,8 +25,10 @@ export interface SandboxSession {
   baseCommit: string;
   /** Raiz sob a qual worktrees temporários são criados. */
   worktreeRoot: string;
-  /** Diretório do worktree temporário; normalmente igual a workspaceCwd. */
+  /** Diretório do worktree temporário; no modo in-place é a raiz original. */
   worktreePath: string;
+  /** Indica que o workspace usa diretamente a raiz original do projeto. */
+  inPlace: boolean;
   /** Subdiretório do repositório originalmente aberto pelo usuário. */
   workspaceSubdir: string;
   /** Workspace efetivo usado pelas tools dentro do sandbox. */

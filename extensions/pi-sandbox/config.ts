@@ -115,11 +115,11 @@ export interface LoadConfigOptions {
 
 export type SandboxConfigScope = "global" | "project";
 
-/** Persiste uma opção booleana sem expor listas, caminhos ou enums ao UI. */
-export function saveBooleanSetting(
+/** Persiste uma opção simples sem expor listas, caminhos ou enums ao UI. */
+export function saveSetting(
   cwd: string,
-  key: SandboxBooleanSettingKey,
-  value: boolean,
+  key: string,
+  value: boolean | string,
   scope: SandboxConfigScope,
 ): string {
   const filePath = scope === "global"
@@ -151,6 +151,15 @@ export function saveBooleanSetting(
   return filePath;
 }
 
+export function saveBooleanSetting(
+  cwd: string,
+  key: SandboxBooleanSettingKey,
+  value: boolean,
+  scope: SandboxConfigScope,
+): string {
+  return saveSetting(cwd, key, value, scope);
+}
+
 /**
  * Valida a configuração final: campos com tipo errado (JSON inválido)
  * são resetados para o default. Configuração corrompida não pode
@@ -162,6 +171,7 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
   if (raw.worktree && typeof raw.worktree === "object") {
     const wt = raw.worktree as unknown as Record<string, unknown>;
     if (typeof wt.enabled === "boolean") out.worktree.enabled = wt.enabled;
+    if (wt.mode === "worktree" || wt.mode === "in-place") out.worktree.mode = wt.mode;
     if (typeof wt.root === "string" && wt.root.trim() !== "") out.worktree.root = wt.root;
     if (wt.cleanup === "always" || wt.cleanup === "never") out.worktree.cleanup = wt.cleanup;
   }

@@ -153,9 +153,13 @@ export interface SandboxLandlockConfig {
   minAbi: number;
 }
 
+export type SandboxWorktreeMode = "worktree" | "in-place";
+
 export interface SandboxWorktreeConfig {
   /** Habilita worktree temporário para projetos Git. */
   enabled: boolean;
+  /** Estratégia de workspace para projetos Git. */
+  mode: SandboxWorktreeMode;
   /** Raiz dos worktrees temporários. */
   root: string;
   /** Política de remoção ao encerrar a sessão. */
@@ -219,6 +223,7 @@ export interface BwrapResult {
 export const DEFAULT_CONFIG: SandboxConfig = {
   worktree: {
     enabled: true,
+    mode: "worktree",
     root: "/tmp/pi-worktrees",
     cleanup: "always",
   },

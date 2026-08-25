@@ -11,11 +11,13 @@ const METADATA_FILE = ".pi-sandbox-worktree.json";
 export const WORKTREE_LEASE_INTERVAL_MS = 10_000;
 export const WORKTREE_LEASE_STALE_MS = 60_000;
 const activeLeases = new Map<string, NodeJS.Timeout>();
-type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "temporaryBranchName" | "originalBranchName" | "baseCommit" | "worktreePath" | "worktreeRoot" | "workspaceSubdir" | "workspaceCwd" | "startedAt"> & { pid: number };
+type WorktreeMetadata = Pick<SandboxSession, "sessionId" | "gitRoot" | "gitDir" | "branchName" | "temporaryBranchName" | "originalBranchName" | "baseCommit" | "worktreePath" | "worktreeRoot" | "workspaceSubdir" | "workspaceCwd" | "inPlace" | "startedAt"> & { pid: number };
 
 export interface CreateWorktreeOptions {
   /** Branch persistida que deve ser anexada diretamente ao novo worktree. */
   restoreBranch?: string;
+  /** Usa a raiz original em vez de criar um worktree Git temporário. */
+  mode?: "worktree" | "in-place";
 }
 
 export class WorktreeBranchUnavailableError extends Error {
@@ -92,13 +94,14 @@ export function refreshWorktreeBranch(session: SandboxSession): boolean {
   const branchName = git(session.worktreePath, ["branch", "--show-current"]);
   if (branchName === session.branchName) return false;
   session.branchName = branchName;
-  writeMetadata(session);
+  if (!session.inPlace) writeMetadata(session);
   return true;
 }
 
 function metadataSession(metadata: WorktreeMetadata): SandboxSession {
   return {
     ...metadata,
+    inPlace: metadata.inPlace ?? false,
     temporaryBranchName:
       metadata.temporaryBranchName ??
       (metadata.branchName?.startsWith("sandbox/") ? metadata.branchName : ""),
@@ -226,10 +229,12 @@ export function createWorktree(
       originalBranchName: "",
       baseCommit: "",
       worktreePath: original,
+      inPlace: false,
       startedAt: new Date().toISOString(),
     };
   }
-  if (isPathWithin(worktreeRoot, original)) {
+  const inPlace = options.mode === "in-place";
+  if (!inPlace && isPathWithin(worktreeRoot, original)) {
     throw new Error(
       `[pi-sandbox] Não é seguro criar worktree aninhado dentro da área gerenciada: ${original}`,
     );
@@ -240,14 +245,33 @@ export function createWorktree(
   if (workspaceSubdir.startsWith("..") || resolve(gitRoot, workspaceSubdir) !== original) {
     throw new Error(`[pi-sandbox] CWD fora da raiz Git: ${original}`);
   }
-  if (git(original, ["status", "--porcelain", "--untracked-files=all"])) {
+  if (!inPlace && git(original, ["status", "--porcelain", "--untracked-files=all"])) {
     throw new Error(
       `[pi-sandbox] O projeto original possui alterações locais. Faça commit ou stash antes de iniciar o sandbox: ${original}`,
     );
   }
+  const originalBranchName = git(gitRoot, ["branch", "--show-current"]);
+  const baseCommit = git(gitRoot, ["rev-parse", "HEAD"]);
+  if (inPlace) {
+    return {
+      sessionId: safeId(),
+      originalCwd: original,
+      workspaceSubdir,
+      workspaceCwd: original,
+      worktreeRoot,
+      gitRoot,
+      gitDir,
+      branchName: originalBranchName,
+      temporaryBranchName: "",
+      originalBranchName,
+      baseCommit,
+      worktreePath: gitRoot,
+      inPlace: true,
+      startedAt: new Date().toISOString(),
+    };
+  }
   const sessionId = safeId();
   const worktreePath = join(worktreeRoot, sessionId);
-  const originalBranchName = git(gitRoot, ["branch", "--show-current"]);
   const restoreBranch = options.restoreBranch?.trim() || "";
   if (restoreBranch) {
     if (!localBranchExists(gitRoot, restoreBranch)) {
@@ -268,7 +292,7 @@ export function createWorktree(
       : ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
     const workspaceCwd = workspaceSubdir ? join(worktreePath, workspaceSubdir) : worktreePath;
     const baseCommit = git(worktreePath, ["rev-parse", "HEAD"]);
-    const session: SandboxSession = { sessionId, originalCwd: original, workspaceSubdir, workspaceCwd, worktreeRoot, gitRoot, gitDir, branchName, temporaryBranchName, originalBranchName, baseCommit, worktreePath, startedAt: new Date().toISOString() };
+    const session: SandboxSession = { sessionId, originalCwd: original, workspaceSubdir, workspaceCwd, worktreeRoot, gitRoot, gitDir, branchName, temporaryBranchName, originalBranchName, baseCommit, worktreePath, inPlace: false, startedAt: new Date().toISOString() };
     writeMetadata(session);
     startLease(session.worktreePath);
     return session;
@@ -282,7 +306,7 @@ export function createWorktree(
 export function cleanupWorktree(session: SandboxSession): void {
   // Projetos sem Git usam a raiz original diretamente e não criam recursos
   // temporários para remover.
-  if (!session.gitRoot) return;
+  if (!session.gitRoot || session.inPlace) return;
   assertManagedPath(session.worktreeRoot, session.worktreePath);
   assertNotActiveWorktree(session.worktreePath);
   restoreWorktreePreview(session);
@@ -396,6 +420,9 @@ function applyWorktreeChanges(session: SandboxSession, selected: string[]): stri
 
 /** Promove alterações rastreadas e arquivos untracked ao projeto original. */
 export function promoteWorktreeChanges(session: SandboxSession, files: string[] = []): string[] {
+  if (session.inPlace) {
+    throw new Error("[pi-sandbox] Promoção indisponível no modo in-place: o workspace já é a raiz original.");
+  }
   if (!session.gitRoot || !session.branchName) {
     throw new Error("[pi-sandbox] Promoção indisponível: o projeto não possui um worktree Git.");
   }
@@ -404,6 +431,9 @@ export function promoteWorktreeChanges(session: SandboxSession, files: string[] 
 
 /** Aplica alterações do worktree e registra snapshot para restauração posterior. */
 export function promoteWorktreePreview(session: SandboxSession, files: string[] = []): string[] {
+  if (session.inPlace) {
+    throw new Error("[pi-sandbox] Preview indisponível no modo in-place: o workspace já é a raiz original.");
+  }
   if (!session.gitRoot || !session.branchName) {
     throw new Error("[pi-sandbox] Preview indisponível: o projeto não possui um worktree Git.");
   }

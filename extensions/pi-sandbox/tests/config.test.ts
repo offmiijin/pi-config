@@ -40,7 +40,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import {
   deepMerge, normalizeSshConfig, loadConfig, sanitizeConfig,
-  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson, saveBooleanSetting,
+  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson, saveBooleanSetting, saveSetting,
 } from "../config";
 import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
 
@@ -76,6 +76,15 @@ afterEach(() => {
 });
 
 describe("configuração booleana", () => {
+  it("salva modo enum no arquivo do projeto", () => {
+    const cwd = fixture();
+    const filePath = saveSetting(cwd, "worktree.mode", "in-place", "project");
+
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toEqual({
+      worktree: { mode: "in-place" },
+    });
+  });
+
   it("salva no arquivo global e no arquivo do projeto", () => {
     const agentDir = fixture();
     state.agentDir = agentDir;
@@ -161,6 +170,16 @@ describe("loadConfig", () => {
   it("sem arquivos → DEFAULT_CONFIG", () => {
     const config = loadConfig("/cwd/sem-config");
     expect(config).toEqual(DEFAULT_CONFIG);
+  });
+
+  it("preserva worktree como modo padrão", () => {
+    expect(loadConfig("/cwd/proj").worktree.mode).toBe("worktree");
+  });
+
+  it("global configura o modo in-place", () => {
+    const agentDir = writeGlobal('{"worktree": {"mode": "in-place"}}');
+    state.agentDir = agentDir;
+    expect(loadConfig("/cwd/proj").worktree.mode).toBe("in-place");
   });
 
   it("global parcial mergeia com defaults", () => {

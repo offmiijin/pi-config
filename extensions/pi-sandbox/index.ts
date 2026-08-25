@@ -57,6 +57,7 @@ import {
   isRgAvailable,
   getRgInstallGuide,
   saveBooleanSetting,
+  saveSetting,
   type SandboxConfigScope,
 } from "./config";
 import {
@@ -68,9 +69,13 @@ import {
 import type { SandboxConfig } from "./types";
 import {
   getSandboxBooleanSetting,
+  getSandboxEnumSetting,
   SANDBOX_BOOLEAN_SETTINGS,
+  SANDBOX_ENUM_SETTINGS,
   setSandboxBooleanSetting,
+  setSandboxEnumSetting,
   type SandboxBooleanSettingKey,
+  type SandboxEnumSettingKey,
 } from "./sandbox-settings";
 import type { SandboxSession } from "./session";
 import {
@@ -153,11 +158,12 @@ export default function (pi: ExtensionAPI) {
       baseCommit: session.baseCommit,
       branchName: session.branchName,
       originalBranchName: session.originalBranchName,
+      inPlace: session.inPlace,
     });
   }
 
   function persistActiveBranch(): void {
-    if (!session?.gitRoot || !session.branchName || session.branchName === session.temporaryBranchName) return;
+    if (!session?.gitRoot || session.inPlace || !session.branchName || session.branchName === session.temporaryBranchName) return;
     if (session.branchName === persistedBranchName) return;
     try {
       pi.appendEntry(SANDBOX_STATE_ENTRY, { version: 1, branchName: session.branchName });
@@ -254,13 +260,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Worktree temporário ───────────────────
-      if (!config.worktree.enabled && isGitRepository(originalCwd)) {
+      const inPlace = config.worktree.mode === "in-place";
+      if (!inPlace && !config.worktree.enabled && isGitRepository(originalCwd)) {
         throw new Error("[pi-sandbox] Worktree temporário desabilitado na configuração.");
       }
-      const persistedState = readPersistedSandboxState(ctx);
+      const persistedState = inPlace ? null : readPersistedSandboxState(ctx);
       persistedBranchName = persistedState?.branchName ?? "";
       try {
         session = createWorktree(originalCwd, config.worktree.root, {
+          mode: config.worktree.mode,
           restoreBranch: persistedState?.branchName,
         });
       } catch (err) {
@@ -270,7 +278,7 @@ export default function (pi: ExtensionAPI) {
           `A branch persistida '${err.branchName}' não existe mais. ` +
           `Novo sandbox criado em '${session.branchName}' a partir da branch original atual.`;
       }
-      if (session.gitRoot) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
+      if (session.gitRoot && !session.inPlace) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
       localCwd = session.workspaceCwd;
       emitSessionState();
 
@@ -477,7 +485,7 @@ export default function (pi: ExtensionAPI) {
     name: "sandbox_install_dependencies",
     label: "Sandbox Install Dependencies",
     description:
-      "Installs npm dependencies in the current trusted temporary worktree. " +
+      "Installs npm dependencies in the current trusted sandbox workspace. " +
       "Uses npm ci/install with --ignore-scripts and persistent npm cache. " +
       "Does not accept arbitrary commands or run lifecycle scripts.",
     parameters: Type.Object({}),
@@ -669,6 +677,7 @@ export default function (pi: ExtensionAPI) {
     const sandboxNote =
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
       `Active Git branch: ${session?.branchName || "detached HEAD"}.\n` +
+      `Git workspace mode: ${session?.inPlace ? "in-place (commits update the checked-out reference branch)" : "temporary worktree (commits stay on the sandbox branch)"}.\n` +
       (restoreWarning ? `Warning: ${restoreWarning}\n` : "") +
       `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}. ` +
       `Clone remote repos for this session in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
@@ -682,7 +691,7 @@ export default function (pi: ExtensionAPI) {
       "\nInstalling or executing external code (npm install, pip install, curl|bash) is BLOCKED in bash. " +
       "Download/run external code through the quarantine profiles:\n" +
       "- sandbox_fetch: download a file/URL (network ON, NO access to the project).\n" +
-      "- sandbox_install_dependencies: install npm dependencies in trusted worktree with --ignore-scripts.\n" +
+      "- sandbox_install_dependencies: install npm dependencies in the trusted sandbox workspace with --ignore-scripts.\n" +
       "- sandbox_quarantine_exec: install (npm/pip) or run downloaded code (NO network, NO project " +
       "access, writes only under .sandbox-cache/runs/<work> and configured caches).\n" +
       "- sandbox_promote: copy ONE specific artifact from runs/ back into the project — explicit, " +
@@ -710,6 +719,7 @@ export default function (pi: ExtensionAPI) {
       `Workspace: ${localCwd}`,
       `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
       `Branch: ${session?.branchName || "detached HEAD"}`,
+      `Workspace Git: ${session?.inPlace ? "in-place (raiz original)" : "worktree temporário"}`,
       `Worktree cleanup: ${config.worktree.cleanup}`,
       `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
       `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
@@ -742,13 +752,22 @@ export default function (pi: ExtensionAPI) {
     if (!scope) return;
 
     const settingsConfig = config ?? loadConfig(originalCwd, { projectTrusted });
-    const items: SettingItem[] = SANDBOX_BOOLEAN_SETTINGS.map((setting) => ({
-      id: setting.key,
-      label: setting.label,
-      description: setting.description,
-      currentValue: getSandboxBooleanSetting(settingsConfig, setting.key) ? "true" : "false",
-      values: ["true", "false"],
-    }));
+    const items: SettingItem[] = [
+      ...SANDBOX_BOOLEAN_SETTINGS.map((setting) => ({
+        id: setting.key,
+        label: setting.label,
+        description: setting.description,
+        currentValue: getSandboxBooleanSetting(settingsConfig, setting.key) ? "true" : "false",
+        values: ["true", "false"],
+      })),
+      ...SANDBOX_ENUM_SETTINGS.map((setting) => ({
+        id: setting.key,
+        label: setting.label,
+        description: setting.description,
+        currentValue: getSandboxEnumSetting(settingsConfig, setting.key),
+        values: [...setting.values],
+      })),
+    ];
 
     await ctx.ui.custom((tui: any, theme: any, _keybindings: any, done: () => void) => {
       const container = new Container();
@@ -758,19 +777,27 @@ export default function (pi: ExtensionAPI) {
         Math.min(items.length + 2, 15),
         getSettingsListTheme(),
         (id: string, newValue: string) => {
-          const setting = SANDBOX_BOOLEAN_SETTINGS.find((candidate) => candidate.key === id);
-          if (!setting) return;
-          const next = newValue === "true";
+          const booleanSetting = SANDBOX_BOOLEAN_SETTINGS.find((candidate) => candidate.key === id);
+          const enumSetting = SANDBOX_ENUM_SETTINGS.find((candidate) => candidate.key === id);
+          if (!booleanSetting && !enumSetting) return;
           try {
-            const filePath = saveBooleanSetting(
-              originalCwd,
-              setting.key as SandboxBooleanSettingKey,
-              next,
-              scope,
-            );
-            if (config) setSandboxBooleanSetting(config, setting.key, next);
-            const restart = setting.key === "enabled" ? " Reinicie a sessão para aplicar." : "";
-            ctx.ui.notify(`${setting.label}: ${newValue}. Salvo em ${filePath}.${restart}`, "info");
+            const filePath = booleanSetting
+              ? saveBooleanSetting(
+                originalCwd,
+                booleanSetting.key as SandboxBooleanSettingKey,
+                newValue === "true",
+                scope,
+              )
+              : saveSetting(originalCwd, enumSetting!.key as SandboxEnumSettingKey, newValue, scope);
+            if (config) {
+              if (booleanSetting) setSandboxBooleanSetting(config, booleanSetting.key, newValue === "true");
+              else setSandboxEnumSetting(config, enumSetting!.key, newValue);
+            }
+            const label = booleanSetting?.label ?? enumSetting!.label;
+            const restart = booleanSetting?.key === "enabled" || enumSetting?.key === "worktree.mode"
+              ? " Reinicie a sessão para aplicar."
+              : "";
+            ctx.ui.notify(`${label}: ${newValue}. Salvo em ${filePath}.${restart}`, "info");
           } catch (error) {
             ctx.ui.notify(
               `Falha ao salvar configuração: ${error instanceof Error ? error.message : String(error)}`,
