@@ -213,16 +213,28 @@ invalidado a cada escrita.
 
 ## Configuração
 
-### Modelo de extração (`config.ts`)
+### Modelo de extração (`config.ts` + `memory/config.ts`)
+
+O modelo padrão continua sendo `opencode-go/deepseek-v4-flash`, mas pode ser
+alterado pelo usuário com `/memory config`. O comando abre um menu de
+configuração extensível; em seguida, a opção **Model processor** mostra apenas
+modelos autenticados no `pi`, usando o catálogo e o `modelRegistry` da sessão.
+A seleção é persistida em `~/.pi/agent/memory-config.json` como referência
+`provider` + `id`; credenciais nunca são copiadas. A alteração vale para os
+próximos jobs e não altera o modelo interativo selecionado via `/model`.
 
 | Constante | Valor | Efeito |
 |---|---|---|
-| `EXTRACTION_MODEL_PROVIDER` / `ID` | `opencode-go` / `deepseek-v4-flash` | modelo FIXO — não herda `/model` |
+| `EXTRACTION_MODEL_PROVIDER` / `ID` | `opencode-go` / `deepseek-v4-flash` | modelo padrão quando não há configuração do usuário |
 | `EXTRACTION_REASONING` | `low` | `medium` devolvia só reasoning sem resposta (75% vazio em teste real) |
 | `EXTRACTION_CACHE_RETENTION` | `short` | cache de prompt habilitado |
 | `EXTRACTION_SESSION_ID` | `pi-memory-extraction` | chave fixa do `prompt_cache_key` (cache reutilizável) |
 | `EXTRACTION_MAX_OUTPUT_TOKENS` | `4_096` | teto de saída por chamada (extração + revisor) |
 | `EXTRACTION_MAX_CANDIDATES_PER_JOB` | `8` | top N por confidence, excedente rejeitado |
+
+A autenticação é reutilizada diretamente do `pi`. Não há reautenticação quando
+o provider/modelo já está autenticado no `modelRegistry`; modelos sem
+autenticação não aparecem no seletor.
 
 ### Gatilhos e retry (`pipeline/worker.ts`)
 
@@ -269,7 +281,7 @@ node e2e/e2e-real.ts
 ```
 extensions/pi-memory/
 ├── index.ts            entry point (event handlers + wiring de deps)
-├── config.ts           modelo de extração (Fase 3)
+├── config.ts           defaults e parâmetros da extração (Fase 3)
 ├── constants.ts        constantes + setup de diretórios
 ├── db.ts               driver SQLite (node/bun)
 ├── schemas.ts          schemas TypeBox das tools
@@ -282,22 +294,23 @@ extensions/pi-memory/
 │   ├── processor.ts    extração → validação → commit (Fases 3-4)
 │   └── validator.ts    validação/política/revisor (Fase 4)
 ├── memory/             CRUD de memórias
+│   ├── config.ts        configuração persistente do modelo do processor
 │   ├── memory.ts       saveMemory, snapshot v2/v3, migração, arquivamento
 │   ├── memory-index.ts índice FTS5 (.index.sqlite) com retention_score
 │   ├── memory-search.ts fallback de busca via ripgrep
 │   ├── retention.ts    algoritmo de retenção (funções puras)
 │   ├── retention-store.ts .retention.sqlite (atividade de uso)
 │   └── retention-scheduler.ts sweep periódico de retenção
-├── tools/              uma tool por arquivo (save, search, status, decay, extract, retention)
-├── tests/              23 arquivos de teste
+├── tools/              tools e comando /memory config
+├── tests/              25 arquivos de teste
 ├── docs/               arquitetura (retention.md)
 └── e2e/                E2E manual com LLM real
 ```
 
 ## Limitações
 
-- A extração depende do modelo configurado em `config.ts` (com auth) — sem
-  modelo, o job fica em retry com erro claro.
+- A extração depende do modelo configurado em `memory-config.json` e autenticado
+  no `modelRegistry` do Pi — sem modelo/auth, o job fica em retry com erro claro.
 - Um job processa no máximo ~18K tokens de evidências por chamada; volumes
   maiores são rate-limited pelos gatilhos.
 - Episódios `ignored` (sem evidência útil) nunca são reanalisados.

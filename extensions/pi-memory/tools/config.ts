@@ -33,7 +33,7 @@ function modelKey(model: MemoryModelConfig): string {
 	return `${model.provider}/${model.id}`;
 }
 
-function availableAuthenticatedModels(ctx: ConfigContext): RegistryModel[] {
+export function availableAuthenticatedModels(ctx: ConfigContext): RegistryModel[] {
 	const scoped = ctx.scopedModels ?? [];
 	const models = scoped.length > 0 ? scoped.map((entry) => entry.model) : ctx.modelRegistry.getAvailable();
 	const seen = new Set<string>();

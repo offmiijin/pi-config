@@ -103,8 +103,8 @@ export default function (pi: ExtensionAPI) {
 	// não abriu — a fila espera a próxima sessão.
 	let worker: PipelineWorker | null = null;
 	// Registry de modelos capturado dos event handlers — o processor de
-	// extração resolve o modelo FIXO de config.ts em runtime (não herda o
-	// modelo interativo da sessão).
+	// extração resolve o modelo configurado em memory-config.json em runtime
+	// (não herda automaticamente o modelo interativo da sessão).
 	let extractionModelRegistry: ModelRegistryLike | null = null;
 	// Scheduler de retenção por desuso (feature flag RETENTION_ENABLED).
 	// Null quando desativado/indisponível — busca e escrita seguem sem ele.

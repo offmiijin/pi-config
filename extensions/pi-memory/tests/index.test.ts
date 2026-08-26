@@ -220,7 +220,7 @@ if (isNode) describe("index.ts lifecycle", () => {
 	it("configura o modelo apenas entre opções autenticadas", async () => {
 		const command = mock.commands.get("memory")!;
 		const selectedTitles: string[] = [];
-			let selectCalls = 0;
+		let selectCalls = 0;
 		const commandCtx = {
 			ui: {
 				select: async (_title: string, items: string[]) => {

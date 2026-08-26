@@ -1,10 +1,10 @@
 /**
  * pi-memory — Configuração da extração.
  *
- * Modelo dedicado e FIXO para extração — não herda o modelo interativo da
- * sessão (mudaria com /model). Meio-termo de custo/qualidade: modelo forte
- * com prompt curado e caching, reasoning médio. O modelo efetivo e a versão
- * do prompt ficam gravados no job para auditoria.
+ * Valores padrão e parâmetros do modelo dedicado para extração. O modelo pode
+ * ser sobrescrito pelo usuário em memory-config.json via /memory config, sem
+ * alterar o modelo interativo da sessão. O modelo efetivo e a versão do prompt
+ * ficam gravados no job para auditoria.
  */
 
 /** Provider + id do modelo de extração (resolvido via modelRegistry.find). */
