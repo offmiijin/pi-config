@@ -14,6 +14,7 @@ describe("memory config command", () => {
 				hasConfiguredAuth: (model) => model.provider === "anthropic",
 			},
 			ui: {} as never,
+			mode: "tui",
 		});
 
 		expect(models.map((model) => `${model.provider}/${model.id}`)).toEqual([
@@ -32,6 +33,7 @@ describe("memory config command", () => {
 				{ model: { provider: "openai", id: "not-scoped" } },
 			],
 			ui: {} as never,
+			mode: "tui",
 		});
 
 		expect(models.map((model) => `${model.provider}/${model.id}`)).toEqual([
