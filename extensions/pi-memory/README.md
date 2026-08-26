@@ -282,6 +282,7 @@ node e2e/e2e-real.ts
 extensions/pi-memory/
 ├── index.ts            entry point (event handlers + wiring de deps)
 ├── config.ts           defaults e parâmetros da extração (Fase 3)
+├── command-completions.ts autocomplete de `/memory info`
 ├── constants.ts        constantes + setup de diretórios
 ├── db.ts               driver SQLite (node/bun)
 ├── schemas.ts          schemas TypeBox das tools
@@ -302,7 +303,7 @@ extensions/pi-memory/
 │   ├── retention-store.ts .retention.sqlite (atividade de uso)
 │   └── retention-scheduler.ts sweep periódico de retenção
 ├── tools/              tools e comando /memory config
-├── tests/              25 arquivos de teste
+├── tests/              26 arquivos de teste
 ├── docs/               arquitetura (retention.md)
 └── e2e/                E2E manual com LLM real
 ```

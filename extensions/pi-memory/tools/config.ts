@@ -7,6 +7,7 @@
 
 import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, Input, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
+import { getMemoryArgumentCompletions } from "../command-completions.ts";
 import {
 	getModelProcessorConfig,
 	saveModelProcessorConfig,
@@ -146,11 +147,26 @@ async function chooseModelProcessor(ctx: ConfigContext): Promise<void> {
 
 export function registerMemoryConfig(pi: ExtensionAPI): void {
 	pi.registerCommand("memory", {
-		description: "Configurações da memória persistente",
+		description: "Configurações da memória persistente; use /memory info para informações",
+		getArgumentCompletions: getMemoryArgumentCompletions,
 		handler: async (args, rawCtx) => {
 			const ctx = rawCtx as unknown as ConfigContext;
-			if (args.trim() !== "config") {
-				ctx.ui.notify("Uso: /memory config", "info");
+			const command = args.trim();
+			if (command === "info") {
+				const configured = getModelProcessorConfig();
+				ctx.ui.notify(
+					[
+						"Memória persistente",
+						"",
+						`Model processor: ${modelKey(configured)}`,
+						"Autenticação: reutiliza as credenciais configuradas no Pi",
+					].join("\n"),
+					"info",
+				);
+				return;
+			}
+			if (command !== "config") {
+				ctx.ui.notify("Uso: /memory config ou /memory info", "info");
 				return;
 			}
 
