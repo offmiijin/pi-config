@@ -6,9 +6,11 @@
 
 - `pi-web-search`: adiciona renderer local opcional em Python + Playwright para páginas SPA, com comunicação JSONL, instalação posterior via `/web_search config renderer install` e validação de Playwright, Chromium e protocolo.
 - `pi-web-search`: adiciona auto-complete para providers, renderer, instalação, status e modos de renderização, além de ajuda detalhada no `/web_search help` e no resumo de configuração.
+- `pi-memory`: adiciona configuração persistente do modelo do processor via `/memory config`, com autocomplete para `/memory info` e reutilização da autenticação do Pi.
 
 ### Changed
 
+- `pi-memory`: lista todos os modelos dos provedores autenticados, permite busca por qualquer trecho do provider/id/nome e exibe os modelos no formato do `/model`.
 - `pi-panel`: separa alterações do `pi-sandbox` por commit e mantém alterações não commitadas em grupo próprio, usando o worktree e o commit-base da sessão.
 - `pi-panel`: exibe o conteúdo do arquivo com pelo menos 10 linhas de contexto por região modificada e permite alternar para o arquivo completo com `F`.
 - `pi-sandbox`: transforma `/sandbox` em uma tela interativa de configurações booleanas, com valores `true`/`false`, persistência por escopo e `/sandbox info` para diagnóstico.

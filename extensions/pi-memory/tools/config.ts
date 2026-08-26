@@ -55,9 +55,19 @@ export function availableAuthenticatedModels(ctx: ConfigContext): RegistryModel[
 export function modelLabels(models: RegistryModel[], current: MemoryModelConfig): string[] {
 	return models.map((model) => {
 		const selected = modelKey(model) === modelKey(current) ? "● " : "  ";
-		const displayName = model.name && model.name !== model.id ? ` — ${model.name}` : "";
-		return `${selected}${modelKey(model)}${displayName}`;
+		return `${selected}${model.id} [${model.provider}]`;
 	});
+}
+
+function modelSearchText(model: RegistryModel): string {
+	return `${model.provider}/${model.id} ${model.name ?? ""}`.toLowerCase();
+}
+
+/** Filtra por ocorrência em provider, id ou nome, não apenas por prefixo. */
+export function filterModels(models: RegistryModel[], query: string): RegistryModel[] {
+	const normalized = query.trim().toLowerCase();
+	if (!normalized) return models;
+	return models.filter((model) => modelSearchText(model).includes(normalized));
 }
 
 async function selectModel(ctx: ConfigContext, models: RegistryModel[], labels: string[]): Promise<string | undefined> {
@@ -71,33 +81,49 @@ async function selectModel(ctx: ConfigContext, models: RegistryModel[], labels: 
 	return (await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
 		const container = new Container();
 		const search = new Input();
-		const list = new SelectList(
-			models.map((model, index) => ({ value: modelKey(model), label: labels[index] })),
+		const entries = models.map((model, index) => ({ model, label: labels[index] }));
+		const listContainer = new Container();
+		const listTheme = {
+			selectedPrefix: (text: string) => theme.fg("accent", text),
+			selectedText: (text: string) => theme.fg("accent", text),
+			description: (text: string) => theme.fg("muted", text),
+			scrollInfo: (text: string) => theme.fg("dim", text),
+			noMatch: (text: string) => theme.fg("warning", text),
+		};
+		let list = new SelectList(
+			entries.map((entry) => ({ value: modelKey(entry.model), label: entry.label })),
 			Math.min(models.length, 10),
-			{
-				selectedPrefix: (text) => theme.fg("accent", text),
-				selectedText: (text) => theme.fg("accent", text),
-				description: (text) => theme.fg("muted", text),
-				scrollInfo: (text) => theme.fg("dim", text),
-				noMatch: (text) => theme.fg("warning", text),
-			},
+			listTheme,
 		);
-		search.focused = true;
-		search.onEscape = () => done(null);
 		list.onSelect = (item) => done(item.value);
 		list.onCancel = () => done(null);
+		listContainer.addChild(list);
 
 		const updateFilter = () => {
-			list.setFilter(search.getValue());
+			const filtered = filterModels(models, search.getValue());
+			listContainer.removeChild(list);
+			list = new SelectList(
+				filtered.map((model) => ({
+					value: modelKey(model),
+					label: labels[models.indexOf(model)],
+				})),
+				Math.min(Math.max(filtered.length, 1), 10),
+				listTheme,
+			);
+			list.onSelect = (item) => done(item.value);
+			list.onCancel = () => done(null);
+			listContainer.addChild(list);
 			container.invalidate();
 			tui.requestRender();
 		};
 
+		search.focused = true;
+		search.onEscape = () => done(null);
 		container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 		container.addChild(new Text(theme.fg("accent", theme.bold("Model processor"))));
 		container.addChild(new Text(theme.fg("dim", "Search: ")));
 		container.addChild(search);
-		container.addChild(list);
+		container.addChild(listContainer);
 		container.addChild(new Text(theme.fg("dim", "↑↓ navigate • enter select • esc cancel")));
 		container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 

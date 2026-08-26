@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { expect } from "./expect-shim.ts";
-import { availableAuthenticatedModels, modelLabels } from "../tools/config.ts";
+import { availableAuthenticatedModels, filterModels, modelLabels } from "../tools/config.ts";
 
 describe("memory config command", () => {
 	it("lista somente modelos autenticados e remove duplicatas", () => {
@@ -22,11 +22,22 @@ describe("memory config command", () => {
 		]);
 	});
 
+	it("encontra termos no provider ou no meio do id do modelo", () => {
+		const models = [
+			{ provider: "openai-codex", id: "gpt-5.6-luna" },
+			{ provider: "anthropic", id: "claude-sonnet" },
+		];
+
+		expect(filterModels(models, "gpt")).toEqual([models[0]]);
+		expect(filterModels(models, "openai")).toEqual([models[0]]);
+		expect(filterModels(models, "sonnet")).toEqual([models[1]]);
+	});
+
 	it("marca o modelo selecionado com uma bolinha", () => {
 		expect(modelLabels(
 			[{ provider: "anthropic", id: "selected" }, { provider: "openai", id: "other" }],
 			{ provider: "anthropic", id: "selected" },
-		)).toEqual(["● anthropic/selected", "  openai/other"]);
+		)).toEqual(["● selected [anthropic]", "  other [openai]"]);
 	});
 
 	it("lista o catálogo completo do Pi, sem limitar por enabledModels", () => {
