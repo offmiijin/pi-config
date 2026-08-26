@@ -62,10 +62,7 @@ import {
 import { normalizePendingEpisodes } from "./pipeline/evidence.ts";
 import { generateSessionHash, hashSessionFile } from "./session.ts";
 import { PipelineWorker, maybeCreateJob } from "./pipeline/worker.ts";
-import {
-	EXTRACTION_MODEL_ID,
-	EXTRACTION_MODEL_PROVIDER,
-} from "./config.ts";
+import { getModelProcessorConfig } from "./memory/config.ts";
 import { formatExistingMemories } from "./pipeline/extractor.ts";
 import {
 	createExtractionProcessor,
@@ -117,12 +114,13 @@ export default function (pi: ExtensionAPI) {
 	const getModel = async (): Promise<ExtractionModelRef | null> => {
 		const registry = extractionModelRegistry;
 		if (!registry) return null;
-		const model = registry.find(EXTRACTION_MODEL_PROVIDER, EXTRACTION_MODEL_ID);
+		const configured = getModelProcessorConfig();
+		const model = registry.find(configured.provider, configured.id);
 		if (!model) return null;
 		if (!registry.hasConfiguredAuth(model)) return null;
 		return {
-			provider: EXTRACTION_MODEL_PROVIDER,
-			id: EXTRACTION_MODEL_ID,
+			provider: configured.provider,
+			id: configured.id,
 			complete: (messages, opts) =>
 				registry.complete(model, { messages }, opts) as unknown as Promise<CompletionResponse>,
 		};
