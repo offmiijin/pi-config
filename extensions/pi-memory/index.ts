@@ -62,10 +62,7 @@ import {
 import { normalizePendingEpisodes } from "./pipeline/evidence.ts";
 import { generateSessionHash, hashSessionFile } from "./session.ts";
 import { PipelineWorker, maybeCreateJob } from "./pipeline/worker.ts";
-import {
-	EXTRACTION_MODEL_ID,
-	EXTRACTION_MODEL_PROVIDER,
-} from "./config.ts";
+import { getModelProcessorConfig } from "./memory/config.ts";
 import { formatExistingMemories } from "./pipeline/extractor.ts";
 import {
 	createExtractionProcessor,
@@ -82,6 +79,7 @@ import { registerMemoryRetention } from "./tools/retention.ts";
 import { registerMemorySave } from "./tools/save.ts";
 import { registerMemorySearch } from "./tools/search.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
+import { registerMemoryConfig } from "./tools/config.ts";
 import { emitMemoryStats, type ToolState } from "./tools/state.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -105,8 +103,8 @@ export default function (pi: ExtensionAPI) {
 	// não abriu — a fila espera a próxima sessão.
 	let worker: PipelineWorker | null = null;
 	// Registry de modelos capturado dos event handlers — o processor de
-	// extração resolve o modelo FIXO de config.ts em runtime (não herda o
-	// modelo interativo da sessão).
+	// extração resolve o modelo configurado em memory-config.json em runtime
+	// (não herda automaticamente o modelo interativo da sessão).
 	let extractionModelRegistry: ModelRegistryLike | null = null;
 	// Scheduler de retenção por desuso (feature flag RETENTION_ENABLED).
 	// Null quando desativado/indisponível — busca e escrita seguem sem ele.
@@ -117,12 +115,13 @@ export default function (pi: ExtensionAPI) {
 	const getModel = async (): Promise<ExtractionModelRef | null> => {
 		const registry = extractionModelRegistry;
 		if (!registry) return null;
-		const model = registry.find(EXTRACTION_MODEL_PROVIDER, EXTRACTION_MODEL_ID);
+		const configured = getModelProcessorConfig();
+		const model = registry.find(configured.provider, configured.id);
 		if (!model) return null;
 		if (!registry.hasConfiguredAuth(model)) return null;
 		return {
-			provider: EXTRACTION_MODEL_PROVIDER,
-			id: EXTRACTION_MODEL_ID,
+			provider: configured.provider,
+			id: configured.id,
 			complete: (messages, opts) =>
 				registry.complete(model, { messages }, opts) as unknown as Promise<CompletionResponse>,
 		};
@@ -498,4 +497,5 @@ export default function (pi: ExtensionAPI) {
 	registerMemoryDecay(pi, state);
 	registerMemoryExtract(pi, state);
 	registerMemoryRetention(pi, state);
+	registerMemoryConfig(pi);
 }

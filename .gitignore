@@ -41,6 +41,7 @@ mcp.json
 settings.json
 models-store.json
 trust.json
+memory-config.json
 
 # Pacotes npm gerenciados pelo pi (runtime, instalados em ~/.pi/agent/npm)
 npm/
