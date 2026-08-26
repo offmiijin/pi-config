@@ -43,9 +43,10 @@ export function availableAuthenticatedModels(ctx: ConfigContext): RegistryModel[
 		.filter((model) => {
 			const key = modelKey(model);
 			if (seen.has(key)) return false;
-			seen.add(key);
 			try {
-				return ctx.modelRegistry.hasConfiguredAuth(model);
+				if (!ctx.modelRegistry.hasConfiguredAuth(model)) return false;
+				seen.add(key);
+				return true;
 			} catch {
 				return false;
 			}

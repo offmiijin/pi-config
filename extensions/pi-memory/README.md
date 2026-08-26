@@ -37,7 +37,7 @@ a extração roda assíncrona.
 └──────────────┬───────────────┘
                ▼
 ┌──────────────────────────────┐
-│ Extração LLM (modelo fixo)   │ ← prompt curado + cache de prompt
+│ Extração LLM (modelo configurável)│ ← prompt curado + cache de prompt
 │  ├─ busca memórias próximas  │
 │  └─ JSON de candidatos       │
 └──────────────┬───────────────┘
@@ -256,11 +256,11 @@ seleção alvo 12K / cap 18K tokens.
 
 ```bash
 cd ~/.pi/agent/extensions/pi-memory
-bun test            # 397 testes (Bun)
+bun test            # 402 testes (Bun)
 npm run typecheck   # tsc strict
 ```
 
-- **Unit/integração** (`tests/`): 23 arquivos cobrindo pipeline (episódios,
+- **Unit/integração** (`tests/`): 25 arquivos cobrindo pipeline (episódios,
   jobs, worker, retry), extração/validação (processor, validator, extractor),
   memória (CRUD, snapshot, migração v1→v2, escrita atômica), índice FTS,
   retenção (algoritmo, store, scheduler, tool, frontmatter v3), evidências

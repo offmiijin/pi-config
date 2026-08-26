@@ -54,7 +54,8 @@ if (isNode) {
 			if (specifier === "@earendil-works/pi-coding-agent") {
 				return {
 					url: dataUrl(
-						`import { homedir } from "node:os";
+						`export class DynamicBorder { constructor() {} }
+						import { homedir } from "node:os";
 						import { join } from "node:path";
 						export const CONFIG_DIR_NAME = ".pi";
 						export function getAgentDir() {
