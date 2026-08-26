@@ -29,7 +29,6 @@ interface ConfigContext {
 	ui: Pick<ExtensionContext["ui"], "select" | "notify" | "custom">;
 	mode: ExtensionContext["mode"];
 	modelRegistry: ModelRegistry;
-	scopedModels?: readonly { model: RegistryModel }[];
 }
 
 function modelKey(model: MemoryModelConfig): string {
@@ -37,10 +36,8 @@ function modelKey(model: MemoryModelConfig): string {
 }
 
 export function availableAuthenticatedModels(ctx: ConfigContext): RegistryModel[] {
-	const scoped = ctx.scopedModels ?? [];
-	const models = scoped.length > 0 ? scoped.map((entry) => entry.model) : ctx.modelRegistry.getAvailable();
 	const seen = new Set<string>();
-	return models
+	return ctx.modelRegistry.getAvailable()
 		.filter((model) => {
 			const key = modelKey(model);
 			if (seen.has(key)) return false;
@@ -55,16 +52,21 @@ export function availableAuthenticatedModels(ctx: ConfigContext): RegistryModel[
 		.sort((a, b) => modelKey(a).localeCompare(modelKey(b)));
 }
 
-function modelLabels(models: RegistryModel[], current: MemoryModelConfig): string[] {
+export function modelLabels(models: RegistryModel[], current: MemoryModelConfig): string[] {
 	return models.map((model) => {
-		const selected = modelKey(model) === modelKey(current) ? " (selected)" : "";
+		const selected = modelKey(model) === modelKey(current) ? "● " : "  ";
 		const displayName = model.name && model.name !== model.id ? ` — ${model.name}` : "";
-		return `${modelKey(model)}${selected}${displayName}`;
+		return `${selected}${modelKey(model)}${displayName}`;
 	});
 }
 
 async function selectModel(ctx: ConfigContext, models: RegistryModel[], labels: string[]): Promise<string | undefined> {
-	if (ctx.mode !== "tui") return ctx.ui.select("Model processor", labels);
+	if (ctx.mode !== "tui") {
+		const selectedLabel = await ctx.ui.select("Model processor", labels);
+		if (selectedLabel === undefined) return undefined;
+		const selectedIndex = labels.indexOf(selectedLabel);
+		return selectedIndex >= 0 ? modelKey(models[selectedIndex]) : undefined;
+	}
 
 	return (await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
 		const container = new Container();
