@@ -47,7 +47,7 @@ function snapshot(): UsageSnapshot {
       costTotal: 3.5,
     }],
     routers: [{ key: "anthropic", label: "anthropic", totals }],
-    models: [{ key: "anthropic/claude-sonnet", label: "anthropic/claude-sonnet", totals }],
+    models: [{ key: "claude-sonnet", label: "claude-sonnet", totals }],
     buckets: [{ start: 0, label: "00:00", totals }],
   };
 }

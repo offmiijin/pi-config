@@ -82,7 +82,7 @@ describe("monitor de tokens — leitura de sessões", () => {
     expect(snapshot.totals.freshTokens).toBe(130);
     expect(snapshot.totals.cacheHit).toBeCloseTo(80 / 190);
     expect(snapshot.routers[0]?.label).toBe("anthropic");
-    expect(snapshot.models[0]?.label).toBe("anthropic/claude-sonnet");
+    expect(snapshot.models[0]?.label).toBe("claude-sonnet");
 
     const second = await store.snapshot({ period: "last15m", now: 100_000 });
     expect(second.records).toHaveLength(2);

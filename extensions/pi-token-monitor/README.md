@@ -19,3 +19,15 @@ Os arquivos JSONL em `~/.pi/agent/sessions` (ou `$PI_CODING_AGENT_DIR/sessions`)
 - `Cache hit`: `cacheRead / (input + cacheRead + cacheWrite)` quando há tokens de cache informados.
 
 O painel não expõe nem agrega chaves de API.
+
+## Uso
+
+- `/token-monitor` abre/fecha o overlay;
+- `Alt+M` abre/fecha o overlay;
+- `Tab` alterna o foco dos filtros;
+- `V` alterna Resumo, Tabela, Gráficos e Detalhes;
+- `G` alterna a métrica do gráfico;
+- `R` força uma atualização;
+- `Esc` fecha o painel.
+
+O período `Data personalizada` solicita data inicial e final no formato `DD/MM/AAAA HH:mm`.

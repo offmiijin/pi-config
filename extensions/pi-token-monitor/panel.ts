@@ -20,6 +20,7 @@ export const PERIOD_OPTIONS: ReadonlyArray<{ id: PeriodPreset; label: string }> 
   { id: "lastMonth", label: "Mês passado" },
   { id: "thisYear", label: "Este ano" },
   { id: "lastYear", label: "Ano passado" },
+  { id: "custom", label: "Data personalizada" },
 ];
 
 const VIEWS: readonly TokenMonitorView[] = ["overview", "table", "graphs", "details"];
@@ -94,6 +95,8 @@ export interface TokenMonitorQuery extends UsageFilter {
   now?: number;
 }
 
+export type CustomPeriodCallback = () => Promise<{ from: number; to: number } | null>;
+
 export class TokenMonitorPanel implements Component {
   private snapshot: UsageSnapshot;
   private readonly tui: TUI;
@@ -101,6 +104,7 @@ export class TokenMonitorPanel implements Component {
   private readonly onClose: () => void;
   private readonly onQueryChange: (query: TokenMonitorQuery) => void;
   private readonly onRefresh: () => void;
+  private readonly onCustomPeriod?: CustomPeriodCallback;
   private view: TokenMonitorView = "overview";
   private filterFocus: FilterFocus = "period";
   private selectedRow = 0;
@@ -113,6 +117,7 @@ export class TokenMonitorPanel implements Component {
     onQueryChange: (query: TokenMonitorQuery) => void,
     onRefresh: () => void,
     onClose: () => void,
+    onCustomPeriod?: CustomPeriodCallback,
   ) {
     this.tui = tui;
     this.theme = theme;
@@ -120,6 +125,7 @@ export class TokenMonitorPanel implements Component {
     this.onQueryChange = onQueryChange;
     this.onRefresh = onRefresh;
     this.onClose = onClose;
+    this.onCustomPeriod = onCustomPeriod;
   }
 
   setSnapshot(snapshot: UsageSnapshot): void {
@@ -213,7 +219,9 @@ export class TokenMonitorPanel implements Component {
   }
 
   private renderFilters(width: number): string {
-    const period = PERIOD_OPTIONS.find((option) => option.id === this.snapshot.filter.period)?.label ?? this.snapshot.filter.period;
+    const period = this.snapshot.filter.period === "custom"
+      ? `${PERIOD_OPTIONS.find((option) => option.id === "custom")?.label} (${new Date(this.snapshot.filter.customFrom ?? 0).toLocaleDateString("pt-BR")} – ${new Date(this.snapshot.filter.customTo ?? 0).toLocaleDateString("pt-BR")})`
+      : PERIOD_OPTIONS.find((option) => option.id === this.snapshot.filter.period)?.label ?? this.snapshot.filter.period;
     const router = this.snapshot.filter.router ?? "Todos";
     const model = this.snapshot.filter.model ?? "Todos";
     const fields = [
@@ -293,9 +301,18 @@ export class TokenMonitorPanel implements Component {
     lines.push(this.theme.fg("dim", "Cada coluna representa um intervalo do período selecionado."));
     lines.push("");
     for (const group of this.snapshot.models.slice(0, 6)) {
-      const groupValues = this.snapshot.buckets.map((bucket) => {
-        // O gráfico global é intencionalmente compacto; séries detalhadas usam o total do grupo.
-        return metricValue(group.totals, this.graphMetric) * (bucket.totals.requests / Math.max(1, this.snapshot.totals.requests));
+      const groupValues = this.snapshot.buckets.map((bucket, index) => {
+        const nextStart = this.snapshot.buckets[index + 1]?.start ?? this.snapshot.to;
+        const bucketRecords = this.snapshot.records.filter((record) =>
+          record.model === group.key && record.timestamp >= bucket.start && record.timestamp < nextStart,
+        );
+        const bucketTotals = bucketRecords.reduce((totals, record) => {
+          totals.requests += 1;
+          totals.freshTokens += record.input + record.output + record.cacheWrite;
+          totals.cost += record.costTotal;
+          return totals;
+        }, { ...emptyTotals() });
+        return metricValue(bucketTotals, this.graphMetric);
       });
       lines.push(`${this.pad(groupLabel(group), 28)} ${this.theme.fg("accent", sparkline(groupValues, Math.max(20, width - 38)))}`);
     }
@@ -327,11 +344,18 @@ export class TokenMonitorPanel implements Component {
     if (this.filterFocus === "period") {
       const current = Math.max(0, PERIOD_OPTIONS.findIndex((option) => option.id === this.snapshot.filter.period));
       const next = PERIOD_OPTIONS[(current + delta + PERIOD_OPTIONS.length) % PERIOD_OPTIONS.length]!;
-      this.onQueryChange({ ...this.snapshot.filter, period: next.id, now: Date.now() });
+      if (next.id === "custom" && this.onCustomPeriod) {
+        void this.onCustomPeriod().then((range) => {
+          if (!range) return;
+          this.onQueryChange({ ...this.snapshot.filter, period: "custom", customFrom: range.from, customTo: range.to, now: Date.now() });
+        });
+      } else {
+        this.onQueryChange({ ...this.snapshot.filter, period: next.id, now: Date.now() });
+      }
       return;
     }
     const groups = this.filterFocus === "router" ? this.snapshot.routers : this.snapshot.models;
-    const values = groups.map((group) => this.filterFocus === "router" ? group.key : group.key.split("/", 2).slice(1).join("/"));
+    const values = groups.map((group) => group.key);
     const currentValue = this.filterFocus === "router" ? this.snapshot.filter.router : this.snapshot.filter.model;
     const current = currentValue ? values.indexOf(currentValue) : -1;
     const nextValue = current + delta < 0 || current + delta >= values.length ? undefined : values[current + delta];

@@ -6,6 +6,30 @@ import { TokenMonitorPanel, type TokenMonitorQuery } from "./panel.ts";
 const REFRESH_INTERVAL_MS = 1500;
 const TOGGLE_DEBOUNCE_MS = 250;
 
+function parseDateInput(value: string): number | null {
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?$/);
+  if (!match) return null;
+  const [, day, month, year, hour = "00", minute = "00"] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+  if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) return null;
+  return date.getTime();
+}
+
+export async function requestCustomPeriod(ctx: ExtensionContext): Promise<{ from: number; to: number } | null> {
+  if (!ctx.hasUI) return null;
+  const fromText = await ctx.ui.input("Data inicial", "DD/MM/AAAA HH:mm");
+  if (!fromText) return null;
+  const toText = await ctx.ui.input("Data final", "DD/MM/AAAA HH:mm");
+  if (!toText) return null;
+  const from = parseDateInput(fromText);
+  const to = parseDateInput(toText);
+  if (from === null || to === null || from > to) {
+    ctx.ui.notify("Período inválido. Use DD/MM/AAAA HH:mm, com a data inicial antes da final.", "error");
+    return null;
+  }
+  return { from, to: to + 60_000 };
+}
+
 export function shouldToggleTokenMonitor(data: string, now: number, lastToggleAt: number): boolean {
   return matchesKey(data, Key.alt("m")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
 }
@@ -56,6 +80,7 @@ export default function (pi: ExtensionAPI): void {
             (query) => void refreshPanel(ctx, panel, query),
             () => void refreshPanel(ctx, panel),
             done,
+            () => requestCustomPeriod(ctx),
           );
           activePanel = panel;
           closeActivePanel = done;

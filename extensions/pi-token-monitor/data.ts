@@ -87,7 +87,7 @@ function sessionTimestamp(date: Date, startOf: "day" | "week" | "month" | "year"
   return date.getTime();
 }
 
-export function getPeriodBounds(period: PeriodPreset, now = Date.now()): { from: number; to: number } {
+export function getPeriodBounds(period: PeriodPreset, now = Date.now(), custom?: { from?: number; to?: number }): { from: number; to: number } {
   const end = now;
   const date = new Date(now);
   const start = (amount: number): number => now - amount;
@@ -124,6 +124,11 @@ export function getPeriodBounds(period: PeriodPreset, now = Date.now()): { from:
       const previous = new Date(to);
       previous.setFullYear(previous.getFullYear() - 1);
       return { from: previous.getTime(), to };
+    }
+    case "custom": {
+      const from = custom?.from ?? now;
+      const to = custom?.to ?? now;
+      return from <= to ? { from, to } : { from: to, to: from };
     }
   }
 }
@@ -288,7 +293,7 @@ export class UsageStore {
 
   async snapshot(filter: UsageFilter): Promise<UsageSnapshot> {
     const now = filter.now ?? Date.now();
-    const bounds = getPeriodBounds(filter.period, now);
+    const bounds = getPeriodBounds(filter.period, now, { from: filter.customFrom, to: filter.customTo });
     const allRecords = await this.loadRecords();
     const records = allRecords
       .filter((record) => record.timestamp >= bounds.from && record.timestamp < bounds.to)
@@ -307,7 +312,7 @@ export class UsageStore {
       totals: finalizeTotals(totals),
       records,
       routers: groupRecords(records, (record) => record.provider, (record) => record.provider),
-      models: groupRecords(records, (record) => `${record.provider}/${record.model}`, (record) => `${record.provider}/${record.model}`),
+      models: groupRecords(records, (record) => record.model, (record) => record.model),
       buckets: createBuckets(records, bounds.from, bounds.to),
     };
   }

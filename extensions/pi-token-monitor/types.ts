@@ -17,12 +17,15 @@ export type PeriodPreset =
   | "thisMonth"
   | "lastMonth"
   | "thisYear"
-  | "lastYear";
+  | "lastYear"
+  | "custom";
 
 export interface UsageFilter {
   period: PeriodPreset;
   model?: string;
   router?: string;
+  customFrom?: number;
+  customTo?: number;
   now?: number;
 }
 
