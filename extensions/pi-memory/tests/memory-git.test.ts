@@ -69,6 +69,11 @@ describe("MemoryGitRepository", () => {
 				"[p] mem(projects/decisions): atualiza cache",
 			);
 			expect(git(["status", "--porcelain"], root)).toBe("");
+
+			writeFileSync(join(root, ".pipeline.sqlite"), "derivado\n");
+			expect(repo.commit(["."], "não deve commitar banco").action).toBe("noop");
+			expect(repo.grep("termo-inexistente")).toBe("");
+			expect(git(["status", "--porcelain"], root)).toBe("");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

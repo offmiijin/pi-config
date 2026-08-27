@@ -180,7 +180,13 @@ export class MemoryGitRepository {
 		const args = ["grep", "-n", "-e", query];
 		if (ref) args.push(ref);
 		args.push("--");
-		return this.runGit(args, this.root);
+		try {
+			return this.runGit(args, this.root);
+		} catch (error) {
+			// git grep usa exit code 1 quando não há correspondências.
+			if ((error as { status?: unknown }).status === 1) return "";
+			throw error;
+		}
 	}
 
 	/** Tenta concluir mutações que ficaram pendentes por falha do Git. */
