@@ -69,6 +69,7 @@ describe("MemoryGitRepository", () => {
 				"[p] mem(projects/decisions): atualiza cache",
 			);
 			expect(git(["status", "--porcelain"], root)).toBe("");
+			expect(repo.initialize().action).toBe("noop");
 
 			writeFileSync(join(root, ".pipeline.sqlite"), "derivado\n");
 			expect(repo.commit(["."], "não deve commitar banco").action).toBe("noop");

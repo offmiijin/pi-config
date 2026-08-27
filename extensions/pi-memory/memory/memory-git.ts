@@ -53,6 +53,13 @@ function normalizeRepoPath(path: string): string {
 	return path.replaceAll("\\", "/");
 }
 
+function validateRef(ref: string): string {
+	if (!ref || ref.startsWith("-") || !/^[A-Za-z0-9._/~^:@{}-]+$/.test(ref)) {
+		throw new Error(`revisão Git inválida: ${ref}`);
+	}
+	return ref;
+}
+
 function sanitizeSubjectPart(value: string, fallback: string): string {
 	const cleaned = value
 		.replace(/[\r\n]+/g, " ")
@@ -164,7 +171,7 @@ export class MemoryGitRepository {
 	/** Compara o working tree ou uma revisão com um path opcional. */
 	diff(path?: string, ref?: string): string {
 		const args = ["diff"];
-		if (ref) args.push(ref);
+		if (ref) args.push(validateRef(ref));
 		args.push("--");
 		if (path) args.push(this.toRepoPath(path));
 		return this.runGit(args, this.root);
@@ -172,13 +179,13 @@ export class MemoryGitRepository {
 
 	/** Lê o conteúdo de um path em uma revisão específica. */
 	show(ref: string, path: string): string {
-		return this.runGit(["show", `${ref}:${this.toRepoPath(path)}`], this.root);
+		return this.runGit(["show", `${validateRef(ref)}:${this.toRepoPath(path)}`], this.root);
 	}
 
 	/** Busca texto no snapshot atual ou em uma revisão. */
 	grep(query: string, ref?: string): string {
 		const args = ["grep", "-n", "-e", query];
-		if (ref) args.push(ref);
+		if (ref) args.push(validateRef(ref));
 		args.push("--");
 		try {
 			return this.runGit(args, this.root);
