@@ -1,4 +1,4 @@
-export type TokenMonitorView = "overview" | "table" | "graphs" | "details";
+export type TokenMonitorView = "overview" | "table" | "details";
 
 export type PeriodPreset =
   | "last15m"
@@ -67,12 +67,6 @@ export interface UsageGroup {
   totals: UsageTotals;
 }
 
-export interface UsageBucket {
-  start: number;
-  label: string;
-  totals: UsageTotals;
-}
-
 export interface UsageSnapshot {
   generatedAt: number;
   from: number;
@@ -82,5 +76,4 @@ export interface UsageSnapshot {
   records: UsageRecord[];
   routers: UsageGroup[];
   models: UsageGroup[];
-  buckets: UsageBucket[];
 }

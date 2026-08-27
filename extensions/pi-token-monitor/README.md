@@ -6,7 +6,7 @@ Extensão TUI para acompanhar tokens e custos do Pi através de `/token-monitor`
 
 - `data.ts` é a fonte de dados: percorre os JSONL de sessão, mantém um cache por arquivo (`mtime`/tamanho) e agrega mensagens `assistant` finalizadas.
 - `types.ts` define o contrato entre coleta, agregação e interface.
-- `panel.ts` implementa o painel overlay e os quatro modos: resumo, tabela, gráficos e detalhes.
+- `panel.ts` implementa o painel overlay e os três modos: resumo, tabela e detalhes.
 - `index.ts` integra comandos, atalho, eventos do Pi e polling de sessões externas.
 
 Os arquivos JSONL em `~/.pi/agent/sessions` (ou `$PI_CODING_AGENT_DIR/sessions`) são a fonte persistente. O cache existe apenas em memória e pode ser reconstruído sem perda de dados.
@@ -25,8 +25,7 @@ O painel não expõe nem agrega chaves de API.
 - `/token-monitor` abre/fecha o overlay;
 - `Alt+M` abre/fecha o overlay;
 - `Tab` alterna o foco dos filtros;
-- `V` alterna Resumo, Tabela, Gráficos e Detalhes;
-- `G` alterna a métrica do gráfico;
+- `V` alterna Resumo, Tabela e Detalhes;
 - `R` força uma atualização;
 - `Esc` fecha o painel.
 

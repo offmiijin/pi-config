@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
-import type { PeriodPreset, TokenMonitorView, UsageFilter, UsageGroup, UsageRecord, UsageSnapshot, UsageTotals } from "./types.ts";
+import type { PeriodPreset, TokenMonitorView, UsageFilter, UsageGroup, UsageRecord, UsageSnapshot } from "./types.ts";
 
 export const PERIOD_OPTIONS: ReadonlyArray<{ id: PeriodPreset; label: string }> = [
   { id: "last15m", label: "Últimos 15 min" },
@@ -23,16 +23,14 @@ export const PERIOD_OPTIONS: ReadonlyArray<{ id: PeriodPreset; label: string }> 
   { id: "custom", label: "Data personalizada" },
 ];
 
-const VIEWS: readonly TokenMonitorView[] = ["overview", "table", "graphs", "details"];
+const VIEWS: readonly TokenMonitorView[] = ["overview", "table", "details"];
 const VIEW_LABELS: Record<TokenMonitorView, string> = {
   overview: "Resumo",
   table: "Tabela",
-  graphs: "Gráficos",
   details: "Detalhes",
 };
 const FILTERS = ["period", "router", "model"] as const;
 type FilterFocus = typeof FILTERS[number];
-type GraphMetric = "cost" | "freshTokens" | "requests";
 
 function formatCompact(value: number): string {
   const absolute = Math.abs(value);
@@ -50,48 +48,8 @@ function formatPercent(value: number | null): string {
   return value === null ? "n/d" : `${(value * 100).toFixed(1)}%`;
 }
 
-function emptyTotals(): UsageTotals {
-  return {
-    requests: 0,
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    freshTokens: 0,
-    cost: 0,
-    cacheHit: null,
-  };
-}
-
 function groupLabel(group: UsageGroup): string {
   return group.label.length > 38 ? `${group.label.slice(0, 35)}...` : group.label;
-}
-
-function metricValue(totals: UsageTotals, metric: GraphMetric): number {
-  if (metric === "cost") return totals.cost;
-  if (metric === "requests") return totals.requests;
-  return totals.freshTokens;
-}
-
-function metricLabel(metric: GraphMetric): string {
-  if (metric === "cost") return "Custo";
-  if (metric === "requests") return "Requisições";
-  return "Tokens frescos";
-}
-
-function sampleValues(values: number[], width: number): number[] {
-  if (values.length <= width) return values;
-  return Array.from({ length: width }, (_, index) => values[Math.floor(index * values.length / width)] ?? 0);
-}
-
-function sparkline(values: number[], width: number): string {
-  if (width <= 0) return "";
-  const marks = "▁▂▃▄▅▆▇█";
-  const sampled = sampleValues(values, width);
-  if (sampled.length === 0 || sampled.every((value) => value === 0)) return "·".repeat(Math.min(width, 24));
-  const max = Math.max(...sampled, 1);
-  return sampled.map((value) => marks[Math.min(marks.length - 1, Math.round((value / max) * (marks.length - 1)))]).join("");
 }
 
 export interface TokenMonitorQuery extends UsageFilter {
@@ -111,7 +69,6 @@ export class TokenMonitorPanel implements Component {
   private view: TokenMonitorView = "overview";
   private filterFocus: FilterFocus = "period";
   private selectedRow = 0;
-  private graphMetric: GraphMetric = "cost";
 
   constructor(
     tui: TUI,
@@ -156,27 +113,22 @@ export class TokenMonitorPanel implements Component {
       this.tui.requestRender();
       return;
     }
-    if (data === "g") {
-      this.graphMetric = this.graphMetric === "cost" ? "freshTokens" : this.graphMetric === "freshTokens" ? "requests" : "cost";
-      this.view = "graphs";
-      this.tui.requestRender();
-      return;
-    }
     if (data === "r") {
       this.onRefresh();
       return;
     }
-    if (matchesKey(data, Key.left) || matchesKey(data, Key.up)) {
-      this.changeFilter(-1);
-      return;
-    }
-    if (matchesKey(data, Key.right) || matchesKey(data, Key.down)) {
+    if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
       if (this.view === "table" || this.view === "details") {
-        this.selectedRow = Math.min(this.snapshot.records.length - 1, this.selectedRow + 1);
+        const delta = matchesKey(data, Key.up) ? -1 : 1;
+        this.selectedRow = Math.max(0, Math.min(this.snapshot.records.length - 1, this.selectedRow + delta));
         this.tui.requestRender();
       } else {
-        this.changeFilter(1);
+        this.changeFilter(matchesKey(data, Key.up) ? -1 : 1);
       }
+      return;
+    }
+    if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+      this.changeFilter(matchesKey(data, Key.left) ? -1 : 1);
       return;
     }
     if (data === "j" || data === "J") {
@@ -203,18 +155,16 @@ export class TokenMonitorPanel implements Component {
       ? this.renderOverview(innerWidth)
       : this.view === "table"
         ? this.renderTable(innerWidth)
-        : this.view === "graphs"
-          ? this.renderGraphs(innerWidth)
-          : this.renderDetails(innerWidth);
-    const targetRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.96));
+        : this.renderDetails(innerWidth);
+    const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.90));
     const footerRows = 3;
-    const availableBodyRows = Math.max(1, targetRows - lines.length - footerRows);
-    lines.push(...content.slice(0, availableBodyRows).map(row));
-    while (lines.length < targetRows - footerRows) lines.push(row(""));
+    const availableBodyRows = Math.max(1, maxPanelRows - lines.length - footerRows);
+    const visibleContent = content.slice(0, availableBodyRows);
+    lines.push(...visibleContent.map(row));
     lines.push(separator);
-    lines.push(row(this.theme.fg("dim", " Tab filtros  ↑↓ navegar  V modo  G gráfico  R atualizar  Alt+M/Esc fechar ")));
+    lines.push(row(this.theme.fg("dim", " Tab filtros  ↑↓ navegar  V modo  R atualizar  Alt+M/Esc fechar ")));
     lines.push(`╰${"─".repeat(innerWidth)}╯`);
-    return lines.slice(0, targetRows).map((line) => truncateToWidth(line, width, ""));
+    return lines.slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
   }
 
   invalidate(): void {
@@ -257,44 +207,9 @@ export class TokenMonitorPanel implements Component {
     ];
     const cardWidth = Math.max(15, Math.floor((width - 3) / cards.length));
     const cardLine = cards.map(([label, value]) => this.pad(`${this.theme.fg("muted", label)} ${this.theme.fg("accent", value)}`, cardWidth)).join("│");
-    const lines = [cardLine, "", this.theme.fg("accent", this.theme.bold(` CONSUMO POR TEMPO · ${metricLabel(this.graphMetric)}`))];
-    lines.push(...this.renderMiniGraph(width));
-    lines.push("", this.theme.fg("accent", this.theme.bold(" DISTRIBUIÇÃO POR ROUTER")));
+    const lines = [cardLine, "", this.theme.fg("accent", this.theme.bold(" DISTRIBUIÇÃO POR ROUTER"))];
     lines.push(...this.renderGroups(this.snapshot.routers, width, 4));
     return lines;
-  }
-
-  private renderMiniGraph(width: number): string[] {
-    const values = this.snapshot.buckets.map((bucket) => metricValue(bucket.totals, this.graphMetric));
-    return this.renderChart(values, 4, width);
-  }
-
-  private renderChart(values: number[], height: number, width: number): string[] {
-    const chartWidth = Math.max(24, width - 11);
-    const sampled = sampleValues(values, chartWidth);
-    const max = Math.max(...sampled, 1);
-    const lines: string[] = [];
-    for (let row = height; row > 0; row--) {
-      const threshold = max * row / height;
-      const bars = sampled.map((value) => value >= threshold ? "█" : " ").join("");
-      const axis = metricValue({ ...emptyTotals(), cost: threshold, freshTokens: threshold, requests: threshold }, this.graphMetric);
-      lines.push(` ${this.theme.fg("dim", this.pad(this.graphMetric === "cost" ? formatCost(axis) : formatCompact(axis), 7))} ${this.theme.fg("dim", "│")} ${this.theme.fg("success", bars)}`);
-    }
-    lines.push(` ${this.theme.fg("dim", "       └" + "─".repeat(chartWidth))}`);
-    const labels = this.axisLabels(chartWidth);
-    lines.push(` ${this.theme.fg("dim", "        " + labels)}`);
-    return lines;
-  }
-
-  private axisLabels(width: number): string {
-    const buckets = this.snapshot.buckets;
-    if (buckets.length === 0) return "";
-    const count = Math.min(7, buckets.length);
-    const labels = Array.from({ length: count }, (_, index) => {
-      const bucket = buckets[Math.floor(index * (buckets.length - 1) / Math.max(1, count - 1))]!;
-      return bucket.label;
-    });
-    return truncateToWidth(labels.join("   "), width, "");
   }
 
   private renderGroups(groups: UsageGroup[], width: number, limit: number): string[] {
@@ -322,32 +237,6 @@ export class TokenMonitorPanel implements Component {
       const name = this.pad(`${marker} ${groupLabel(group)}`, nameWidth);
       lines.push(`${name} ${this.pad(formatCompact(group.totals.requests), 8)} ${this.pad(formatCompact(group.totals.freshTokens), 12)} ${this.pad(formatPercent(group.totals.cacheHit), 9)} ${this.theme.fg("warning", this.pad(formatCost(group.totals.cost), 11))}`);
     }
-    return lines;
-  }
-
-  private renderGraphs(width: number): string[] {
-    const lines = [this.theme.fg("accent", this.theme.bold(` GRÁFICOS · ${metricLabel(this.graphMetric)}`))];
-    const values = this.snapshot.buckets.map((bucket) => metricValue(bucket.totals, this.graphMetric));
-    lines.push(this.theme.fg("dim", "Escala vertical automática · cada coluna representa um intervalo do período."));
-    lines.push(...this.renderChart(values, 8, width));
-    lines.push("");
-    for (const group of this.snapshot.models.slice(0, 6)) {
-      const groupValues = this.snapshot.buckets.map((bucket, index) => {
-        const nextStart = this.snapshot.buckets[index + 1]?.start ?? this.snapshot.to;
-        const bucketRecords = this.snapshot.records.filter((record) =>
-          record.model === group.key && record.timestamp >= bucket.start && record.timestamp < nextStart,
-        );
-        const bucketTotals = bucketRecords.reduce((totals, record) => {
-          totals.requests += 1;
-          totals.freshTokens += record.input + record.output + record.cacheWrite;
-          totals.cost += record.costTotal;
-          return totals;
-        }, { ...emptyTotals() });
-        return metricValue(bucketTotals, this.graphMetric);
-      });
-      lines.push(`${this.pad(groupLabel(group), 28)} ${this.theme.fg("accent", sparkline(groupValues, Math.max(20, width - 38)))}`);
-    }
-    if (this.snapshot.models.length === 0) lines.push(this.theme.fg("dim", "Nenhum dado para desenhar."));
     return lines;
   }
 

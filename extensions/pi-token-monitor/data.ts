@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type {
   PeriodPreset,
-  UsageBucket,
   UsageFilter,
   UsageGroup,
   UsageRecord,
@@ -234,31 +233,6 @@ function groupRecords(records: UsageRecord[], keyOf: (record: UsageRecord) => st
     .sort((a, b) => b.totals.cost - a.totals.cost || b.totals.requests - a.totals.requests);
 }
 
-function createBuckets(records: UsageRecord[], from: number, to: number): UsageBucket[] {
-  const duration = to - from;
-  const bucketSize = duration <= 6 * 60 * 60_000
-    ? 15 * 60_000
-    : duration <= 8 * 24 * 60 * 60_000
-      ? 60 * 60_000
-      : 24 * 60 * 60_000;
-  const count = Math.max(1, Math.min(96, Math.ceil(duration / bucketSize)));
-  const actualSize = Math.max(bucketSize, Math.ceil(duration / count));
-  const buckets = Array.from({ length: count }, (_, index) => {
-    const start = from + index * actualSize;
-    const date = new Date(start);
-    const label = actualSize >= 24 * 60 * 60_000
-      ? date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
-      : date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-    return { start, label, totals: emptyTotals() };
-  });
-  for (const record of records) {
-    const index = Math.min(buckets.length - 1, Math.max(0, Math.floor((record.timestamp - from) / actualSize)));
-    const bucket = buckets[index];
-    if (bucket) addTotals(bucket.totals, record);
-  }
-  return buckets.map((bucket) => ({ ...bucket, totals: finalizeTotals(bucket.totals) }));
-}
-
 export class UsageStore {
   private readonly cache = new Map<string, CachedFile>();
   private readonly sessionsRoot: string;
@@ -313,7 +287,6 @@ export class UsageStore {
       records,
       routers: groupRecords(records, (record) => record.provider, (record) => record.provider),
       models: groupRecords(records, (record) => record.model, (record) => record.model),
-      buckets: createBuckets(records, bounds.from, bounds.to),
     };
   }
 
