@@ -76,6 +76,22 @@ export const SearchSchema = Type.Object({
 
 export const StatusSchema = Type.Object({});
 
+export const GitActionEnum = Type.Union([
+	Type.Literal("status"),
+	Type.Literal("log"),
+	Type.Literal("diff"),
+	Type.Literal("show"),
+	Type.Literal("grep"),
+]);
+
+export const GitSchema = Type.Object({
+	action: GitActionEnum,
+	path: Type.Optional(Type.String({ description: "Path relativo ao repositório de memórias" })),
+	ref: Type.Optional(Type.String({ description: "Revisão Git, como HEAD~1 ou abc123" })),
+	query: Type.Optional(Type.String({ description: "Texto para busca textual no Git" })),
+	limit: Type.Optional(Type.Number({ description: "Limite de commits no log (1 a 100)" })),
+});
+
 export const DecaySchema = Type.Object({
 	context: Type.String({ description: "Context key of the memory to decay" }),
 	delta: Type.Number({

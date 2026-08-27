@@ -150,6 +150,39 @@ export class MemoryGitRepository {
 		}
 	}
 
+	/** Retorna o estado atual do repositório para manutenção manual. */
+	status(): string {
+		return this.runGit(["status", "--short"], this.root);
+	}
+
+	/** Retorna commits recentes, limitados para não inundar o contexto do agente. */
+	log(limit = 20): string {
+		const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+		return this.runGit(["log", "--oneline", "--decorate", "-n", String(safeLimit)], this.root);
+	}
+
+	/** Compara o working tree ou uma revisão com um path opcional. */
+	diff(path?: string, ref?: string): string {
+		const args = ["diff"];
+		if (ref) args.push(ref);
+		args.push("--");
+		if (path) args.push(this.toRepoPath(path));
+		return this.runGit(args, this.root);
+	}
+
+	/** Lê o conteúdo de um path em uma revisão específica. */
+	show(ref: string, path: string): string {
+		return this.runGit(["show", `${ref}:${this.toRepoPath(path)}`], this.root);
+	}
+
+	/** Busca texto no snapshot atual ou em uma revisão. */
+	grep(query: string, ref?: string): string {
+		const args = ["grep", "-n", "-e", query];
+		if (ref) args.push(ref);
+		args.push("--");
+		return this.runGit(args, this.root);
+	}
+
 	/** Tenta concluir mutações que ficaram pendentes por falha do Git. */
 	recoverPending(): MemoryGitResult {
 		const pending = this.readPending();

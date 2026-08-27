@@ -81,6 +81,7 @@ import { registerMemorySave } from "./tools/save.ts";
 import { registerMemorySearch } from "./tools/search.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
 import { registerMemoryConfig } from "./tools/config.ts";
+import { registerMemoryGit } from "./tools/git.ts";
 import { commitGit, emitMemoryStats, type ToolState } from "./tools/state.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -529,6 +530,7 @@ export default function (pi: ExtensionAPI) {
 
 		state.index?.close();
 		state.index = null;
+		state.memoryGit = null;
 		state.pipeline = null;
 		state.worker = null;
 		await worker?.stop();
@@ -543,5 +545,6 @@ export default function (pi: ExtensionAPI) {
 	registerMemoryDecay(pi, state);
 	registerMemoryExtract(pi, state);
 	registerMemoryRetention(pi, state);
+	registerMemoryGit(pi, state);
 	registerMemoryConfig(pi);
 }
