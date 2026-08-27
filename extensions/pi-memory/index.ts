@@ -63,6 +63,7 @@ import { normalizePendingEpisodes } from "./pipeline/evidence.ts";
 import { generateSessionHash, hashSessionFile } from "./session.ts";
 import { PipelineWorker, maybeCreateJob } from "./pipeline/worker.ts";
 import { getModelProcessorConfig } from "./memory/config.ts";
+import { formatMemoryCommitMessage, MemoryGitRepository } from "./memory/memory-git.ts";
 import { formatExistingMemories } from "./pipeline/extractor.ts";
 import {
 	createExtractionProcessor,
@@ -80,7 +81,8 @@ import { registerMemorySave } from "./tools/save.ts";
 import { registerMemorySearch } from "./tools/search.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
 import { registerMemoryConfig } from "./tools/config.ts";
-import { emitMemoryStats, type ToolState } from "./tools/state.ts";
+import { registerMemoryGit } from "./tools/git.ts";
+import { commitGit, emitMemoryStats, type ToolState } from "./tools/state.ts";
 
 export default function (pi: ExtensionAPI) {
 	// Estado compartilhado entre event handlers e tools (tools mutam via referência)
@@ -94,6 +96,7 @@ export default function (pi: ExtensionAPI) {
 		worker: null,
 		retention: null,
 		retentionScheduler: null,
+		memoryGit: null,
 	};
 
 	// Pipeline operacional (episódios → worker). Null se indisponível —
@@ -216,6 +219,26 @@ export default function (pi: ExtensionAPI) {
 					// degrada — próximo syncIncremental reconcilia
 				}
 			}
+
+			const gitAction =
+				candidate.action === "supersede"
+					? "substitui"
+					: result.action === "created"
+						? "cria"
+						: "atualiza";
+			const git = commitGit(
+				state,
+				result.gitPaths,
+				formatMemoryCommitMessage({
+					projectId,
+					scope: candidate.scope as "global" | "project",
+					type: candidate.type,
+					action: gitAction,
+					context: candidate.context,
+				}),
+			);
+			if (!git.ok) console.warn(`[pi-memory] memória salva sem commit Git: ${git.error}`);
+
 			state.cachedIndexText = null; // invalida o índice do system prompt
 			emitMemoryStats(pi, state); // status-bar atualiza após commit
 			return { ok: true };
@@ -228,11 +251,26 @@ export default function (pi: ExtensionAPI) {
 		state.projectId = identifyProject(ctx.cwd);
 		ensureDirectories(state.projectId);
 
+		// Repositório Git aninhado: Markdown continua canônico; Git registra as
+		// mutações e mantém histórico independente do repositório do projeto.
+		try {
+			state.memoryGit = new MemoryGitRepository();
+			const git = state.memoryGit.initialize();
+			if (!git.ok) {
+				console.warn(`[pi-memory] versionamento Git indisponível: ${git.error}`);
+			}
+		} catch (err) {
+			state.memoryGit = null;
+			console.warn(`[pi-memory] inicialização Git falhou: ${(err as Error).message}`);
+		}
+
+		const startupGitPaths: string[] = [];
+
 		// Migração única de memórias legadas (v1 append → snapshot v2).
 		// Idempotente: arquivos v2 (meta.revision) são pulados. Roda ANTES do
 		// sync do índice — o FTS já lê o formato v2.
 		try {
-			const migrated = migrateLegacyMemories(state.projectId);
+			const migrated = migrateLegacyMemories(state.projectId, startupGitPaths);
 			if (migrated > 0) {
 				console.warn(`[pi-memory] migradas ${migrated} memória(s) para snapshot v2`);
 			}
@@ -244,12 +282,21 @@ export default function (pi: ExtensionAPI) {
 		// identidade (v2). Idempotente e NÃO altera updated/confidence — a
 		// ordenação por recência e o estado factual ficam intactos.
 		try {
-			const identified = ensureMemoryIdentities(state.projectId);
+			const identified = ensureMemoryIdentities(state.projectId, startupGitPaths);
 			if (identified > 0) {
 				console.warn(`[pi-memory] identificadas ${identified} memória(s) (frontmatter v3)`);
 			}
 		} catch (err) {
 			console.warn(`[pi-memory] atribuição de identidade falhou: ${(err as Error).message}`);
+		}
+
+		if (startupGitPaths.length > 0) {
+			const git = commitGit(
+				state,
+				[...new Set(startupGitPaths)],
+				`[${state.projectId}] mem(repo): migra metadados das memórias`,
+			);
+			if (!git.ok) console.warn(`[pi-memory] migração sem commit Git: ${git.error}`);
 		}
 
 		const sessionFile = ctx.sessionManager.getSessionFile();
@@ -483,6 +530,7 @@ export default function (pi: ExtensionAPI) {
 
 		state.index?.close();
 		state.index = null;
+		state.memoryGit = null;
 		state.pipeline = null;
 		state.worker = null;
 		await worker?.stop();
@@ -497,5 +545,6 @@ export default function (pi: ExtensionAPI) {
 	registerMemoryDecay(pi, state);
 	registerMemoryExtract(pi, state);
 	registerMemoryRetention(pi, state);
+	registerMemoryGit(pi, state);
 	registerMemoryConfig(pi);
 }

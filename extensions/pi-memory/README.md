@@ -156,6 +156,8 @@ Toda escrita é uma reescrita do estado atual:
 memories/
 ├── _global/<type>/<context>.md          ← memórias globais
 ├── projects/<projectId>/<type>/<context>.md
+├── .git/                                 ← repositório Git aninhado
+├── .gitignore                            ← bancos e temporários ignorados
 ├── .history/<path>/v{N}.md              ← versão anterior (revisões)
 ├── .supersedes/<path>                   ← memória substituída por OUTRA chave
 ├── .pipeline.sqlite                     ← episódios/evidências/jobs/candidatos
@@ -169,6 +171,29 @@ memories/
   `confidence`, `tags`, `evidence`.
 - `supersedes` move a memória da outra chave para `.supersedes/`.
 
+### 5b. Versionamento Git
+
+`memories/` possui um repositório Git aninhado e independente do repositório do
+código. O repositório é inicializado de forma idempotente no `session_start`;
+memórias existentes entram no baseline inicial. Apenas Markdown e arquivos de
+configuração do repositório são versionados; SQLite, WAL e temporários ficam no
+`.gitignore` interno.
+
+Cada mutação lógica persistida gera um commit com os paths afetados (memória
+ativa, `.history/` e/ou `.supersedes/`). A convenção é:
+
+```text
+[<project-id>] mem(<global|projects>/<tipo>): <ação> <context>
+```
+
+Exemplo: `[github-offmiijin_offmiijin_pi-config] mem(projects/decisions):
+atualiza pi-memory-git`. Falhas de commit não desfazem o Markdown canônico;
+a operação fica registrada para recuperação no próximo início.
+
+A tool `memory_git` permite inspeção somente leitura de `status`, `log`, `diff`,
+`show` e `grep`. Restaurações deliberadas continuam sendo operações manuais no
+repositório `memories/`.
+
 ### 6. Busca e tools (Fase 6)
 
 - `memory_search` → FTS5/BM25 (fallback ripgrep), escopos `global`/`project`/`all`.
@@ -179,6 +204,7 @@ memories/
 - `memory_save` / `memory_decay` → escrita/decay de memórias (snapshot).
 - `memory_retention` → status/preview/run do decay por inatividade (feature
   flag — ver [Retenção por inatividade]).
+- `memory_git` → inspeção read-only do repositório Git de memórias.
 
 ### 6b. Retenção por inatividade (feature flag)
 
@@ -256,13 +282,13 @@ seleção alvo 12K / cap 18K tokens.
 
 ```bash
 cd ~/.pi/agent/extensions/pi-memory
-bun test            # 402 testes (Bun)
+bun test            # 410 testes (Bun)
 npm run typecheck   # tsc strict
 ```
 
-- **Unit/integração** (`tests/`): 25 arquivos cobrindo pipeline (episódios,
+- **Unit/integração** (`tests/`): 27 arquivos cobrindo pipeline (episódios,
   jobs, worker, retry), extração/validação (processor, validator, extractor),
-  memória (CRUD, snapshot, migração v1→v2, escrita atômica), índice FTS,
+  memória (CRUD, snapshot, migração v1→v2, escrita atômica, Git), índice FTS,
   retenção (algoritmo, store, scheduler, tool, frontmatter v3), evidências
   (sanitização de segredos), schemas e tools.
 - **E2E real** (`e2e/e2e-real.ts`): script manual que roda o pipeline
@@ -297,13 +323,14 @@ extensions/pi-memory/
 ├── memory/             CRUD de memórias
 │   ├── config.ts        configuração persistente do modelo do processor
 │   ├── memory.ts       saveMemory, snapshot v2/v3, migração, arquivamento
+│   ├── memory-git.ts    repositório Git aninhado e commits de mutação
 │   ├── memory-index.ts índice FTS5 (.index.sqlite) com retention_score
 │   ├── memory-search.ts fallback de busca via ripgrep
 │   ├── retention.ts    algoritmo de retenção (funções puras)
 │   ├── retention-store.ts .retention.sqlite (atividade de uso)
 │   └── retention-scheduler.ts sweep periódico de retenção
-├── tools/              tools e comando /memory config
-├── tests/              26 arquivos de teste
+├── tools/              tools e comando /memory config, memory_git
+├── tests/              27 arquivos de teste
 ├── docs/               arquitetura (retention.md)
 └── e2e/                E2E manual com LLM real
 ```

@@ -480,6 +480,8 @@ export function saveMemory(
 	error?: string;
 	/** Paths absolutos arquivados nesta chamada (.supersedes/ ou .history/). */
 	archived: string[];
+	/** Paths absolutos criados, substituídos ou removidos para o commit Git. */
+	gitPaths: string[];
 } {
 	const {
 		type,
@@ -506,6 +508,7 @@ export function saveMemory(
 			revision: 0,
 			error: `Invalid memory type "${type}" (expected one of: ${MEMORY_TYPES.join(", ")})`,
 			archived,
+			gitPaths: [],
 		};
 	}
 
@@ -642,11 +645,19 @@ export function saveMemory(
 		}
 	}
 
+	const gitPaths = [
+		filePath,
+		...pendingArchives.flatMap((a) => [
+			a.targetPath,
+			...(a.removeOriginalPath ? [a.removeOriginalPath] : []),
+		]),
+	];
 	return {
 		action: existed ? "consolidated" : "created",
 		file: filePath,
 		revision,
 		archived,
+		gitPaths: [...new Set(gitPaths)],
 	};
 }
 
@@ -663,7 +674,7 @@ export function saveMemory(
  * baseline) e o path ativo é reescrito como snapshot v2 com a ÚLTIMA
  * entrada como estado atual. Retorna true quando migrou.
  */
-export function migrateMemoryToSnapshot(filePath: string): boolean {
+export function migrateMemoryToSnapshot(filePath: string, changedPaths: string[] = []): boolean {
 	const content = readFileSync(filePath, "utf-8");
 	const { meta, body } = parseFrontmatter(content);
 	if (typeof meta.revision === "number") return false; // já v2
@@ -704,6 +715,7 @@ export function migrateMemoryToSnapshot(filePath: string): boolean {
 	if (typeof meta.summary === "string") metaOut.summary = meta.summary;
 
 	writeFileAtomic(filePath, formatFrontmatter(metaOut) + `# ${lastTitle}\n\n${lastContent}\n`);
+	changedPaths.push(filePath, getHistoryPath(filePath, 0));
 	return true;
 }
 
@@ -713,7 +725,7 @@ export function migrateMemoryToSnapshot(filePath: string): boolean {
  * segue). Retorna quantas migrou. Chamada no session_start antes do sync
  * do índice — o FTS já lê o formato v2.
  */
-export function migrateLegacyMemories(projectId: string): number {
+export function migrateLegacyMemories(projectId: string, changedPaths: string[] = []): number {
 	let migrated = 0;
 	for (const scope of ["global", "project"] as const) {
 		for (const type of MEMORY_TYPES) {
@@ -725,7 +737,7 @@ export function migrateLegacyMemories(projectId: string): number {
 			for (const f of readdirSync(dir)) {
 				if (!f.endsWith(".md")) continue;
 				try {
-					if (migrateMemoryToSnapshot(join(dir, f))) migrated++;
+					if (migrateMemoryToSnapshot(join(dir, f), changedPaths)) migrated++;
 				} catch {
 					// arquivo corrompido — não bloqueia a migração do restante
 				}
@@ -750,7 +762,7 @@ export function migrateLegacyMemories(projectId: string): number {
  *
  * Retorna quantas memórias receberam metadados novos.
  */
-export function ensureMemoryIdentities(projectId: string): number {
+export function ensureMemoryIdentities(projectId: string, changedPaths: string[] = []): number {
 	let updated = 0;
 	for (const scope of ["global", "project"] as const) {
 		for (const type of MEMORY_TYPES) {
@@ -772,6 +784,7 @@ export function ensureMemoryIdentities(projectId: string): number {
 					if (needsId) meta.memory_id = randomUUID();
 					if (needsPolicy) meta.retention_policy = defaultRetentionPolicy(type);
 					writeFileAtomic(filePath, formatFrontmatter(meta) + body);
+					changedPaths.push(filePath);
 					updated++;
 				} catch {
 					// arquivo corrompido — não bloqueia a migração do restante

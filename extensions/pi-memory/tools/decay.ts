@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readMemoryDocFromFile, relFromMemoriesRoot } from "../memory/memory-index.ts";
+import { formatMemoryCommitMessage } from "../memory/memory-git.ts";
 import {
 	applyDecay,
 	findMemoryFile,
@@ -18,7 +19,7 @@ import {
 	parseFrontmatter,
 } from "../memory/memory.ts";
 import { DecaySchema } from "../schemas.ts";
-import { emitMemoryStats, syncIndex, type IndexStatus, type ToolState } from "./state.ts";
+import { commitGit, emitMemoryStats, syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 
 export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -69,6 +70,18 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 				// Sai do índice ativo (arquivo movido para .supersedes/). Falha
 				// de índice não reverte o movimento — o markdown já é canônico.
 				const index = syncIndex(state, { upsert: [], remove: [relFromMemoriesRoot(filePath)] });
+				const git = commitGit(
+					state,
+					[filePath, supPath],
+					formatMemoryCommitMessage({
+						projectId: state.projectId,
+						scope: filePath.includes("/_global/") ? "global" : "project",
+						type: typeof meta.type === "string" ? meta.type : "memoria",
+						action: "substitui",
+						context,
+					}),
+				);
+				if (!git.ok) console.warn(`[pi-memory] memória movida sem commit Git: ${git.error}`);
 				emitMemoryStats(pi, state); // status-bar reflete a nova contagem
 				return {
 					content: [
@@ -77,7 +90,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 							text: `Moved memory "${context}" to .supersedes/`,
 						},
 					],
-					details: { action: "superseded", file: supPath, context, index },
+					details: { action: "superseded", file: supPath, context, index, git },
 				};
 			}
 
@@ -89,6 +102,18 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 					superseded_reason: reason,
 				});
 				const index = syncIndex(state, { upsert: [], remove: [relFromMemoriesRoot(filePath)] });
+				const git = commitGit(
+					state,
+					[filePath, supPath],
+					formatMemoryCommitMessage({
+						projectId: state.projectId,
+						scope: filePath.includes("/_global/") ? "global" : "project",
+						type: typeof meta.type === "string" ? meta.type : "memoria",
+						action: "substitui",
+						context,
+					}),
+				);
+				if (!git.ok) console.warn(`[pi-memory] memória movida sem commit Git: ${git.error}`);
 				emitMemoryStats(pi, state); // status-bar reflete a nova contagem
 				return {
 					content: [
@@ -97,7 +122,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 							text: `Confidence reached 0 — moved "${context}" to .supersedes/`,
 						},
 					],
-					details: { action: "superseded", file: supPath, context, index },
+					details: { action: "superseded", file: supPath, context, index, git },
 				};
 			}
 
@@ -125,6 +150,18 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 					);
 				}
 			}
+			const git = commitGit(
+				state,
+				[filePath],
+				formatMemoryCommitMessage({
+					projectId: state.projectId,
+					scope: filePath.includes("/_global/") ? "global" : "project",
+					type: typeof meta.type === "string" ? meta.type : "memoria",
+					action: "reduz",
+					context,
+				}),
+			);
+			if (!git.ok) console.warn(`[pi-memory] confiança reduzida sem commit Git: ${git.error}`);
 			emitMemoryStats(pi, state); // status-bar reflete a nova contagem
 
 			return {
@@ -134,7 +171,7 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 						text: `Reduced confidence of "${context}" from ${currentConf} to ${newConf}`,
 					},
 				],
-				details: { action: "decayed", file: filePath, context, confidence: newConf, index },
+				details: { action: "decayed", file: filePath, context, confidence: newConf, index, git },
 			};
 		},
 	});

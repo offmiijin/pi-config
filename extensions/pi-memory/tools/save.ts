@@ -5,9 +5,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { MEMORY_LANGUAGE_RULE } from "../constants.ts";
 import { readMemoryDocFromFile, relFromMemoriesRoot, type IndexDocument } from "../memory/memory-index.ts";
+import { formatMemoryCommitMessage } from "../memory/memory-git.ts";
 import { saveMemory } from "../memory/memory.ts";
 import { SaveSchema } from "../schemas.ts";
-import { emitMemoryStats, syncIndex, type IndexStatus, type ToolState } from "./state.ts";
+import { commitGit, emitMemoryStats, syncIndex, type IndexStatus, type ToolState } from "./state.ts";
 
 export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
@@ -75,6 +76,23 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 				}
 			}
 
+			const git = commitGit(
+				state,
+				result.gitPaths,
+				formatMemoryCommitMessage({
+					projectId: state.projectId,
+					scope: params.scope,
+					type: params.type,
+					action: params.supersedes
+						? "substitui"
+						: result.action === "created"
+							? "cria"
+							: "atualiza",
+					context: params.context,
+				}),
+			);
+			if (!git.ok) console.warn(`[pi-memory] memória salva sem commit Git: ${git.error}`);
+
 			const text =
 				result.action === "created"
 					? `Created memory: ${params.scope}/${params.type}/${params.context}`
@@ -84,7 +102,7 @@ export function registerMemorySave(pi: ExtensionAPI, state: ToolState): void {
 
 			return {
 				content: [{ type: "text", text }],
-				details: { ...result, index },
+				details: { ...result, index, git },
 			};
 		},
 	});

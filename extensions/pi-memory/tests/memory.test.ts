@@ -518,6 +518,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		});
 
 		expect(result.action).toBe("created");
+		expect(result.gitPaths).toContain(result.file);
 		expect(existsSync(result.file)).toBeTrue();
 
 		const content = readFileSync(result.file, "utf-8");
@@ -573,6 +574,7 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 			"v1.md",
 		);
 		expect(existsSync(histPath)).toBeTrue();
+		expect(result.gitPaths).toContain(histPath);
 	});
 
 	it("snapshot: confiança é a da última escrita; .history/ acumula revisões", () => {
