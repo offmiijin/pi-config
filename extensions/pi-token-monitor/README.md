@@ -24,7 +24,10 @@ O painel não expõe nem agrega chaves de API.
 
 - `/token-monitor` abre/fecha o overlay;
 - `Alt+M` abre/fecha o overlay;
-- `Tab` alterna o foco dos filtros;
+- `Tab` alterna o foco entre o conteúdo do modo e os filtros;
+- `←`/`→` alternam o campo de filtro focado, sem alterar o valor;
+- `Enter` abre/confirmar a seleção do filtro;
+- `↑`/`↓` navegam pelos itens da Tabela e pelos detalhes quando o conteúdo está focado;
 - `V` alterna Resumo, Tabela e Detalhes;
 - `R` força uma atualização;
 - `Esc` fecha o painel.

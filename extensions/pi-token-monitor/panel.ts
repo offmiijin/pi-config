@@ -30,6 +30,7 @@ const VIEW_LABELS: Record<TokenMonitorView, string> = {
   details: "Detalhes",
 };
 const FILTERS = ["period", "router", "model"] as const;
+type FocusArea = "filters" | "content";
 
 function formatCompact(value: number): string {
   const absolute = Math.abs(value);
@@ -150,6 +151,7 @@ export class TokenMonitorPanel implements Component {
   private readonly onRefresh: () => void;
   private readonly onFilterSelect?: FilterSelectCallback;
   private view: TokenMonitorView = "overview";
+  private focusArea: FocusArea = "filters";
   private filterFocus: FilterFocus = "period";
   private selectedRow = 0;
 
@@ -173,7 +175,7 @@ export class TokenMonitorPanel implements Component {
 
   setSnapshot(snapshot: UsageSnapshot): void {
     this.snapshot = snapshot;
-    this.selectedRow = Math.min(this.selectedRow, Math.max(0, snapshot.records.length - 1));
+    this.clampSelectedRow();
     this.tui.requestRender();
   }
 
@@ -187,16 +189,17 @@ export class TokenMonitorPanel implements Component {
       return;
     }
     if (matchesKey(data, Key.tab)) {
-      this.filterFocus = FILTERS[(FILTERS.indexOf(this.filterFocus) + 1) % FILTERS.length]!;
+      this.focusArea = this.focusArea === "content" ? "filters" : "content";
       this.tui.requestRender();
       return;
     }
     if (data === "v") {
       this.view = VIEWS[(VIEWS.indexOf(this.view) + 1) % VIEWS.length]!;
+      this.clampSelectedRow();
       this.tui.requestRender();
       return;
     }
-    if (matchesKey(data, Key.enter) && this.onFilterSelect) {
+    if (matchesKey(data, Key.enter) && this.focusArea === "filters" && this.onFilterSelect) {
       void this.onFilterSelect(this.filterFocus, this.snapshot.filter, this.filterOptions()).then((selection) => {
         if (selection) this.applyFilterSelection(selection);
       });
@@ -207,17 +210,27 @@ export class TokenMonitorPanel implements Component {
       return;
     }
     if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
-      if (this.view === "table" || this.view === "details") {
+      if (this.focusArea === "content" && (this.view === "table" || this.view === "details")) {
         const delta = matchesKey(data, Key.up) ? -1 : 1;
-        this.selectedRow = Math.max(0, Math.min(this.snapshot.records.length - 1, this.selectedRow + delta));
+        const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.snapshot.records.length - 1;
+        this.selectedRow = Math.max(0, Math.min(maxRow, this.selectedRow + delta));
         this.tui.requestRender();
       }
       return;
     }
-    if (data === "j" || data === "J") {
-      this.selectedRow = Math.min(this.snapshot.records.length - 1, this.selectedRow + 1);
+    if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+      if (this.focusArea === "filters") {
+        const delta = matchesKey(data, Key.left) ? -1 : 1;
+        this.filterFocus = FILTERS[(FILTERS.indexOf(this.filterFocus) + delta + FILTERS.length) % FILTERS.length]!;
+        this.tui.requestRender();
+      }
+      return;
+    }
+    if (this.focusArea === "content" && (data === "j" || data === "J")) {
+      const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.snapshot.records.length - 1;
+      this.selectedRow = Math.min(maxRow, this.selectedRow + 1);
       this.tui.requestRender();
-    } else if (data === "k" || data === "K") {
+    } else if (this.focusArea === "content" && (data === "k" || data === "K")) {
       this.selectedRow = Math.max(0, this.selectedRow - 1);
       this.tui.requestRender();
     }
@@ -242,10 +255,11 @@ export class TokenMonitorPanel implements Component {
     const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.90));
     const footerRows = 3;
     const availableBodyRows = Math.max(1, maxPanelRows - lines.length - footerRows);
-    const visibleContent = content.slice(0, availableBodyRows);
+    const contentOffset = this.getContentOffset(content.length, availableBodyRows);
+    const visibleContent = content.slice(contentOffset, contentOffset + availableBodyRows);
     lines.push(...visibleContent.map(row));
     lines.push(separator);
-    lines.push(row(this.theme.fg("dim", " Tab filtros  Enter selecionar  ↑↓ navegar  V modo  R atualizar  Esc fechar ")));
+    lines.push(row(this.theme.fg("dim", " Tab modo/filtros  ←→ campo  Enter selecionar  ↑↓ navegar  V modo  R atualizar  Esc fechar ")));
     lines.push(`╰${"─".repeat(innerWidth)}╯`);
     return lines.slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
   }
@@ -276,7 +290,7 @@ export class TokenMonitorPanel implements Component {
   }
 
   private filterField(label: string, value: string, focus: FilterFocus): string {
-    const color = this.filterFocus === focus ? "accent" : "muted";
+    const color = this.focusArea === "filters" && this.filterFocus === focus ? "accent" : "muted";
     return this.theme.fg(color, `${label}: ${value}`);
   }
 
@@ -285,7 +299,7 @@ export class TokenMonitorPanel implements Component {
     const cards = [
       ["TOTAL GASTO", formatCost(totals.cost)],
       ["REQUISIÇÕES", formatCompact(totals.requests)],
-      ["TOKENS FRESCOS", formatCompact(totals.freshTokens)],
+      ["TOKENS GASTOS", formatCompact(totals.freshTokens)],
       ["CACHE HIT", formatPercent(totals.cacheHit)],
     ];
     const cardWidth = Math.max(15, Math.floor((width - 3) / cards.length));
@@ -341,6 +355,20 @@ export class TokenMonitorPanel implements Component {
     ];
     for (const [label, value] of fields) lines.push(` ${this.theme.fg("muted", this.pad(`${label}:`, 22))} ${truncateToWidth(value, Math.max(1, width - 24), "")}`);
     return lines;
+  }
+
+  private clampSelectedRow(): void {
+    const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.snapshot.records.length - 1;
+    this.selectedRow = Math.max(0, Math.min(maxRow, this.selectedRow));
+  }
+
+  private getContentOffset(contentLength: number, visibleRows: number): number {
+    if (this.view !== "table" || this.snapshot.models.length === 0) return 0;
+    const selectedContentRow = 3 + this.selectedRow;
+    return Math.max(0, Math.min(
+      Math.max(0, contentLength - visibleRows),
+      selectedContentRow - visibleRows + 1,
+    ));
   }
 
   private filterOptions(): readonly FilterOption[] {

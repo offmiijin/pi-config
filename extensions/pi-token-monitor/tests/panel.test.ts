@@ -53,14 +53,14 @@ function snapshot(): UsageSnapshot {
   };
 }
 
-function setup() {
+function setup(source = snapshot(), rows = 30) {
   const calls: number[] = [];
   const queries: unknown[] = [];
-  const tui = { terminal: { rows: 30 }, requestRender: () => calls.push(1) } as any;
+  const tui = { terminal: { rows }, requestRender: () => calls.push(1) } as any;
   const panel = new TokenMonitorPanel(
     tui,
     fakeTheme(),
-    snapshot(),
+    source,
     (query) => queries.push(query),
     () => calls.push(2),
     () => calls.push(3),
@@ -75,6 +75,8 @@ describe("painel do monitor de tokens", () => {
     expect(body).toContain("Monitor de Tokens");
     expect(body).toContain("TOTAL GASTO");
     expect(body).toContain("REQUISIÇÕES");
+    expect(body).toContain("TOKENS GASTOS");
+    expect(body).not.toContain("TOKENS FRESCOS");
     expect(body).toContain("anthropic");
     expect(body).toContain("Modelo: Todos");
   });
@@ -130,11 +132,28 @@ describe("painel do monitor de tokens", () => {
         return { value: "openrouter" };
       },
     );
-    panel.handleInput("\t");
+    panel.handleInput("\x1b[C"); // router
     panel.handleInput("\r");
     await Promise.resolve();
     expect(received?.focus).toBe("router");
     expect(received?.options.map((option: any) => option.label)).toEqual(["Todos", "anthropic", "openrouter"]);
+  });
+
+  it("mantém a seleção visível ao navegar pela tabela e alterna o foco com Tab", () => {
+    const source = snapshot();
+    source.models = [
+      source.models[0]!,
+      { key: "claude-haiku", label: "claude-haiku", totals: source.models[0]!.totals },
+    ];
+    source.availableModels = ["claude-haiku", "claude-sonnet"];
+    const { panel } = setup(source, 8);
+    panel.handleInput("v");
+    panel.handleInput("\t"); // modelos
+    panel.handleInput("\x1b[B");
+    expect(panel.render(100).join("\n")).toContain("▶ claude-haiku");
+    panel.handleInput("\t"); // filtros
+    panel.handleInput("\r");
+    expect(panel.render(100).join("\n")).toContain("· Tabela");
   });
 
   it("não altera filtros com as setas esquerda e direita", () => {
