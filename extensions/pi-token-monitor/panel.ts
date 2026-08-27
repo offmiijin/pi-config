@@ -80,13 +80,16 @@ function metricLabel(metric: GraphMetric): string {
   return "Tokens frescos";
 }
 
+function sampleValues(values: number[], width: number): number[] {
+  if (values.length <= width) return values;
+  return Array.from({ length: width }, (_, index) => values[Math.floor(index * values.length / width)] ?? 0);
+}
+
 function sparkline(values: number[], width: number): string {
   if (width <= 0) return "";
   const marks = "▁▂▃▄▅▆▇█";
-  if (values.length === 0 || values.every((value) => value === 0)) return "·".repeat(Math.min(width, 24));
-  const sampled = values.length <= width
-    ? values
-    : Array.from({ length: width }, (_, index) => values[Math.floor(index * values.length / width)] ?? 0);
+  const sampled = sampleValues(values, width);
+  if (sampled.length === 0 || sampled.every((value) => value === 0)) return "·".repeat(Math.min(width, 24));
   const max = Math.max(...sampled, 1);
   return sampled.map((value) => marks[Math.min(marks.length - 1, Math.round((value / max) * (marks.length - 1)))]).join("");
 }
@@ -196,15 +199,22 @@ export class TokenMonitorPanel implements Component {
     lines.push(separator);
     lines.push(row(this.renderFilters(innerWidth)));
     lines.push(separator);
-    if (this.view === "overview") lines.push(...this.renderOverview(innerWidth).map(row));
-    if (this.view === "table") lines.push(...this.renderTable(innerWidth).map(row));
-    if (this.view === "graphs") lines.push(...this.renderGraphs(innerWidth).map(row));
-    if (this.view === "details") lines.push(...this.renderDetails(innerWidth).map(row));
+    const content = this.view === "overview"
+      ? this.renderOverview(innerWidth)
+      : this.view === "table"
+        ? this.renderTable(innerWidth)
+        : this.view === "graphs"
+          ? this.renderGraphs(innerWidth)
+          : this.renderDetails(innerWidth);
+    const targetRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.96));
+    const footerRows = 3;
+    const availableBodyRows = Math.max(1, targetRows - lines.length - footerRows);
+    lines.push(...content.slice(0, availableBodyRows).map(row));
+    while (lines.length < targetRows - footerRows) lines.push(row(""));
     lines.push(separator);
     lines.push(row(this.theme.fg("dim", " Tab filtros  ↑↓ navegar  V modo  G gráfico  R atualizar  Alt+M/Esc fechar ")));
     lines.push(`╰${"─".repeat(innerWidth)}╯`);
-    const maxRows = Math.max(8, this.tui.terminal.rows - 1);
-    return lines.slice(0, maxRows).map((line) => truncateToWidth(line, width, ""));
+    return lines.slice(0, targetRows).map((line) => truncateToWidth(line, width, ""));
   }
 
   invalidate(): void {
@@ -256,14 +266,35 @@ export class TokenMonitorPanel implements Component {
 
   private renderMiniGraph(width: number): string[] {
     const values = this.snapshot.buckets.map((bucket) => metricValue(bucket.totals, this.graphMetric));
-    const chartWidth = Math.max(16, width - 16);
-    const chart = sparkline(values, chartWidth);
-    const first = this.snapshot.buckets[0]?.label ?? "";
-    const last = this.snapshot.buckets.at(-1)?.label ?? "";
-    return [
-      ` ${this.theme.fg("dim", "▏")} ${this.theme.fg("success", chart)}`,
-      ` ${this.theme.fg("dim", `${first} ${" ".repeat(Math.max(1, chartWidth - first.length - last.length))} ${last}`)}`,
-    ];
+    return this.renderChart(values, 4, width);
+  }
+
+  private renderChart(values: number[], height: number, width: number): string[] {
+    const chartWidth = Math.max(24, width - 11);
+    const sampled = sampleValues(values, chartWidth);
+    const max = Math.max(...sampled, 1);
+    const lines: string[] = [];
+    for (let row = height; row > 0; row--) {
+      const threshold = max * row / height;
+      const bars = sampled.map((value) => value >= threshold ? "█" : " ").join("");
+      const axis = metricValue({ ...emptyTotals(), cost: threshold, freshTokens: threshold, requests: threshold }, this.graphMetric);
+      lines.push(` ${this.theme.fg("dim", this.pad(this.graphMetric === "cost" ? formatCost(axis) : formatCompact(axis), 7))} ${this.theme.fg("dim", "│")} ${this.theme.fg("success", bars)}`);
+    }
+    lines.push(` ${this.theme.fg("dim", "       └" + "─".repeat(chartWidth))}`);
+    const labels = this.axisLabels(chartWidth);
+    lines.push(` ${this.theme.fg("dim", "        " + labels)}`);
+    return lines;
+  }
+
+  private axisLabels(width: number): string {
+    const buckets = this.snapshot.buckets;
+    if (buckets.length === 0) return "";
+    const count = Math.min(7, buckets.length);
+    const labels = Array.from({ length: count }, (_, index) => {
+      const bucket = buckets[Math.floor(index * (buckets.length - 1) / Math.max(1, count - 1))]!;
+      return bucket.label;
+    });
+    return truncateToWidth(labels.join("   "), width, "");
   }
 
   private renderGroups(groups: UsageGroup[], width: number, limit: number): string[] {
@@ -297,8 +328,8 @@ export class TokenMonitorPanel implements Component {
   private renderGraphs(width: number): string[] {
     const lines = [this.theme.fg("accent", this.theme.bold(` GRÁFICOS · ${metricLabel(this.graphMetric)}`))];
     const values = this.snapshot.buckets.map((bucket) => metricValue(bucket.totals, this.graphMetric));
-    lines.push(`${this.theme.fg("muted", "Total ")} ${this.theme.fg("success", sparkline(values, Math.max(20, width - 10)))}`);
-    lines.push(this.theme.fg("dim", "Cada coluna representa um intervalo do período selecionado."));
+    lines.push(this.theme.fg("dim", "Escala vertical automática · cada coluna representa um intervalo do período."));
+    lines.push(...this.renderChart(values, 8, width));
     lines.push("");
     for (const group of this.snapshot.models.slice(0, 6)) {
       const groupValues = this.snapshot.buckets.map((bucket, index) => {

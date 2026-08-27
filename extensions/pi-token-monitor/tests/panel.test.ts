@@ -48,7 +48,13 @@ function snapshot(): UsageSnapshot {
     }],
     routers: [{ key: "anthropic", label: "anthropic", totals }],
     models: [{ key: "claude-sonnet", label: "claude-sonnet", totals }],
-    buckets: [{ start: 0, label: "00:00", totals }],
+    buckets: [
+      { start: 0, label: "00:00", totals },
+      { start: 200, label: "04:00", totals },
+      { start: 400, label: "08:00", totals },
+      { start: 600, label: "12:00", totals },
+      { start: 800, label: "14:00", totals },
+    ],
   };
 }
 
@@ -84,6 +90,19 @@ describe("painel do monitor de tokens", () => {
       panel.handleInput("v");
       expect(panel.render(100).join("\n")).toContain(`· ${title}`);
     }
+  });
+
+  it("renderiza gráficos maiores com vários marcadores do eixo temporal", () => {
+    const { panel } = setup();
+    panel.handleInput("v");
+    panel.handleInput("v");
+    const body = panel.render(100).join("\n");
+    expect(body).toContain("00:00");
+    expect(body).toContain("04:00");
+    expect(body).toContain("08:00");
+    expect(body).toContain("12:00");
+    expect(body).toContain("14:00");
+    expect(panel.render(100).length).toBeGreaterThan(15);
   });
 
   it("navega pelos filtros e solicita uma nova consulta", () => {

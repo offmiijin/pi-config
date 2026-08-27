@@ -91,8 +91,8 @@ export default function (pi: ExtensionAPI): void {
           overlay: true,
           overlayOptions: {
             anchor: "center",
-            width: "92%",
-            maxHeight: "92%",
+            width: "98%",
+            maxHeight: "96%",
             margin: 1,
           },
         },
