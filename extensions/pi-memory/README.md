@@ -282,11 +282,11 @@ seleção alvo 12K / cap 18K tokens.
 
 ```bash
 cd ~/.pi/agent/extensions/pi-memory
-bun test            # 402 testes (Bun)
+bun test            # 410 testes (Bun)
 npm run typecheck   # tsc strict
 ```
 
-- **Unit/integração** (`tests/`): 25 arquivos cobrindo pipeline (episódios,
+- **Unit/integração** (`tests/`): 27 arquivos cobrindo pipeline (episódios,
   jobs, worker, retry), extração/validação (processor, validator, extractor),
   memória (CRUD, snapshot, migração v1→v2, escrita atômica, Git), índice FTS,
   retenção (algoritmo, store, scheduler, tool, frontmatter v3), evidências
