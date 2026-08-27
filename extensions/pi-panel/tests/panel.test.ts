@@ -72,7 +72,7 @@ describe("painel — truncamento e layout", () => {
 		expect(body).toContain("abc123");
 		expect(body).not.toContain("app.ts");
 		expect(body).toContain("src/utils.ts");
-		expect(body).not.toContain("Não commitadas");
+		expect(body).toContain("Não commitadas");
 	});
 
 	it("expande o commit selecionado e permite selecionar seus arquivos", () => {

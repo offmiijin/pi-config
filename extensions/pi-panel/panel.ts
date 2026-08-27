@@ -373,7 +373,12 @@ export class ChangesPanel implements Component {
 		const lines: string[] = [];
 		let selectedRange: LineRange | undefined;
 		const selectedKey = itemKey(this.selectedItem());
+		let previousGroupId: string | undefined;
 		for (const item of items) {
+			if (item.group.kind === "working-tree" && item.group.id !== previousGroupId) {
+				lines.push(padToWidth(this.theme.fg("warning", ` ${item.group.label}`), width));
+			}
+			previousGroupId = item.group.id;
 			const start = lines.length;
 			const selected = itemKey(item) === selectedKey;
 			if (item.kind === "commit") {
