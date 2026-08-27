@@ -272,7 +272,7 @@ export class TokenMonitorPanel implements Component {
       this.filterField("Router", router, "router"),
       this.filterField("Modelo", model, "model"),
     ];
-    return truncateToWidth(fields.join("    "), width, "");
+    return truncateToWidth(` ${fields.join("    ")}`, width, "");
   }
 
   private filterField(label: string, value: string, focus: FilterFocus): string {
@@ -289,7 +289,7 @@ export class TokenMonitorPanel implements Component {
       ["CACHE HIT", formatPercent(totals.cacheHit)],
     ];
     const cardWidth = Math.max(15, Math.floor((width - 3) / cards.length));
-    const cardLine = cards.map(([label, value]) => this.pad(`${this.theme.fg("muted", label)} ${this.theme.fg("accent", value)}`, cardWidth)).join("│");
+    const cardLine = ` ${cards.map(([label, value]) => this.pad(`${this.theme.fg("muted", label)} ${this.theme.fg("accent", value)}`, cardWidth)).join("│")}`;
     const lines = [cardLine, "", this.theme.fg("accent", this.theme.bold(" DISTRIBUIÇÃO POR ROUTER"))];
     lines.push(...this.renderGroups(this.snapshot.routers, width, 4));
     return lines;
@@ -307,17 +307,17 @@ export class TokenMonitorPanel implements Component {
 
   private renderTable(width: number): string[] {
     const lines = [this.theme.fg("accent", this.theme.bold(" MODELOS E ROUTERS"))];
-    const header = `${this.pad("Modelo", Math.max(24, Math.floor(width * 0.40)))} ${this.pad("Req", 8)} ${this.pad("Tokens", 12)} ${this.pad("Cache", 9)} ${this.pad("Gasto", 11)}`;
+    const header = ` ${this.pad("Modelo", Math.max(24, Math.floor(width * 0.40)))} ${this.pad("Req", 8)} ${this.pad("Tokens", 12)} ${this.pad("Cache", 9)} ${this.pad("Gasto", 11)}`;
     lines.push(this.theme.fg("muted", header));
-    lines.push(this.theme.fg("dim", "─".repeat(Math.min(width, visibleWidth(header)))));
+    lines.push(this.theme.fg("dim", ` ${"─".repeat(Math.min(width, visibleWidth(header)))}`));
     if (this.snapshot.models.length === 0) {
-      lines.push(this.theme.fg("dim", "Nenhum dado no período selecionado."));
+      lines.push(this.theme.fg("dim", " Nenhum dado no período selecionado."));
       return lines;
     }
     const nameWidth = Math.max(24, Math.floor(width * 0.40));
     for (const [index, group] of this.snapshot.models.entries()) {
       const marker = index === this.selectedRow ? "▶" : " ";
-      const name = this.pad(`${marker} ${groupLabel(group)}`, nameWidth);
+      const name = this.pad(` ${marker} ${groupLabel(group)}`, nameWidth);
       lines.push(`${name} ${this.pad(formatCompact(group.totals.requests), 8)} ${this.pad(formatCompact(group.totals.freshTokens), 12)} ${this.pad(formatPercent(group.totals.cacheHit), 9)} ${this.theme.fg("warning", this.pad(formatCost(group.totals.cost), 11))}`);
     }
     return lines;
@@ -325,7 +325,7 @@ export class TokenMonitorPanel implements Component {
 
   private renderDetails(width: number): string[] {
     const record = this.snapshot.records[this.selectedRow];
-    if (!record) return [this.theme.fg("dim", "Nenhuma requisição no período selecionado.")];
+    if (!record) return [this.theme.fg("dim", " Nenhuma requisição no período selecionado.")];
     const lines = [this.theme.fg("accent", this.theme.bold(" DETALHES DA REQUISIÇÃO"))];
     const fields: Array<[string, string]> = [
       ["Data", new Date(record.timestamp).toLocaleString("pt-BR")],
@@ -339,7 +339,7 @@ export class TokenMonitorPanel implements Component {
       ["Custo", formatCost(record.costTotal)],
       ["Sessão", record.sessionId],
     ];
-    for (const [label, value] of fields) lines.push(`${this.theme.fg("muted", this.pad(`${label}:`, 22))} ${truncateToWidth(value, Math.max(1, width - 24), "")}`);
+    for (const [label, value] of fields) lines.push(` ${this.theme.fg("muted", this.pad(`${label}:`, 22))} ${truncateToWidth(value, Math.max(1, width - 24), "")}`);
     return lines;
   }
 

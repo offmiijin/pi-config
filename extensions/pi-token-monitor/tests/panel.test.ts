@@ -79,6 +79,23 @@ describe("painel do monitor de tokens", () => {
     expect(body).toContain("Modelo: Todos");
   });
 
+  it("alinha filtros e conteúdos no mesmo recuo do título", () => {
+    const { panel } = setup();
+    const overview = panel.render(100).join("\n");
+    expect(overview).toContain("│ Monitor de Tokens");
+    expect(overview).toContain("│ Período:");
+    expect(overview).toContain("│ TOTAL GASTO");
+
+    panel.handleInput("v");
+    const table = panel.render(100).join("\n");
+    expect(table).toContain("│ Modelo");
+
+    panel.handleInput("v");
+    const details = panel.render(100).join("\n");
+    expect(details).toContain("│ Data:");
+    expect(details).toContain("│ Router:");
+  });
+
   it("alterna entre os quatro modos", () => {
     const { panel } = setup();
     for (const title of ["Tabela", "Detalhes", "Resumo"]) {
