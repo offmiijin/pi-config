@@ -4,6 +4,8 @@
 
 ### Added
 
+- `pi-memory`: adiciona repositório Git aninhado em `memories/`, baseline inicial, commits automáticos por mutação, lock de concorrência e recuperação de commits pendentes.
+- `pi-memory`: adiciona a tool read-only `memory_git` para consultar status, histórico, diffs, versões e busca textual das memórias.
 - `pi-web-search`: adiciona renderer local opcional em Python + Playwright para páginas SPA, com comunicação JSONL, instalação posterior via `/web_search config renderer install` e validação de Playwright, Chromium e protocolo.
 - `pi-web-search`: adiciona auto-complete para providers, renderer, instalação, status e modos de renderização, além de ajuda detalhada no `/web_search help` e no resumo de configuração.
 - `pi-memory`: adiciona configuração persistente do modelo do processor via `/memory config`, com autocomplete para `/memory info` e reutilização da autenticação do Pi.
