@@ -1,4 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { isKeyRepeat, Key, matchesKey } from "@earendil-works/pi-tui";
 import { UsageStore, type UsageCatalog } from "./data.ts";
 import type { UsageFilter } from "./types.ts";
@@ -38,12 +41,20 @@ export async function requestCustomPeriod(ctx: ExtensionContext): Promise<{ from
   return { from, to: to + 60_000 };
 }
 
-function getUsageCatalog(ctx: ExtensionContext): UsageCatalog {
-  const configured = ctx.modelRegistry.getAll().map((model) => model.provider);
-  const registered = typeof ctx.modelRegistry.getRegisteredProviderIds === "function"
-    ? [...ctx.modelRegistry.getRegisteredProviderIds()]
-    : [];
-  return { configuredRouters: [...new Set([...configured, ...registered])].sort() };
+function getUsageCatalog(): UsageCatalog {
+  const agentDir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(agentDir, "auth.json"), "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { configuredRouters: [] };
+    return {
+      configuredRouters: Object.entries(parsed)
+        .filter(([, credential]) => credential !== null && typeof credential === "object")
+        .map(([provider]) => provider)
+        .sort(),
+    };
+  } catch {
+    return { configuredRouters: [] };
+  }
 }
 
 function filterTitle(focus: FilterFocus): string {
@@ -115,7 +126,7 @@ export default function (pi: ExtensionAPI): void {
     refreshInFlight = true;
     try {
       const currentQuery = query ?? panel.getQuery();
-      const snapshot = await store.snapshot({ ...currentQuery, now: Date.now() }, getUsageCatalog(ctx));
+      const snapshot = await store.snapshot({ ...currentQuery, now: Date.now() }, getUsageCatalog());
       if (activePanel === panel) panel.setSnapshot(snapshot);
     } finally {
       refreshInFlight = false;
@@ -136,7 +147,7 @@ export default function (pi: ExtensionAPI): void {
 
     openingPanel = true;
     try {
-      const initialSnapshot = await store.snapshot({ period: "today", now: Date.now() }, getUsageCatalog(ctx));
+      const initialSnapshot = await store.snapshot({ period: "today", now: Date.now() }, getUsageCatalog());
       await ctx.ui.custom<void>(
         (tui, theme, _keybindings, done) => {
           const panel = new TokenMonitorPanel(
@@ -146,7 +157,6 @@ export default function (pi: ExtensionAPI): void {
             (query) => void refreshPanel(ctx, panel, query),
             () => void refreshPanel(ctx, panel),
             done,
-            () => requestCustomPeriod(ctx),
             (focus, current, options) => selectFilter(ctx, focus, current, options),
           );
           activePanel = panel;

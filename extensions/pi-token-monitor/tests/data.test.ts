@@ -86,7 +86,7 @@ describe("monitor de tokens — leitura de sessões", () => {
     expect(snapshot.totals.cacheHit).toBeCloseTo(80 / 190);
     expect(snapshot.routers[0]?.label).toBe("anthropic");
     expect(snapshot.models[0]?.label).toBe("claude-sonnet");
-    expect(snapshot.availableRouters).toEqual(["anthropic", "google", "openai", "openrouter"]);
+    expect(snapshot.availableRouters).toEqual(["anthropic", "google", "openrouter"]);
     expect(snapshot.availableModels).toEqual(["claude-sonnet"]);
 
     const otherRouter = await store.snapshot({ period: "last15m", now: 100_000, router: "openai" });

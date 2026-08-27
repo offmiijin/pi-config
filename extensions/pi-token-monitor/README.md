@@ -31,4 +31,4 @@ O painel não expõe nem agrega chaves de API.
 
 O período `Data personalizada` solicita data inicial e final no formato `DD/MM/AAAA HH:mm`. Pressionar `Enter` sobre Período, Router ou Modelo abre um seletor menor; `Esc` cancela e `Enter` confirma.
 
-As opções de Router combinam os providers configurados no registro de modelos com os providers encontrados no histórico. As opções de Modelo são recalculadas usando o período e router atuais, antes de aplicar o filtro de modelo.
+As opções de Router mostram apenas os providers com credencial armazenada no `auth.json`. As opções de Modelo são recalculadas usando o período e router atuais, antes de aplicar o filtro de modelo.

@@ -108,7 +108,6 @@ describe("painel do monitor de tokens", () => {
       () => {},
       () => {},
       () => {},
-      undefined,
       async (focus, _current, options) => {
         received = { focus, options };
         return { value: "openrouter" };
@@ -121,14 +120,17 @@ describe("painel do monitor de tokens", () => {
     expect(received?.options.map((option: any) => option.label)).toEqual(["Todos", "anthropic", "openrouter"]);
   });
 
-  it("navega pelos filtros e solicita uma nova consulta", () => {
+  it("não altera filtros com as setas esquerda e direita", () => {
     const { panel, queries } = setup();
+    panel.handleInput("\x1b[A");
+    panel.handleInput("\x1b[B");
     panel.handleInput("\t"); // router
+    panel.handleInput("\x1b[D");
     panel.handleInput("\x1b[C");
-    expect(queries[0]).toMatchObject({ router: "anthropic" });
     panel.handleInput("\t"); // model
+    panel.handleInput("\x1b[D");
     panel.handleInput("\x1b[C");
-    expect(queries[1]).toMatchObject({ model: "claude-sonnet" });
+    expect(queries).toEqual([]);
   });
 
   it("fecha com Escape e atualiza com R", () => {

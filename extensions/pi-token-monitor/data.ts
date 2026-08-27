@@ -292,10 +292,7 @@ export class UsageStore {
       records,
       routers: groupRecords(records, (record) => record.provider, (record) => record.provider),
       models: groupRecords(records, (record) => record.model, (record) => record.model),
-      availableRouters: [...new Set([
-        ...(catalog.configuredRouters ?? []),
-        ...allRecords.map((record) => record.provider),
-      ])].sort(),
+      availableRouters: [...new Set(catalog.configuredRouters ?? [])].sort(),
       availableModels: [...new Set(periodRecords.map((record) => record.model))].sort(),
     };
   }

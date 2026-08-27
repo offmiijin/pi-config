@@ -65,7 +65,6 @@ export interface FilterSelection {
   customFrom?: number;
   customTo?: number;
 }
-export type CustomPeriodCallback = () => Promise<{ from: number; to: number } | null>;
 export type FilterSelectCallback = (
   focus: FilterFocus,
   current: UsageFilter,
@@ -149,7 +148,6 @@ export class TokenMonitorPanel implements Component {
   private readonly onClose: () => void;
   private readonly onQueryChange: (query: TokenMonitorQuery) => void;
   private readonly onRefresh: () => void;
-  private readonly onCustomPeriod?: CustomPeriodCallback;
   private readonly onFilterSelect?: FilterSelectCallback;
   private view: TokenMonitorView = "overview";
   private filterFocus: FilterFocus = "period";
@@ -162,7 +160,6 @@ export class TokenMonitorPanel implements Component {
     onQueryChange: (query: TokenMonitorQuery) => void,
     onRefresh: () => void,
     onClose: () => void,
-    onCustomPeriod?: CustomPeriodCallback,
     onFilterSelect?: FilterSelectCallback,
   ) {
     this.tui = tui;
@@ -171,7 +168,6 @@ export class TokenMonitorPanel implements Component {
     this.onQueryChange = onQueryChange;
     this.onRefresh = onRefresh;
     this.onClose = onClose;
-    this.onCustomPeriod = onCustomPeriod;
     this.onFilterSelect = onFilterSelect;
   }
 
@@ -215,13 +211,7 @@ export class TokenMonitorPanel implements Component {
         const delta = matchesKey(data, Key.up) ? -1 : 1;
         this.selectedRow = Math.max(0, Math.min(this.snapshot.records.length - 1, this.selectedRow + delta));
         this.tui.requestRender();
-      } else {
-        this.changeFilter(matchesKey(data, Key.up) ? -1 : 1);
       }
-      return;
-    }
-    if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-      this.changeFilter(matchesKey(data, Key.left) ? -1 : 1);
       return;
     }
     if (data === "j" || data === "J") {
@@ -255,7 +245,7 @@ export class TokenMonitorPanel implements Component {
     const visibleContent = content.slice(0, availableBodyRows);
     lines.push(...visibleContent.map(row));
     lines.push(separator);
-    lines.push(row(this.theme.fg("dim", " Tab filtros  ↑↓ navegar  V modo  R atualizar  Alt+M/Esc fechar ")));
+    lines.push(row(this.theme.fg("dim", " Tab filtros  Enter selecionar  ↑↓ navegar  V modo  R atualizar  Esc fechar ")));
     lines.push(`╰${"─".repeat(innerWidth)}╯`);
     return lines.slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
   }
@@ -383,22 +373,4 @@ export class TokenMonitorPanel implements Component {
     this.onQueryChange(next);
   }
 
-  private changeFilter(delta: number): void {
-    const options = this.filterOptions();
-    const currentValue = this.filterFocus === "period"
-      ? this.snapshot.filter.period
-      : this.filterFocus === "router"
-        ? this.snapshot.filter.router
-        : this.snapshot.filter.model;
-    const current = Math.max(0, options.findIndex((option) => option.value === currentValue));
-    const next = options[(current + delta + options.length) % options.length];
-    if (!next) return;
-    if (this.filterFocus === "period" && next.value === "custom" && this.onCustomPeriod) {
-      void this.onCustomPeriod().then((range) => {
-        if (range) this.applyFilterSelection({ value: "custom", customFrom: range.from, customTo: range.to });
-      });
-      return;
-    }
-    this.applyFilterSelection({ value: next.value });
-  }
 }
