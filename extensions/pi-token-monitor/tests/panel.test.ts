@@ -74,6 +74,7 @@ describe("painel do monitor de tokens", () => {
     const body = panel.render(100).join("\n");
     expect(body).toContain("Monitor de Tokens");
     expect(body).toContain("TOTAL GASTO");
+    expect(body).toContain("$3,50");
     expect(body).toContain("REQUISIÇÕES");
     expect(body).toContain("TOKENS GASTOS");
     expect(body).not.toContain("TOKENS FRESCOS");
@@ -94,13 +95,13 @@ describe("painel do monitor de tokens", () => {
 
     panel.handleInput("v");
     const logs = panel.render(100).join("\n");
-    expect(logs).toContain("│ Data");
+    expect(logs).toContain("│   Data");
 
     const wideLogs = panel.render(220).join("\n");
-    for (const header of ["Data", "Modelo", "Provedor", "Total de Tokens", "Tokens de Entrada", "Tokens de Saída", "Cache Leitura/Escrita", "Custo", "Sessão"]) {
+    for (const header of ["Data", "Modelo", "Provedor", "Total de Tokens", "Tok. Ent.", "Tok. Saída", "Cache R/W", "Custo", "Sessão"]) {
       expect(wideLogs).toContain(header);
     }
-    const logLine = wideLogs.split("\n").find((line) => line.includes("0123456789abcdef0123456789abcdef0123"));
+    const logLine = wideLogs.split("\n").find((line) => line.includes("01234567"));
     expect(logLine).toBeDefined();
     expect(logLine!.indexOf("▶")).toBeLessThan(logLine!.indexOf("/"));
   });
@@ -171,7 +172,8 @@ describe("painel do monitor de tokens", () => {
     const body = details.render(100).join("\n");
     expect(body).toContain("DETALHES DO LOG");
     expect(body).toContain("Provedor:");
-    expect(body).toContain("0123456789abcdef0123456789abcdef0123");
+    expect(body).toContain("01234567");
+    expect(body).not.toContain("0123456789abcdef0123456789abcdef0123");
     expect(body).not.toContain("Modelo respondido");
   });
 

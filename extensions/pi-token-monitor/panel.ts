@@ -41,7 +41,7 @@ function formatCompact(value: number): string {
 }
 
 function formatCost(value: number): string {
-  return `$${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+  return `$${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function formatPercent(value: number | null): string {
@@ -58,24 +58,18 @@ function formatLogDate(timestamp: number): string {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${String(date.getFullYear()).slice(-2)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-const LOG_HEADERS = [
-  "Data",
-  "Modelo",
-  "Provedor",
-  "Total de Tokens",
-  "Tokens de Entrada",
-  "Tokens de Saída",
-  "Cache Leitura/Escrita",
-  "Custo",
-  "Sessão",
-];
-const LOG_NATURAL_WIDTHS = [16, 20, 12, 15, 18, 16, 21, 10];
-const LOG_MINIMUM_WIDTHS = [3, 5, 4, 5, 6, 6, 7, 4];
+const LOG_HEADERS = ["Data", "Modelo", "Provedor", "Total de Tokens", "Tok. Ent.", "Tok. Saída", "Cache R/W", "Custo", "Sessão"];
+const LOG_NATURAL_WIDTHS = [16, 20, 12, 15, 12, 12, 10, 10];
+const LOG_MINIMUM_WIDTHS = [16, 6, 8, 15, 9, 10, 9, 5];
 
 function logColumnGap(totalWidth: number): number {
-  if (totalWidth >= 80) return 2;
+  if (totalWidth >= 110) return 2;
   if (totalWidth >= 60) return 1;
   return 0;
+}
+
+function shortSessionId(sessionId: string): string {
+  return sessionId.slice(0, 8);
 }
 
 function fitLogColumnWidths(totalWidth: number, sessionWidth: number): { widths: number[]; gap: number } {
@@ -96,40 +90,11 @@ function fitLogColumnWidths(totalWidth: number, sessionWidth: number): { widths:
     if (!changed) break;
   }
   while (widths.reduce((sum, width) => sum + width, 0) > target) {
-    const index = widths.findIndex((width, candidate) => candidate < widths.length - 1 && width > 1);
+    const index = widths.findIndex((width, candidate) => candidate > 0 && candidate < widths.length - 1 && width > 1);
     if (index < 0) break;
     widths[index] = widths[index]! - 1;
   }
   return { widths, gap };
-}
-
-function wrapHeader(value: string, width: number): string[] {
-  if (width <= 0) return [""];
-  const lines: string[] = [];
-  let line = "";
-  for (const word of value.split(" ")) {
-    if (word.length > width) {
-      if (line) {
-        lines.push(line);
-        line = "";
-      }
-      for (let offset = 0; offset < word.length; offset += width) lines.push(word.slice(offset, offset + width));
-    } else if (!line) {
-      line = word;
-    } else if (line.length + 1 + word.length <= width) {
-      line += ` ${word}`;
-    } else {
-      lines.push(line);
-      line = word;
-    }
-  }
-  if (line || lines.length === 0) lines.push(line);
-  return lines;
-}
-
-function logHeaderLineCount(width: number, sessionWidth: number): number {
-  const layout = fitLogColumnWidths(width, sessionWidth);
-  return Math.max(...LOG_HEADERS.map((header, index) => wrapHeader(header, layout.widths[index]!).length));
 }
 
 export interface TokenMonitorQuery extends UsageFilter {
@@ -254,7 +219,7 @@ export class LogDetailsPanel implements Component {
       ["Tok. Saída", formatCompact(this.record.output)],
       ["Cache R/W", `${formatCompact(this.record.cacheRead)} / ${formatCompact(this.record.cacheWrite)}`],
       ["Custo", formatCost(this.record.costTotal)],
-      ["Sessão", this.record.sessionId],
+      ["Sessão", shortSessionId(this.record.sessionId)],
     ];
     const lines = [
       `╭${"─".repeat(innerWidth)}╮`,
@@ -399,7 +364,7 @@ export class TokenMonitorPanel implements Component {
     const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.90));
     const footerRows = 3;
     const availableBodyRows = Math.max(1, maxPanelRows - lines.length - footerRows);
-    const contentOffset = this.getContentOffset(content.length, availableBodyRows, innerWidth);
+    const contentOffset = this.getContentOffset(content.length, availableBodyRows);
     const visibleContent = content.slice(contentOffset, contentOffset + availableBodyRows);
     lines.push(...visibleContent.map(row));
     lines.push(separator);
@@ -483,16 +448,12 @@ export class TokenMonitorPanel implements Component {
 
   private renderLogs(width: number): string[] {
     const lines = [this.theme.fg("accent", this.theme.bold(" LOGS"))];
-    const sessionWidth = Math.max(36, ...this.snapshot.records.map((record) => record.sessionId.length));
+    const sessionWidth = Math.max(8, ...this.snapshot.records.map((record) => shortSessionId(record.sessionId).length));
     const layout = fitLogColumnWidths(width, sessionWidth);
     const separator = " ".repeat(layout.gap);
-    const wrappedHeaders = LOG_HEADERS.map((header, index) => wrapHeader(header, layout.widths[index]!));
-    const headerRows = Math.max(...wrappedHeaders.map((header) => header.length));
-    for (let row = 0; row < headerRows; row++) {
-      const header = wrappedHeaders.map((column, index) => this.pad(column[row] ?? "", layout.widths[index]!)).join(separator);
-      lines.push(this.theme.fg("muted", ` ${header}`));
-    }
-    const header = wrappedHeaders.map((column, index) => this.pad(column[0] ?? "", layout.widths[index]!)).join(separator);
+    const headerValues = LOG_HEADERS.map((header, index) => index === 0 ? `  ${header}` : header);
+    const header = headerValues.map((value, index) => this.pad(value, layout.widths[index]!)).join(separator);
+    lines.push(this.theme.fg("muted", ` ${header}`));
     lines.push(this.theme.fg("dim", ` ${"─".repeat(Math.min(width, visibleWidth(header)))}`));
     if (this.snapshot.records.length === 0) {
       lines.push(this.theme.fg("dim", " Nenhum log no período selecionado."));
@@ -509,7 +470,7 @@ export class TokenMonitorPanel implements Component {
         formatCompact(record.output),
         `${formatCompact(record.cacheRead)}/${formatCompact(record.cacheWrite)}`,
         formatCost(record.costTotal),
-        record.sessionId,
+        shortSessionId(record.sessionId),
       ];
       const line = values.map((value, column) => this.pad(value, layout.widths[column]!)).join(separator);
       lines.push(index === this.selectedRow ? this.theme.fg("accent", ` ${line}`) : ` ${line}`);
@@ -522,13 +483,10 @@ export class TokenMonitorPanel implements Component {
     this.selectedRow = Math.max(0, Math.min(maxRow, this.selectedRow));
   }
 
-  private getContentOffset(contentLength: number, visibleRows: number, width: number): number {
+  private getContentOffset(contentLength: number, visibleRows: number): number {
     const itemCount = this.view === "table" ? this.snapshot.models.length : this.snapshot.records.length;
     if ((this.view !== "table" && this.view !== "logs") || itemCount === 0) return 0;
-    const sessionWidth = Math.max(36, ...this.snapshot.records.map((record) => record.sessionId.length));
-    const selectedContentRow = this.view === "logs"
-      ? 2 + logHeaderLineCount(width, sessionWidth) + this.selectedRow
-      : 3 + this.selectedRow;
+    const selectedContentRow = 3 + this.selectedRow;
     return Math.max(0, Math.min(
       Math.max(0, contentLength - visibleRows),
       selectedContentRow - visibleRows + 1,
