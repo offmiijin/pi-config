@@ -95,8 +95,8 @@ describe("extensão pi-panel", () => {
 		};
 
 		registerChanges(pi as any);
-		eventHandlers["custom:dev-sandbox-session"]!({ worktreePath: "/tmp/worktree", baseCommit: "new-sandbox-base" });
 		await handlers.session_start!({ reason: "reload" }, ctx);
+		eventHandlers["custom:dev-sandbox-session"]!({ worktreePath: "/tmp/worktree", baseCommit: "new-sandbox-base" });
 		expect(inputListener).toBeDefined();
 		inputListener!("\x1bd");
 		await new Promise((resolve) => setTimeout(resolve, 0));

@@ -57,7 +57,7 @@ export default function (pi: ExtensionAPI): void {
 		const nextSession = event as typeof sandboxSession;
 		sandboxSession = nextSession;
 		if (sessionStarted && typeof nextSession?.baseCommit === "string") {
-			persistSessionState(nextSession.baseCommit, nextSession);
+			persistSessionState(sessionBaseCommit ?? nextSession.baseCommit, nextSession);
 		}
 	});
 	pi.events?.on("custom:dev-sandbox-session-shutdown", () => {
