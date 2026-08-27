@@ -143,7 +143,6 @@ export class MemoryGitRepository {
 			if (!wasInitialized) {
 				const baseline = this.commit(["."], "[memórias] mem(repo): cria baseline do repositório");
 				if (baseline.ok) return { ...baseline, action: "initialized" };
-				this.enqueuePending(["."], "[memórias] mem(repo): cria baseline do repositório");
 				return { ok: false, action: "pending", error: baseline.error };
 			}
 
