@@ -16,6 +16,19 @@ function git(args: string[], cwd: string): string {
 	return execFileSync("git", args, { cwd, encoding: "utf-8" });
 }
 
+function gitWithTestIdentity(args: string[], cwd: string): string {
+	return git(
+		[
+			"-c",
+			"user.name=pi-memory-test",
+			"-c",
+			"user.email=pi-memory-test@example.invalid",
+			...args,
+		],
+		cwd,
+	);
+}
+
 describe("formatMemoryCommitMessage", () => {
 	it("gera mensagem estável com escopo e projeto", () => {
 		expect(
@@ -49,7 +62,7 @@ describe("MemoryGitRepository", () => {
 			const active = join(root, "projects", "p", "decisions", "cache.md");
 			mkdirSync(join(active, ".."), { recursive: true });
 			writeFileSync(active, "memória inicial\n");
-			const repo = new MemoryGitRepository(root);
+			const repo = new MemoryGitRepository(root, gitWithTestIdentity);
 
 			const initialized = repo.initialize();
 			expect(initialized.ok).toBeTrue();
