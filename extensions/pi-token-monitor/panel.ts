@@ -44,6 +44,10 @@ function formatCost(value: number): string {
   return `$${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function formatLogCost(value: number): string {
+  return `$${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+}
+
 function formatPercent(value: number | null): string {
   return value === null ? "n/d" : `${(value * 100).toFixed(1)}%`;
 }
@@ -58,7 +62,7 @@ function formatLogDate(timestamp: number): string {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${String(date.getFullYear()).slice(-2)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-const LOG_HEADERS = ["Data", "Modelo", "Provedor", "Total de Tokens", "Tok. Ent.", "Tok. Saída", "Cache R/W", "Custo", "Sessão"];
+const LOG_HEADERS = ["Data", "Modelo", "Provedor", "Tot. Tok.", "Tok. Ent.", "Tok. Saída", "Cache R/W", "Custo", "Sessão"];
 const LOG_NATURAL_WIDTHS = [16, 20, 12, 15, 12, 12, 10, 10];
 const LOG_MINIMUM_WIDTHS = [16, 6, 8, 15, 9, 10, 9, 5];
 
@@ -469,7 +473,7 @@ export class TokenMonitorPanel implements Component {
         formatCompact(record.input),
         formatCompact(record.output),
         `${formatCompact(record.cacheRead)}/${formatCompact(record.cacheWrite)}`,
-        formatCost(record.costTotal),
+        formatLogCost(record.costTotal),
         shortSessionId(record.sessionId),
       ];
       const line = values.map((value, column) => this.pad(value, layout.widths[column]!)).join(separator);

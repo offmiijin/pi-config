@@ -37,4 +37,4 @@ O período `Data personalizada` solicita data inicial e final no formato `DD/MM/
 
 As opções de Router mostram apenas os providers com credencial armazenada no `auth.json`. As opções de Modelo são recalculadas usando o período e router atuais, antes de aplicar o filtro de modelo.
 
-O modo Logs exibe as colunas `Data`, `Modelo`, `Provedor`, `Total de Tokens`, `Tok. Ent.`, `Tok. Saída`, `Cache R/W`, `Custo` e `Sessão` em uma única linha. O horário aparece no formato `HH:MM`, o custo usa duas casas decimais e a sessão mostra uma versão curta do hash.
+O modo Logs exibe as colunas `Data`, `Modelo`, `Provedor`, `Tot. Tok.`, `Tok. Ent.`, `Tok. Saída`, `Cache R/W`, `Custo` e `Sessão` em uma única linha. O horário aparece no formato `HH:MM`, o custo usa de duas a seis casas decimais e a sessão mostra uma versão curta do hash.

@@ -98,12 +98,21 @@ describe("painel do monitor de tokens", () => {
     expect(logs).toContain("│   Data");
 
     const wideLogs = panel.render(220).join("\n");
-    for (const header of ["Data", "Modelo", "Provedor", "Total de Tokens", "Tok. Ent.", "Tok. Saída", "Cache R/W", "Custo", "Sessão"]) {
+    for (const header of ["Data", "Modelo", "Provedor", "Tot. Tok.", "Tok. Ent.", "Tok. Saída", "Cache R/W", "Custo", "Sessão"]) {
       expect(wideLogs).toContain(header);
     }
     const logLine = wideLogs.split("\n").find((line) => line.includes("01234567"));
     expect(logLine).toBeDefined();
     expect(logLine!.indexOf("▶")).toBeLessThan(logLine!.indexOf("/"));
+  });
+
+  it("permite até seis casas decimais no custo dos logs", () => {
+    const source = snapshot();
+    source.records[0]!.costTotal = 1.234567;
+    const { panel } = setup(source);
+    panel.handleInput("v");
+    panel.handleInput("v");
+    expect(panel.render(220).join("\n")).toContain("$1,234567");
   });
 
   it("alterna entre os três modos", () => {
