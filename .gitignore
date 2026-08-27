@@ -48,3 +48,6 @@ npm/
 
 # caveman
 pi-caveman/
+
+# pi config
+.pi/
