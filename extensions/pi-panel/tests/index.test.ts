@@ -102,4 +102,48 @@ describe("extensão pi-panel", () => {
 		expect(execCalls[0]).toEqual(expect.arrayContaining(["-C", "/tmp/worktree", "session-base^{commit}"]));
 		expect(execCalls[0]).not.toContain("new-sandbox-base^{commit}");
 	});
+
+	it("inicia uma nova âncora em uma sessão nova", async () => {
+		const handlers: Record<string, (event: any, ctx: any) => unknown> = {};
+		const eventHandlers: Record<string, (event: any) => unknown> = {};
+		const execCalls: string[][] = [];
+		const appended: Array<{ type: string; data: unknown }> = [];
+		let inputListener: ((data: string) => unknown) | undefined;
+		let customOptions: any;
+		const ctx = {
+			mode: "tui",
+			cwd: "/repo",
+			sessionManager: {
+				getBranch: () => [{ type: "custom", customType: PANEL_SESSION_ENTRY, data: { version: 1, baseCommit: "old-session-base" } }],
+			},
+			ui: {
+				onTerminalInput: (handler: (data: string) => unknown) => {
+					inputListener = handler;
+					return () => { inputListener = undefined; };
+				},
+				notify: () => {},
+				custom: async (_factory: unknown, options: unknown) => { customOptions = options; },
+			},
+		};
+		const pi = {
+			on: (name: string, handler: (event: any, ctx: any) => unknown) => { handlers[name] = handler; },
+			events: { on: (name: string, handler: (event: any) => unknown) => { eventHandlers[name] = handler; } },
+			exec: async (_command: string, args: string[]) => {
+				execCalls.push(args);
+				return { stdout: "", stderr: "", code: 0 };
+			},
+			appendEntry: (type: string, data: unknown) => appended.push({ type, data }),
+		};
+
+		registerChanges(pi as any);
+		eventHandlers["custom:dev-sandbox-session"]!({ worktreePath: "/tmp/worktree", baseCommit: "new-session-base" });
+		await handlers.session_start!({ reason: "new" }, ctx);
+		inputListener!("\x1bd");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(customOptions.overlayOptions.anchor).toBe("center");
+		expect(execCalls[0]).toEqual(expect.arrayContaining(["-C", "/tmp/worktree", "new-session-base^{commit}"]));
+		expect(execCalls[0]).not.toContain("old-session-base^{commit}");
+		expect(appended).toContainEqual({ type: PANEL_SESSION_ENTRY, data: { version: 1, baseCommit: "new-session-base" } });
+	});
 });
