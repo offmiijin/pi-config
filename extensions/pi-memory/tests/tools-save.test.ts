@@ -188,6 +188,30 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 		expect(existsSync(join(MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "append-save", "v1.md"))).toBeTrue();
 	});
 
+	it("versiona a mutação pelos paths retornados por saveMemory", async () => {
+		const calls: { paths: string[]; message: string }[] = [];
+		const state = makeState();
+		state.memoryGit = {
+			commit: (paths: string[], message: string) => {
+				calls.push({ paths, message });
+				return { ok: true, action: "committed", commit: "abc123" };
+			},
+		} as never;
+		const tool = captureTool(state);
+		const res = await tool.execute(
+			"id-git",
+			{ type: "gotchas", context: "git-save", title: "Git", content: "versionada", scope: "project" },
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		expect(res.details!.git).toEqual({ ok: true, action: "committed", commit: "abc123" });
+		expect(calls).toHaveLength(1);
+		expect(calls[0].paths.some((path) => path.endsWith(`projects/${proj}/gotchas/git-save.md`))).toBeTrue();
+		expect(calls[0].message).toContain(`[${proj}] mem(projects/gotchas): cria git-save`);
+	});
+
 	it("índice indisponível (off): markdown salvo, index=off", async () => {
 		const state = makeState();
 		state.index = null;
