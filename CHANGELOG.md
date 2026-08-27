@@ -13,7 +13,7 @@
 ### Changed
 
 - `pi-memory`: lista todos os modelos dos provedores autenticados, permite busca por qualquer trecho do provider/id/nome e exibe os modelos no formato do `/model`.
-- `pi-panel`: separa alterações do `pi-sandbox` por commit e mantém alterações não commitadas em grupo próprio, usando o worktree e o commit-base da sessão.
+- `pi-panel`: separa alterações do `pi-sandbox` por commit, recolhe os arquivos dos commits, mantém alterações não commitadas em grupo próprio, rola a coluna direita e persiste a âncora da sessão para sobreviver a reinicializações.
 - `pi-panel`: exibe o conteúdo do arquivo com pelo menos 10 linhas de contexto por região modificada e permite alternar para o arquivo completo com `F`.
 - `pi-sandbox`: transforma `/sandbox` em uma tela interativa de configurações booleanas, com valores `true`/`false`, persistência por escopo e `/sandbox info` para diagnóstico.
 - `pi-sandbox`: adiciona `worktree.mode: "in-place"`, mantendo o isolamento do sandbox enquanto permite alterar e commitar diretamente a raiz Git original.
