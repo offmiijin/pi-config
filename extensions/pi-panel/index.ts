@@ -21,14 +21,33 @@ export default function (pi: ExtensionAPI): void {
 	let sandboxSession: { worktreePath?: string; workspaceCwd?: string; baseCommit?: string } | undefined;
 	let sessionStarted = false;
 	let sessionBaseCommit: string | undefined;
+	let sessionWorktreePath: string | undefined;
+	let sessionWorkspaceCwd: string | undefined;
 	let initializeBaseCommit: Promise<void> | undefined;
 
-	const persistBaseCommit = (baseCommit: string): void => {
+	const persistSessionState = (
+		baseCommit: string,
+		paths: { worktreePath?: string; workspaceCwd?: string } = {},
+	): void => {
 		const normalized = baseCommit.trim();
-		if (!normalized || sessionBaseCommit === normalized) return;
+		const worktreePath = paths.worktreePath?.trim() || sessionWorktreePath;
+		const workspaceCwd = paths.workspaceCwd?.trim() || sessionWorkspaceCwd;
+		if (!normalized) return;
+		const changed =
+			sessionBaseCommit !== normalized ||
+			sessionWorktreePath !== worktreePath ||
+			sessionWorkspaceCwd !== workspaceCwd;
+		if (!changed) return;
 		sessionBaseCommit = normalized;
+		sessionWorktreePath = worktreePath;
+		sessionWorkspaceCwd = workspaceCwd;
 		try {
-			pi.appendEntry(PANEL_SESSION_ENTRY, { version: 1, baseCommit: normalized });
+			pi.appendEntry(PANEL_SESSION_ENTRY, {
+				version: 1,
+				baseCommit: normalized,
+				...(worktreePath ? { worktreePath } : {}),
+				...(workspaceCwd ? { workspaceCwd } : {}),
+			});
 		} catch (error) {
 			console.warn("[pi-panel] Não foi possível persistir a âncora da sessão:", error);
 		}
@@ -37,8 +56,8 @@ export default function (pi: ExtensionAPI): void {
 	pi.events?.on("custom:dev-sandbox-session", (event: unknown) => {
 		const nextSession = event as typeof sandboxSession;
 		sandboxSession = nextSession;
-		if (sessionStarted && !sessionBaseCommit && typeof nextSession?.baseCommit === "string") {
-			persistBaseCommit(nextSession.baseCommit);
+		if (sessionStarted && typeof nextSession?.baseCommit === "string") {
+			persistSessionState(nextSession.baseCommit, nextSession);
 		}
 	});
 	pi.events?.on("custom:dev-sandbox-session-shutdown", () => {
@@ -54,20 +73,22 @@ export default function (pi: ExtensionAPI): void {
 			await Promise.resolve();
 			if (sessionBaseCommit) return;
 			if (sandboxSession?.baseCommit) {
-				persistBaseCommit(sandboxSession.baseCommit);
+				persistSessionState(sandboxSession.baseCommit, sandboxSession);
 				return;
 			}
 
-			const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ?? ctx.cwd;
+			const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ??
+				sessionWorktreePath ?? sessionWorkspaceCwd ?? ctx.cwd;
 			const result = await pi.exec("git", ["-C", cwd, "rev-parse", "--verify", "HEAD"], { timeout: 5000 });
-			if (!sessionBaseCommit && result.code === 0) persistBaseCommit(result.stdout);
+			if (!sessionBaseCommit && result.code === 0) persistSessionState(result.stdout);
 		})();
 		return initializeBaseCommit;
 	};
 
 	const loadChanges = async (ctx: ExtensionContext) => {
 		await ensureBaseCommit(ctx);
-		const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ?? ctx.cwd;
+		const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ??
+			sessionWorktreePath ?? sessionWorkspaceCwd ?? ctx.cwd;
 		return collectChanges(
 			cwd,
 			async (args) => pi.exec("git", args, { timeout: 5000 }),
@@ -135,6 +156,8 @@ export default function (pi: ExtensionAPI): void {
 		const persisted = freshSession ? null : reconstructPanelSession(branch);
 		sessionStarted = true;
 		sessionBaseCommit = persisted?.baseCommit;
+		sessionWorktreePath = persisted?.worktreePath;
+		sessionWorkspaceCwd = persisted?.workspaceCwd;
 		initializeBaseCommit = undefined;
 		if (!sessionBaseCommit) void ensureBaseCommit(ctx);
 
@@ -160,6 +183,8 @@ export default function (pi: ExtensionAPI): void {
 		sandboxSession = undefined;
 		sessionStarted = false;
 		sessionBaseCommit = undefined;
+		sessionWorktreePath = undefined;
+		sessionWorkspaceCwd = undefined;
 		initializeBaseCommit = undefined;
 	});
 

@@ -4,6 +4,8 @@ export const PANEL_SESSION_ENTRY = "pi-panel-session";
 export interface PanelSessionState {
 	version: 1;
 	baseCommit: string;
+	worktreePath?: string;
+	workspaceCwd?: string;
 }
 
 export interface PanelSessionEntry {
@@ -17,7 +19,13 @@ function normalizePanelSession(value: unknown): PanelSessionState | null {
 	const data = value as Record<string, unknown>;
 	if (data.version !== 1 || typeof data.baseCommit !== "string") return null;
 	const baseCommit = data.baseCommit.trim();
-	return baseCommit ? { version: 1, baseCommit } : null;
+	const worktreePath = typeof data.worktreePath === "string" ? data.worktreePath.trim() : undefined;
+	const workspaceCwd = typeof data.workspaceCwd === "string" ? data.workspaceCwd.trim() : undefined;
+	if (!baseCommit) return null;
+	const state: PanelSessionState = { version: 1, baseCommit };
+	if (worktreePath) state.worktreePath = worktreePath;
+	if (workspaceCwd) state.workspaceCwd = workspaceCwd;
+	return state;
 }
 
 /**

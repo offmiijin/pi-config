@@ -57,7 +57,10 @@ describe("extensão pi-panel", () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(customOptions.overlayOptions.anchor).toBe("center");
 		expect(execCalls[0]).toEqual(expect.arrayContaining(["-C", "/tmp/worktree", "base123^{commit}"]));
-		expect(appended).toContainEqual({ type: PANEL_SESSION_ENTRY, data: { version: 1, baseCommit: "base123" } });
+		expect(appended).toContainEqual({
+			type: PANEL_SESSION_ENTRY,
+			data: { version: 1, baseCommit: "base123", worktreePath: "/tmp/worktree" },
+		});
 	});
 
 	it("restaura a âncora persistida após reload sem usar a âncora atual do sandbox", async () => {
@@ -144,6 +147,9 @@ describe("extensão pi-panel", () => {
 		expect(customOptions.overlayOptions.anchor).toBe("center");
 		expect(execCalls[0]).toEqual(expect.arrayContaining(["-C", "/tmp/worktree", "new-session-base^{commit}"]));
 		expect(execCalls[0]).not.toContain("old-session-base^{commit}");
-		expect(appended).toContainEqual({ type: PANEL_SESSION_ENTRY, data: { version: 1, baseCommit: "new-session-base" } });
+		expect(appended).toContainEqual({
+			type: PANEL_SESSION_ENTRY,
+			data: { version: 1, baseCommit: "new-session-base", worktreePath: "/tmp/worktree" },
+		});
 	});
 });
