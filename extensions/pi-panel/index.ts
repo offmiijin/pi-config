@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isKeyRepeat, Key, matchesKey } from "@earendil-works/pi-tui";
 import { collectChanges } from "./git.ts";
 import { ChangesPanel } from "./panel.ts";
+import { PANEL_SESSION_ENTRY, reconstructPanelSession } from "./session.ts";
 
 const REFRESH_INTERVAL_MS = 1500;
 const TOGGLE_DEBOUNCE_MS = 250;
@@ -18,20 +19,59 @@ export default function (pi: ExtensionAPI): void {
 	let lastToggleAt = Number.NEGATIVE_INFINITY;
 	let removeTerminalInputListener: (() => void) | undefined;
 	let sandboxSession: { worktreePath?: string; workspaceCwd?: string; baseCommit?: string } | undefined;
+	let sessionStarted = false;
+	let sessionBaseCommit: string | undefined;
+	let initializeBaseCommit: Promise<void> | undefined;
+
+	const persistBaseCommit = (baseCommit: string): void => {
+		const normalized = baseCommit.trim();
+		if (!normalized || sessionBaseCommit === normalized) return;
+		sessionBaseCommit = normalized;
+		try {
+			pi.appendEntry(PANEL_SESSION_ENTRY, { version: 1, baseCommit: normalized });
+		} catch (error) {
+			console.warn("[pi-panel] Não foi possível persistir a âncora da sessão:", error);
+		}
+	};
 
 	pi.events?.on("custom:dev-sandbox-session", (event: unknown) => {
-		sandboxSession = event as typeof sandboxSession;
+		const nextSession = event as typeof sandboxSession;
+		sandboxSession = nextSession;
+		if (sessionStarted && !sessionBaseCommit && typeof nextSession?.baseCommit === "string") {
+			persistBaseCommit(nextSession.baseCommit);
+		}
 	});
 	pi.events?.on("custom:dev-sandbox-session-shutdown", () => {
 		sandboxSession = undefined;
 	});
 
-	const loadChanges = (ctx: ExtensionContext) => {
+	const ensureBaseCommit = (ctx: ExtensionContext): Promise<void> => {
+		if (sessionBaseCommit) return Promise.resolve();
+		if (initializeBaseCommit) return initializeBaseCommit;
+
+		initializeBaseCommit = (async () => {
+			// Aguarda os demais listeners de session_start emitirem o estado do sandbox.
+			await Promise.resolve();
+			if (sessionBaseCommit) return;
+			if (sandboxSession?.baseCommit) {
+				persistBaseCommit(sandboxSession.baseCommit);
+				return;
+			}
+
+			const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ?? ctx.cwd;
+			const result = await pi.exec("git", ["-C", cwd, "rev-parse", "--verify", "HEAD"], { timeout: 5000 });
+			if (!sessionBaseCommit && result.code === 0) persistBaseCommit(result.stdout);
+		})();
+		return initializeBaseCommit;
+	};
+
+	const loadChanges = async (ctx: ExtensionContext) => {
+		await ensureBaseCommit(ctx);
 		const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ?? ctx.cwd;
 		return collectChanges(
 			cwd,
 			async (args) => pi.exec("git", args, { timeout: 5000 }),
-			{ baseCommit: sandboxSession?.baseCommit },
+			{ baseCommit: sessionBaseCommit },
 		);
 	};
 
@@ -87,7 +127,17 @@ export default function (pi: ExtensionAPI): void {
 
 	// Alt+D é tratado antes do editor para evitar o conflito com a ação
 	// nativa `tui.editor.deleteWordForward`.
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
+		const freshSession = event.reason === "new" || event.reason === "fork";
+		const branch = typeof ctx.sessionManager?.getBranch === "function"
+			? ctx.sessionManager.getBranch()
+			: [];
+		const persisted = freshSession ? null : reconstructPanelSession(branch);
+		sessionStarted = true;
+		sessionBaseCommit = persisted?.baseCommit;
+		initializeBaseCommit = undefined;
+		if (!sessionBaseCommit) void ensureBaseCommit(ctx);
+
 		removeTerminalInputListener?.();
 		removeTerminalInputListener = undefined;
 		if (ctx.mode !== "tui") return;
@@ -108,6 +158,9 @@ export default function (pi: ExtensionAPI): void {
 		removeTerminalInputListener?.();
 		removeTerminalInputListener = undefined;
 		sandboxSession = undefined;
+		sessionStarted = false;
+		sessionBaseCommit = undefined;
+		initializeBaseCommit = undefined;
 	});
 
 	// Atualiza rapidamente após operações do agente; o polling cobre alterações
