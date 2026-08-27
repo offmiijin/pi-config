@@ -263,11 +263,13 @@ export default function (pi: ExtensionAPI) {
 			console.warn(`[pi-memory] inicialização Git falhou: ${(err as Error).message}`);
 		}
 
+		const startupGitPaths: string[] = [];
+
 		// Migração única de memórias legadas (v1 append → snapshot v2).
 		// Idempotente: arquivos v2 (meta.revision) são pulados. Roda ANTES do
 		// sync do índice — o FTS já lê o formato v2.
 		try {
-			const migrated = migrateLegacyMemories(state.projectId);
+			const migrated = migrateLegacyMemories(state.projectId, startupGitPaths);
 			if (migrated > 0) {
 				console.warn(`[pi-memory] migradas ${migrated} memória(s) para snapshot v2`);
 			}
@@ -279,12 +281,21 @@ export default function (pi: ExtensionAPI) {
 		// identidade (v2). Idempotente e NÃO altera updated/confidence — a
 		// ordenação por recência e o estado factual ficam intactos.
 		try {
-			const identified = ensureMemoryIdentities(state.projectId);
+			const identified = ensureMemoryIdentities(state.projectId, startupGitPaths);
 			if (identified > 0) {
 				console.warn(`[pi-memory] identificadas ${identified} memória(s) (frontmatter v3)`);
 			}
 		} catch (err) {
 			console.warn(`[pi-memory] atribuição de identidade falhou: ${(err as Error).message}`);
+		}
+
+		if (startupGitPaths.length > 0) {
+			const git = commitGit(
+				state,
+				[...new Set(startupGitPaths)],
+				`[${state.projectId}] mem(repo): migra metadados das memórias`,
+			);
+			if (!git.ok) console.warn(`[pi-memory] migração sem commit Git: ${git.error}`);
 		}
 
 		const sessionFile = ctx.sessionManager.getSessionFile();

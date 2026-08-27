@@ -78,8 +78,7 @@ export function formatMemoryCommitMessage(params: {
 	const scopePath = params.scope === "global" ? "_global" : "projects";
 	const type = sanitizeSubjectPart(params.type, "memoria");
 	const context = sanitizeSubjectPart(params.context, "contexto");
-	const subject = `[${owner}] mem(${scopePath}/${type}): ${params.action} ${context}`;
-	return subject.length <= 72 ? subject : `${subject.slice(0, 71).trimEnd()}…`;
+	return `[${owner}] mem(${scopePath}/${type}): ${params.action} ${context}`;
 }
 
 export interface MemoryGitResult {
