@@ -1,0 +1,105 @@
+import { describe, expect, it } from "vitest";
+import { TokenMonitorPanel } from "../panel.ts";
+import type { UsageSnapshot } from "../types.ts";
+
+function fakeTheme() {
+  return {
+    fg: (_color: string, text: string) => text,
+    bg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  } as any;
+}
+
+function snapshot(): UsageSnapshot {
+  const totals = {
+    requests: 2,
+    input: 100,
+    output: 40,
+    cacheRead: 60,
+    cacheWrite: 10,
+    totalTokens: 210,
+    freshTokens: 150,
+    cost: 3.5,
+    cacheHit: 60 / 170,
+  };
+  return {
+    generatedAt: 1000,
+    from: 0,
+    to: 1000,
+    filter: { period: "today" },
+    totals,
+    records: [{
+      id: "session:a",
+      sessionId: "session",
+      sessionFile: "/tmp/session.jsonl",
+      timestamp: 900,
+      provider: "anthropic",
+      model: "claude-sonnet",
+      input: 100,
+      output: 40,
+      cacheRead: 60,
+      cacheWrite: 10,
+      totalTokens: 210,
+      costInput: 1,
+      costOutput: 2,
+      costCacheRead: 0,
+      costCacheWrite: 0.5,
+      costTotal: 3.5,
+    }],
+    routers: [{ key: "anthropic", label: "anthropic", totals }],
+    models: [{ key: "anthropic/claude-sonnet", label: "anthropic/claude-sonnet", totals }],
+    buckets: [{ start: 0, label: "00:00", totals }],
+  };
+}
+
+function setup() {
+  const calls: number[] = [];
+  const queries: unknown[] = [];
+  const tui = { terminal: { rows: 30 }, requestRender: () => calls.push(1) } as any;
+  const panel = new TokenMonitorPanel(
+    tui,
+    fakeTheme(),
+    snapshot(),
+    (query) => queries.push(query),
+    () => calls.push(2),
+    () => calls.push(3),
+  );
+  return { panel, calls, queries };
+}
+
+describe("painel do monitor de tokens", () => {
+  it("renderiza resumo com métricas e filtros", () => {
+    const { panel } = setup();
+    const body = panel.render(100).join("\n");
+    expect(body).toContain("Monitor de Tokens");
+    expect(body).toContain("TOTAL GASTO");
+    expect(body).toContain("REQUISIÇÕES");
+    expect(body).toContain("anthropic");
+    expect(body).toContain("Modelo: Todos");
+  });
+
+  it("alterna entre os quatro modos", () => {
+    const { panel } = setup();
+    for (const title of ["Tabela", "Gráficos", "Detalhes", "Resumo"]) {
+      panel.handleInput("v");
+      expect(panel.render(100).join("\n")).toContain(`· ${title}`);
+    }
+  });
+
+  it("navega pelos filtros e solicita uma nova consulta", () => {
+    const { panel, queries } = setup();
+    panel.handleInput("\t"); // router
+    panel.handleInput("\x1b[C");
+    expect(queries[0]).toMatchObject({ router: "anthropic" });
+    panel.handleInput("\t"); // model
+    panel.handleInput("\x1b[C");
+    expect(queries[1]).toMatchObject({ model: "claude-sonnet" });
+  });
+
+  it("fecha com Escape e atualiza com R", () => {
+    const { panel, calls } = setup();
+    panel.handleInput("r");
+    panel.handleInput("\x1b");
+    expect(calls).toEqual([2, 3]);
+  });
+});
