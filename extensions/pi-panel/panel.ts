@@ -91,19 +91,44 @@ interface FileSelection {
 	file: ChangedFile;
 }
 
-function fileSelections(snapshot: ChangesSnapshot): FileSelection[] {
-	return snapshot.groups.flatMap((group) => group.files.map((file) => ({ group, file })));
+type PanelItem =
+	| { kind: "commit"; group: ChangeGroup }
+	| { kind: "file"; group: ChangeGroup; file: ChangedFile };
+
+interface MetadataRender {
+	lines: string[];
+	selectedRange?: LineRange;
 }
 
-function selectionKey(selection: FileSelection | undefined): string | undefined {
-	return selection ? `${selection.group.id}\0${selection.file.path}` : undefined;
+function panelItems(snapshot: ChangesSnapshot, expandedCommits: Set<string>): PanelItem[] {
+	return snapshot.groups.flatMap((group) => {
+		if (group.kind === "working-tree") {
+			return group.files.map((file) => ({ kind: "file" as const, group, file }));
+		}
+		const items: PanelItem[] = [{ kind: "commit", group }];
+		if (expandedCommits.has(group.id)) {
+			items.push(...group.files.map((file) => ({ kind: "file" as const, group, file })));
+		}
+		return items;
+	});
+}
+
+function itemKey(item: PanelItem | undefined): string | undefined {
+	if (!item) return undefined;
+	return item.kind === "commit" ? `commit:${item.group.id}` : `${item.group.id}\0${item.file.path}`;
+}
+
+function fileSelection(item: PanelItem | undefined): FileSelection | undefined {
+	return item?.kind === "file" ? { group: item.group, file: item.file } : undefined;
 }
 
 export class ChangesPanel implements Component {
 	private snapshot: ChangesSnapshot;
 	private selectedIndex = 0;
+	private metadataOffset = 0;
 	private codeOffset = 0;
 	private showFullFile = false;
+	private readonly expandedCommits = new Set<string>();
 	private focus: PanelFocus = "files";
 	private readonly tui: TUI;
 	private readonly theme: Theme;
@@ -117,24 +142,26 @@ export class ChangesPanel implements Component {
 	}
 
 	setSnapshot(snapshot: ChangesSnapshot): void {
-		const previousSelection = fileSelections(this.snapshot)[this.selectedIndex];
-		const previousKey = selectionKey(previousSelection);
+		const previousItem = panelItems(this.snapshot, this.expandedCommits)[this.selectedIndex];
+		const previousFile = fileSelection(previousItem);
+		const previousKey = itemKey(previousItem);
 		this.snapshot = snapshot;
-		const nextSelections = fileSelections(snapshot);
+		const nextItems = panelItems(snapshot, this.expandedCommits);
 		const nextIndex = previousKey
-			? nextSelections.findIndex((selection) => selectionKey(selection) === previousKey)
+			? nextItems.findIndex((item) => itemKey(item) === previousKey)
 			: -1;
 		this.selectedIndex = nextIndex >= 0
 			? nextIndex
-			: Math.min(this.selectedIndex, Math.max(0, nextSelections.length - 1));
+			: Math.min(this.selectedIndex, Math.max(0, nextItems.length - 1));
 
-		const nextSelection = nextSelections[this.selectedIndex];
+		const nextFile = fileSelection(nextItems[this.selectedIndex]);
 		if (
-			!previousSelection ||
-			!nextSelection ||
-			selectionKey(previousSelection) !== selectionKey(nextSelection) ||
-			previousSelection.file.diff !== nextSelection.file.diff ||
-			previousSelection.file.content !== nextSelection.file.content
+			!previousFile ||
+			!nextFile ||
+			previousFile.group.id !== nextFile.group.id ||
+			previousFile.file.path !== nextFile.file.path ||
+			previousFile.file.diff !== nextFile.file.diff ||
+			previousFile.file.content !== nextFile.file.content
 		) {
 			this.codeOffset = 0;
 		}
@@ -162,8 +189,18 @@ export class ChangesPanel implements Component {
 			this.codeOffset = 0;
 			this.tui.requestRender();
 		} else if (matchesKey(data, Key.enter)) {
-			this.focus = this.focus === "files" ? "code" : "files";
-			this.tui.requestRender();
+			if (this.focus === "files") {
+				const item = this.selectedItem();
+				if (item?.kind === "commit") {
+					this.toggleCommit(item.group.id);
+				} else {
+					this.focus = "code";
+					this.tui.requestRender();
+				}
+			} else {
+				this.focus = "files";
+				this.tui.requestRender();
+			}
 		} else if (matchesKey(data, Key.left) && this.focus === "code") {
 			this.focus = "files";
 			this.tui.requestRender();
@@ -187,13 +224,22 @@ export class ChangesPanel implements Component {
 		const metadataWidth = Math.max(18, Math.floor(innerWidth * METADATA_RATIO));
 		const codeWidth = Math.max(1, innerWidth - metadataWidth - 1);
 		const viewportRows = this.viewportRows();
-		const selection = fileSelections(this.snapshot)[this.selectedIndex];
+		const selection = fileSelection(this.selectedItem());
 		const codeLines = selection ? this.renderCodeLines(selection.file, codeWidth) : this.emptyCodeLines(codeWidth);
-		const metadataLines = this.renderMetadataLines(metadataWidth);
-		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadataLines.length)));
-		const maxOffset = Math.max(0, codeLines.length - bodyRows);
-		const codeStart = Math.min(this.codeOffset, maxOffset);
+		const metadata = this.renderMetadataLines(metadataWidth);
+		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadata.lines.length)));
+		const maxCodeOffset = Math.max(0, codeLines.length - bodyRows);
+		const codeStart = Math.min(this.codeOffset, maxCodeOffset);
 		this.codeOffset = codeStart;
+		const maxMetadataOffset = Math.max(0, metadata.lines.length - bodyRows);
+		this.metadataOffset = Math.min(this.metadataOffset, maxMetadataOffset);
+		if (metadata.selectedRange) {
+			if (metadata.selectedRange.start < this.metadataOffset) {
+				this.metadataOffset = metadata.selectedRange.start;
+			} else if (metadata.selectedRange.end >= this.metadataOffset + bodyRows) {
+				this.metadataOffset = Math.min(maxMetadataOffset, metadata.selectedRange.end - bodyRows + 1);
+			}
+		}
 
 		const title = this.snapshot.error
 			? this.theme.fg("error", "Alterações — Git indisponível")
@@ -214,7 +260,7 @@ export class ChangesPanel implements Component {
 
 		for (let row = 0; row < bodyRows; row++) {
 			const codeLine = codeLines[codeStart + row] ?? "";
-			const metadataLine = metadataLines[row] ?? "";
+			const metadataLine = metadata.lines[this.metadataOffset + row] ?? "";
 			lines.push(`│${padToWidth(codeLine, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
 		}
 
@@ -236,10 +282,25 @@ export class ChangesPanel implements Component {
 	}
 
 	private selectFile(index: number): void {
-		const selections = fileSelections(this.snapshot);
-		if (selections.length === 0) return;
-		this.selectedIndex = Math.max(0, Math.min(index, selections.length - 1));
+		const items = panelItems(this.snapshot, this.expandedCommits);
+		if (items.length === 0) return;
+		this.selectedIndex = Math.max(0, Math.min(index, items.length - 1));
+		this.metadataOffset = 0;
 		this.codeOffset = 0;
+		this.tui.requestRender();
+	}
+
+	private selectedItem(): PanelItem | undefined {
+		return panelItems(this.snapshot, this.expandedCommits)[this.selectedIndex];
+	}
+
+	private toggleCommit(groupId: string): void {
+		if (this.expandedCommits.has(groupId)) {
+			this.expandedCommits.delete(groupId);
+		} else {
+			this.expandedCommits.add(groupId);
+		}
+		this.metadataOffset = 0;
 		this.tui.requestRender();
 	}
 
@@ -297,35 +358,42 @@ export class ChangesPanel implements Component {
 
 	private emptyCodeLines(width: number): string[] {
 		if (this.snapshot.error) return [truncateToWidth(this.theme.fg("error", this.snapshot.error), width, "")];
-		if (fileSelections(this.snapshot).length === 0) {
+		if (panelItems(this.snapshot, this.expandedCommits).length === 0) {
 			return [truncateToWidth(this.theme.fg("dim", "Nenhuma alteração desde o início da sessão."), width, "")];
 		}
 		return [truncateToWidth(this.theme.fg("dim", "Selecione um arquivo para ver o arquivo."), width, "")];
 	}
 
-	private renderMetadataLines(width: number): string[] {
-		if (fileSelections(this.snapshot).length === 0) {
-			return [this.theme.fg("dim", "Nenhum arquivo")];
+	private renderMetadataLines(width: number): MetadataRender {
+		const items = panelItems(this.snapshot, this.expandedCommits);
+		if (items.length === 0) {
+			return { lines: [this.theme.fg("dim", "Nenhum arquivo ou commit")] };
 		}
 
 		const lines: string[] = [];
-		let fileIndex = 0;
-		for (const group of this.snapshot.groups) {
-			const groupColor = group.kind === "commit" ? "accent" : "warning";
-			lines.push(padToWidth(this.theme.fg(groupColor, ` ${group.label}`), width));
-			for (const file of group.files) {
-				const selected = fileIndex === this.selectedIndex;
+		let selectedRange: LineRange | undefined;
+		const selectedKey = itemKey(this.selectedItem());
+		for (const item of items) {
+			const start = lines.length;
+			const selected = itemKey(item) === selectedKey;
+			if (item.kind === "commit") {
 				const marker = selected ? (this.focus === "files" ? "▶ " : "• ") : "  ";
-				const filename = `${marker}${truncatePathFromLeft(file.path, Math.max(1, width - visibleWidth(marker)))}`;
+				const disclosure = this.expandedCommits.has(item.group.id) ? "▾ " : "▸ ";
+				const label = `${marker}${disclosure}${item.group.label}`;
+				const line = this.theme.fg("accent", label);
+				lines.push(selected ? this.theme.bg("selectedBg", padToWidth(line, width)) : padToWidth(line, width));
+			} else {
+				const marker = selected ? (this.focus === "files" ? "▶ " : "• ") : "  ";
+				const filename = `${marker}${truncatePathFromLeft(item.file.path, Math.max(1, width - visibleWidth(marker)))}`;
 				const nameLine = selected
 					? this.theme.bg("selectedBg", padToWidth(filename, width))
 					: padToWidth(filename, width);
-				const status = this.theme.fg(statusColor(file.status), file.status);
-				const stats = `${status} ${this.theme.fg("success", `+${formatNumber(file.additions)}`)} ${this.theme.fg("error", `-${formatNumber(file.deletions)}`)}`;
+				const status = this.theme.fg(statusColor(item.file.status), item.file.status);
+				const stats = `${status} ${this.theme.fg("success", `+${formatNumber(item.file.additions)}`)} ${this.theme.fg("error", `-${formatNumber(item.file.deletions)}`)}`;
 				lines.push(nameLine, padToWidth(`  ${stats}`, width));
-				fileIndex++;
 			}
+			if (selected) selectedRange = { start, end: lines.length - 1 };
 		}
-		return lines;
+		return { lines, selectedRange };
 	}
 }
