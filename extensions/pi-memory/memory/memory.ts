@@ -480,6 +480,8 @@ export function saveMemory(
 	error?: string;
 	/** Paths absolutos arquivados nesta chamada (.supersedes/ ou .history/). */
 	archived: string[];
+	/** Paths absolutos criados, substituídos ou removidos para o commit Git. */
+	gitPaths: string[];
 } {
 	const {
 		type,
@@ -506,6 +508,7 @@ export function saveMemory(
 			revision: 0,
 			error: `Invalid memory type "${type}" (expected one of: ${MEMORY_TYPES.join(", ")})`,
 			archived,
+			gitPaths: [],
 		};
 	}
 
@@ -642,11 +645,19 @@ export function saveMemory(
 		}
 	}
 
+	const gitPaths = [
+		filePath,
+		...pendingArchives.flatMap((a) => [
+			a.targetPath,
+			...(a.removeOriginalPath ? [a.removeOriginalPath] : []),
+		]),
+	];
 	return {
 		action: existed ? "consolidated" : "created",
 		file: filePath,
 		revision,
 		archived,
+		gitPaths: [...new Set(gitPaths)],
 	};
 }
 
