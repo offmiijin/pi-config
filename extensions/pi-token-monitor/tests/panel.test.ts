@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TokenMonitorPanel } from "../panel.ts";
+import { LogDetailsPanel, TokenMonitorPanel } from "../panel.ts";
 import type { UsageSnapshot } from "../types.ts";
 
 function fakeTheme() {
@@ -93,14 +93,14 @@ describe("painel do monitor de tokens", () => {
     expect(table).toContain("│ Modelo");
 
     panel.handleInput("v");
-    const details = panel.render(100).join("\n");
-    expect(details).toContain("│ Data:");
-    expect(details).toContain("│ Router:");
+    const logs = panel.render(100).join("\n");
+    expect(logs).toContain("│ Data");
+    expect(logs).toContain(" Prov.");
   });
 
-  it("alterna entre os quatro modos", () => {
+  it("alterna entre os três modos", () => {
     const { panel } = setup();
-    for (const title of ["Tabela", "Detalhes", "Resumo"]) {
+    for (const title of ["Tabela", "Logs", "Resumo"]) {
       panel.handleInput("v");
       expect(panel.render(100).join("\n")).toContain(`· ${title}`);
     }
@@ -111,7 +111,8 @@ describe("painel do monitor de tokens", () => {
     panel.handleInput("v");
     panel.handleInput("v");
     const body = panel.render(100).join("\n");
-    expect(body).toContain("· Detalhes");
+    expect(body).toContain("· Logs");
+    expect(body).not.toContain("Detalhes");
     expect(body).not.toContain("Gráficos");
     panel.handleInput("v");
     expect(panel.render(100).join("\n")).toContain("· Resumo");
@@ -137,6 +138,33 @@ describe("painel do monitor de tokens", () => {
     await Promise.resolve();
     expect(received?.focus).toBe("router");
     expect(received?.options.map((option: any) => option.label)).toEqual(["Todos", "anthropic", "openrouter"]);
+  });
+
+  it("abre os detalhes somente ao confirmar um log selecionado", () => {
+    const selected: string[] = [];
+    const panel = new TokenMonitorPanel(
+      { terminal: { rows: 30 }, requestRender: () => {} } as any,
+      fakeTheme(),
+      snapshot(),
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      (record) => selected.push(record.id),
+    );
+    panel.handleInput("v"); // tabela
+    panel.handleInput("v"); // logs
+    panel.handleInput("\t"); // conteúdo dos logs
+    panel.handleInput("\r");
+    expect(selected).toEqual(["session:a"]);
+  });
+
+  it("renderiza os detalhes do log sem o modelo respondido", () => {
+    const details = new LogDetailsPanel(fakeTheme(), snapshot().records[0]!, () => {});
+    const body = details.render(100).join("\n");
+    expect(body).toContain("DETALHES DO LOG");
+    expect(body).toContain("Provedor:");
+    expect(body).not.toContain("Modelo respondido");
   });
 
   it("mantém a seleção visível ao navegar pela tabela e alterna o foco com Tab", () => {

@@ -4,9 +4,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { isKeyRepeat, Key, matchesKey } from "@earendil-works/pi-tui";
 import { UsageStore, type UsageCatalog } from "./data.ts";
-import type { UsageFilter } from "./types.ts";
+import type { UsageFilter, UsageRecord } from "./types.ts";
 import {
   FilterSelector,
+  LogDetailsPanel,
   TokenMonitorPanel,
   type FilterFocus,
   type FilterOption,
@@ -61,6 +62,21 @@ function filterTitle(focus: FilterFocus): string {
   if (focus === "period") return "Selecionar período";
   if (focus === "router") return "Selecionar router";
   return "Selecionar modelo";
+}
+
+function openLogDetails(ctx: ExtensionContext, record: UsageRecord): void {
+  void ctx.ui.custom<void>(
+    (_tui, theme, _keybindings, done) => new LogDetailsPanel(theme, record, done),
+    {
+      overlay: true,
+      overlayOptions: {
+        anchor: "center",
+        width: "65%",
+        maxHeight: "80%",
+        margin: 1,
+      },
+    },
+  );
 }
 
 async function selectFilter(
@@ -158,6 +174,7 @@ export default function (pi: ExtensionAPI): void {
             () => void refreshPanel(ctx, panel),
             done,
             (focus, current, options) => selectFilter(ctx, focus, current, options),
+            (record) => openLogDetails(ctx, record),
           );
           activePanel = panel;
           closeActivePanel = done;

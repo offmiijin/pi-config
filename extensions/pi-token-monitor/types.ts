@@ -1,4 +1,4 @@
-export type TokenMonitorView = "overview" | "table" | "details";
+export type TokenMonitorView = "overview" | "table" | "logs";
 
 export type PeriodPreset =
   | "last15m"

@@ -23,11 +23,11 @@ export const PERIOD_OPTIONS: ReadonlyArray<{ id: PeriodPreset; label: string }> 
   { id: "custom", label: "Data personalizada" },
 ];
 
-const VIEWS: readonly TokenMonitorView[] = ["overview", "table", "details"];
+const VIEWS: readonly TokenMonitorView[] = ["overview", "table", "logs"];
 const VIEW_LABELS: Record<TokenMonitorView, string> = {
   overview: "Resumo",
   table: "Tabela",
-  details: "Detalhes",
+  logs: "Logs",
 };
 const FILTERS = ["period", "router", "model"] as const;
 type FocusArea = "filters" | "content";
@@ -52,6 +52,26 @@ function groupLabel(group: UsageGroup): string {
   return group.label.length > 38 ? `${group.label.slice(0, 35)}...` : group.label;
 }
 
+function formatLogDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${String(date.getFullYear()).slice(-2)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fitLogColumnWidths(totalWidth: number): number[] {
+  const natural = [14, 20, 12, 8, 9, 10, 10, 10, 14];
+  const minimum = [8, 10, 7, 6, 6, 6, 8, 7, 8];
+  const widths = [...natural];
+  const target = Math.max(9, totalWidth - natural.length + 1);
+  while (widths.reduce((sum, width) => sum + width, 0) > target) {
+    let index = widths.findIndex((width, candidate) => width > minimum[candidate]!);
+    if (index < 0) index = widths.findIndex((width) => width > 1);
+    if (index < 0) break;
+    widths[index] = widths[index]! - 1;
+  }
+  return widths;
+}
+
 export interface TokenMonitorQuery extends UsageFilter {
   now?: number;
 }
@@ -71,6 +91,7 @@ export type FilterSelectCallback = (
   current: UsageFilter,
   options: readonly FilterOption[],
 ) => Promise<FilterSelection | null>;
+export type LogSelectCallback = (record: UsageRecord) => void;
 
 export class FilterSelector implements Component {
   private selectedIndex: number;
@@ -142,6 +163,61 @@ export class FilterSelector implements Component {
   }
 }
 
+export class LogDetailsPanel implements Component {
+  private readonly theme: Theme;
+  private readonly record: UsageRecord;
+  private readonly onClose: () => void;
+
+  constructor(theme: Theme, record: UsageRecord, onClose: () => void) {
+    this.theme = theme;
+    this.record = record;
+    this.onClose = onClose;
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, Key.alt("m"))) {
+      this.onClose();
+    }
+  }
+
+  render(width: number): string[] {
+    const innerWidth = Math.max(1, width - 2);
+    const row = (content: string): string => `│${this.pad(content, innerWidth)}│`;
+    const separator = `├${"─".repeat(innerWidth)}┤`;
+    const valueWidth = Math.max(1, innerWidth - 20);
+    const fields: Array<[string, string]> = [
+      ["Data", formatLogDate(this.record.timestamp)],
+      ["Modelo", this.record.model],
+      ["Provedor", this.record.provider],
+      ["Total Tokens", formatCompact(this.record.totalTokens)],
+      ["Tok. Entrada", formatCompact(this.record.input)],
+      ["Tok. Saída", formatCompact(this.record.output)],
+      ["Cache R/W", `${formatCompact(this.record.cacheRead)} / ${formatCompact(this.record.cacheWrite)}`],
+      ["Custo", formatCost(this.record.costTotal)],
+      ["Sessão", this.record.sessionId],
+    ];
+    const lines = [
+      `╭${"─".repeat(innerWidth)}╮`,
+      row(this.theme.fg("accent", this.theme.bold(" DETALHES DO LOG"))),
+      separator,
+      ...fields.map(([label, value]) => row(` ${this.theme.fg("muted", this.pad(`${label}:`, 16))} ${truncateToWidth(value, valueWidth, "")}`)),
+      separator,
+      row(this.theme.fg("dim", " Esc fechar ")),
+      `╰${"─".repeat(innerWidth)}╯`,
+    ];
+    return lines.map((line) => truncateToWidth(line, width, ""));
+  }
+
+  invalidate(): void {}
+
+  dispose(): void {}
+
+  private pad(content: string, width: number): string {
+    const value = truncateToWidth(content, width, "");
+    return `${value}${" ".repeat(Math.max(0, width - visibleWidth(value)))}`;
+  }
+}
+
 export class TokenMonitorPanel implements Component {
   private snapshot: UsageSnapshot;
   private readonly tui: TUI;
@@ -150,6 +226,7 @@ export class TokenMonitorPanel implements Component {
   private readonly onQueryChange: (query: TokenMonitorQuery) => void;
   private readonly onRefresh: () => void;
   private readonly onFilterSelect?: FilterSelectCallback;
+  private readonly onLogSelect?: LogSelectCallback;
   private view: TokenMonitorView = "overview";
   private focusArea: FocusArea = "filters";
   private filterFocus: FilterFocus = "period";
@@ -163,6 +240,7 @@ export class TokenMonitorPanel implements Component {
     onRefresh: () => void,
     onClose: () => void,
     onFilterSelect?: FilterSelectCallback,
+    onLogSelect?: LogSelectCallback,
   ) {
     this.tui = tui;
     this.theme = theme;
@@ -171,6 +249,7 @@ export class TokenMonitorPanel implements Component {
     this.onRefresh = onRefresh;
     this.onClose = onClose;
     this.onFilterSelect = onFilterSelect;
+    this.onLogSelect = onLogSelect;
   }
 
   setSnapshot(snapshot: UsageSnapshot): void {
@@ -199,10 +278,15 @@ export class TokenMonitorPanel implements Component {
       this.tui.requestRender();
       return;
     }
-    if (matchesKey(data, Key.enter) && this.focusArea === "filters" && this.onFilterSelect) {
-      void this.onFilterSelect(this.filterFocus, this.snapshot.filter, this.filterOptions()).then((selection) => {
-        if (selection) this.applyFilterSelection(selection);
-      });
+    if (matchesKey(data, Key.enter)) {
+      if (this.focusArea === "filters" && this.onFilterSelect) {
+        void this.onFilterSelect(this.filterFocus, this.snapshot.filter, this.filterOptions()).then((selection) => {
+          if (selection) this.applyFilterSelection(selection);
+        });
+      } else if (this.focusArea === "content" && this.view === "logs" && this.onLogSelect) {
+        const record = this.snapshot.records[this.selectedRow];
+        if (record) this.onLogSelect(record);
+      }
       return;
     }
     if (data === "r") {
@@ -210,7 +294,7 @@ export class TokenMonitorPanel implements Component {
       return;
     }
     if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
-      if (this.focusArea === "content" && (this.view === "table" || this.view === "details")) {
+      if (this.focusArea === "content" && (this.view === "table" || this.view === "logs")) {
         const delta = matchesKey(data, Key.up) ? -1 : 1;
         const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.snapshot.records.length - 1;
         this.selectedRow = Math.max(0, Math.min(maxRow, this.selectedRow + delta));
@@ -251,7 +335,7 @@ export class TokenMonitorPanel implements Component {
       ? this.renderOverview(innerWidth)
       : this.view === "table"
         ? this.renderTable(innerWidth)
-        : this.renderDetails(innerWidth);
+        : this.renderLogs(innerWidth);
     const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.90));
     const footerRows = 3;
     const availableBodyRows = Math.max(1, maxPanelRows - lines.length - footerRows);
@@ -337,23 +421,33 @@ export class TokenMonitorPanel implements Component {
     return lines;
   }
 
-  private renderDetails(width: number): string[] {
-    const record = this.snapshot.records[this.selectedRow];
-    if (!record) return [this.theme.fg("dim", " Nenhuma requisição no período selecionado.")];
-    const lines = [this.theme.fg("accent", this.theme.bold(" DETALHES DA REQUISIÇÃO"))];
-    const fields: Array<[string, string]> = [
-      ["Data", new Date(record.timestamp).toLocaleString("pt-BR")],
-      ["Router", record.provider],
-      ["Modelo", record.model],
-      ["Modelo respondido", record.responseModel ?? "não informado"],
-      ["Entrada", formatCompact(record.input)],
-      ["Saída", formatCompact(record.output)],
-      ["Cache read/write", `${formatCompact(record.cacheRead)} / ${formatCompact(record.cacheWrite)}`],
-      ["Total de tokens", formatCompact(record.totalTokens)],
-      ["Custo", formatCost(record.costTotal)],
-      ["Sessão", record.sessionId],
-    ];
-    for (const [label, value] of fields) lines.push(` ${this.theme.fg("muted", this.pad(`${label}:`, 22))} ${truncateToWidth(value, Math.max(1, width - 24), "")}`);
+  private renderLogs(width: number): string[] {
+    const lines = [this.theme.fg("accent", this.theme.bold(" LOGS"))];
+    const headers = ["Data", "Modelo", "Prov.", "Total", "Tok. Ent.", "Tok. Saída", "Cache R/W", "Custo", "Sessão"];
+    const widths = fitLogColumnWidths(width);
+    const header = headers.map((value, index) => this.pad(value, widths[index]!)).join(" ");
+    lines.push(this.theme.fg("muted", ` ${header}`));
+    lines.push(this.theme.fg("dim", ` ${"─".repeat(Math.min(width, visibleWidth(header)))}`));
+    if (this.snapshot.records.length === 0) {
+      lines.push(this.theme.fg("dim", " Nenhum log no período selecionado."));
+      return lines;
+    }
+    for (const [index, record] of this.snapshot.records.entries()) {
+      const model = `${index === this.selectedRow ? "▶" : " "} ${record.model}`;
+      const values = [
+        formatLogDate(record.timestamp),
+        model,
+        record.provider,
+        formatCompact(record.totalTokens),
+        formatCompact(record.input),
+        formatCompact(record.output),
+        `${formatCompact(record.cacheRead)}/${formatCompact(record.cacheWrite)}`,
+        formatCost(record.costTotal),
+        record.sessionId,
+      ];
+      const line = values.map((value, column) => this.pad(value, widths[column]!)).join(" ");
+      lines.push(index === this.selectedRow ? this.theme.fg("accent", ` ${line}`) : ` ${line}`);
+    }
     return lines;
   }
 
@@ -363,7 +457,8 @@ export class TokenMonitorPanel implements Component {
   }
 
   private getContentOffset(contentLength: number, visibleRows: number): number {
-    if (this.view !== "table" || this.snapshot.models.length === 0) return 0;
+    const itemCount = this.view === "table" ? this.snapshot.models.length : this.snapshot.records.length;
+    if ((this.view !== "table" && this.view !== "logs") || itemCount === 0) return 0;
     const selectedContentRow = 3 + this.selectedRow;
     return Math.max(0, Math.min(
       Math.max(0, contentLength - visibleRows),
