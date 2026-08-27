@@ -215,7 +215,8 @@ export class MemoryGitRepository {
 		if (paths.length === 0) return { ok: true, action: "noop" };
 
 		const repoPaths = paths.map((path) => this.toRepoPath(path));
-		return this.withLock(() => {
+		try {
+			return this.withLock(() => {
 			try {
 				const stagedBefore = this.stagedPaths();
 				if (stagedBefore.length > 0) {
@@ -257,6 +258,10 @@ export class MemoryGitRepository {
 				return failure;
 			}
 		});
+		} catch (error) {
+			if (enqueueOnFailure) this.enqueuePending(repoPaths, message);
+			return { ok: false, action: "pending", error: errorMessage(error) };
+		}
 	}
 
 	private stagedPaths(): string[] {
