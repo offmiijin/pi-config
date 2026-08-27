@@ -71,7 +71,8 @@ function openLogDetails(ctx: ExtensionContext, record: UsageRecord): void {
       overlay: true,
       overlayOptions: {
         anchor: "center",
-        width: "65%",
+        width: "70%",
+        minWidth: 60,
         maxHeight: "80%",
         margin: 1,
       },
