@@ -48,6 +48,8 @@ function snapshot(): UsageSnapshot {
     }],
     routers: [{ key: "anthropic", label: "anthropic", totals }],
     models: [{ key: "claude-sonnet", label: "claude-sonnet", totals }],
+    availableRouters: ["anthropic", "openrouter"],
+    availableModels: ["claude-sonnet"],
   };
 }
 
@@ -94,6 +96,29 @@ describe("painel do monitor de tokens", () => {
     expect(body).not.toContain("Gráficos");
     panel.handleInput("v");
     expect(panel.render(100).join("\n")).toContain("· Resumo");
+  });
+
+  it("abre o seletor menor ao pressionar Enter no filtro focado", async () => {
+    let received: { focus: string; options: readonly unknown[] } | undefined;
+    const tui = { terminal: { rows: 30 }, requestRender: () => {} } as any;
+    const panel = new TokenMonitorPanel(
+      tui,
+      fakeTheme(),
+      snapshot(),
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      async (focus, _current, options) => {
+        received = { focus, options };
+        return { value: "openrouter" };
+      },
+    );
+    panel.handleInput("\t");
+    panel.handleInput("\r");
+    await Promise.resolve();
+    expect(received?.focus).toBe("router");
+    expect(received?.options.map((option: any) => option.label)).toEqual(["Todos", "anthropic", "openrouter"]);
   });
 
   it("navega pelos filtros e solicita uma nova consulta", () => {

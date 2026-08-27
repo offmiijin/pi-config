@@ -30,7 +30,6 @@ const VIEW_LABELS: Record<TokenMonitorView, string> = {
   details: "Detalhes",
 };
 const FILTERS = ["period", "router", "model"] as const;
-type FilterFocus = typeof FILTERS[number];
 
 function formatCompact(value: number): string {
   const absolute = Math.abs(value);
@@ -56,7 +55,92 @@ export interface TokenMonitorQuery extends UsageFilter {
   now?: number;
 }
 
+export type FilterFocus = "period" | "router" | "model";
+export interface FilterOption {
+  value: string | undefined;
+  label: string;
+}
+export interface FilterSelection {
+  value?: string;
+  customFrom?: number;
+  customTo?: number;
+}
 export type CustomPeriodCallback = () => Promise<{ from: number; to: number } | null>;
+export type FilterSelectCallback = (
+  focus: FilterFocus,
+  current: UsageFilter,
+  options: readonly FilterOption[],
+) => Promise<FilterSelection | null>;
+
+export class FilterSelector implements Component {
+  private selectedIndex: number;
+  private readonly options: readonly FilterOption[];
+  private readonly title: string;
+  private readonly onSelect: (value: string | undefined) => void;
+  private readonly onCancel: () => void;
+
+  constructor(
+    title: string,
+    options: readonly FilterOption[],
+    currentValue: string | undefined,
+    onSelect: (value: string | undefined) => void,
+    onCancel: () => void,
+  ) {
+    this.title = title;
+    this.options = options;
+    this.selectedIndex = Math.max(0, options.findIndex((option) => option.value === currentValue));
+    this.onSelect = onSelect;
+    this.onCancel = onCancel;
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.escape)) {
+      this.onCancel();
+      return;
+    }
+    if (matchesKey(data, Key.up) || data === "k") {
+      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+      return;
+    }
+    if (matchesKey(data, Key.down) || data === "j") {
+      this.selectedIndex = Math.min(Math.max(0, this.options.length - 1), this.selectedIndex + 1);
+      return;
+    }
+    if (matchesKey(data, Key.enter)) {
+      this.onSelect(this.options[this.selectedIndex]?.value);
+    }
+  }
+
+  render(width: number): string[] {
+    const innerWidth = Math.max(1, width - 2);
+    const lines = [
+      `╭${"─".repeat(innerWidth)}╮`,
+      `│${this.pad(` ${this.title}`, innerWidth)}│`,
+      `├${"─".repeat(innerWidth)}┤`,
+    ];
+    const maxOptions = Math.max(1, Math.min(12, this.options.length));
+    const offset = Math.min(
+      Math.max(0, this.selectedIndex - maxOptions + 1),
+      Math.max(0, this.options.length - maxOptions),
+    );
+    for (let index = offset; index < Math.min(this.options.length, offset + maxOptions); index++) {
+      const option = this.options[index]!;
+      const marker = index === this.selectedIndex ? "▶ " : "  ";
+      lines.push(`│${this.pad(`${marker}${option.label}`, innerWidth)}│`);
+    }
+    lines.push(`├${"─".repeat(innerWidth)}┤`);
+    lines.push(`│${this.pad(" ↑↓ navegar  Enter selecionar  Esc cancelar ", innerWidth)}│`);
+    lines.push(`╰${"─".repeat(innerWidth)}╯`);
+    return lines.map((line) => truncateToWidth(line, width, ""));
+  }
+
+  invalidate(): void {}
+
+  private pad(content: string, width: number): string {
+    const value = truncateToWidth(content, width, "");
+    return `${value}${" ".repeat(Math.max(0, width - visibleWidth(value)))}`;
+  }
+}
 
 export class TokenMonitorPanel implements Component {
   private snapshot: UsageSnapshot;
@@ -66,6 +150,7 @@ export class TokenMonitorPanel implements Component {
   private readonly onQueryChange: (query: TokenMonitorQuery) => void;
   private readonly onRefresh: () => void;
   private readonly onCustomPeriod?: CustomPeriodCallback;
+  private readonly onFilterSelect?: FilterSelectCallback;
   private view: TokenMonitorView = "overview";
   private filterFocus: FilterFocus = "period";
   private selectedRow = 0;
@@ -78,6 +163,7 @@ export class TokenMonitorPanel implements Component {
     onRefresh: () => void,
     onClose: () => void,
     onCustomPeriod?: CustomPeriodCallback,
+    onFilterSelect?: FilterSelectCallback,
   ) {
     this.tui = tui;
     this.theme = theme;
@@ -86,6 +172,7 @@ export class TokenMonitorPanel implements Component {
     this.onRefresh = onRefresh;
     this.onClose = onClose;
     this.onCustomPeriod = onCustomPeriod;
+    this.onFilterSelect = onFilterSelect;
   }
 
   setSnapshot(snapshot: UsageSnapshot): void {
@@ -111,6 +198,12 @@ export class TokenMonitorPanel implements Component {
     if (data === "v") {
       this.view = VIEWS[(VIEWS.indexOf(this.view) + 1) % VIEWS.length]!;
       this.tui.requestRender();
+      return;
+    }
+    if (matchesKey(data, Key.enter) && this.onFilterSelect) {
+      void this.onFilterSelect(this.filterFocus, this.snapshot.filter, this.filterOptions()).then((selection) => {
+        if (selection) this.applyFilterSelection(selection);
+      });
       return;
     }
     if (data === "r") {
@@ -260,28 +353,52 @@ export class TokenMonitorPanel implements Component {
     return lines;
   }
 
-  private changeFilter(delta: number): void {
+  private filterOptions(): readonly FilterOption[] {
     if (this.filterFocus === "period") {
-      const current = Math.max(0, PERIOD_OPTIONS.findIndex((option) => option.id === this.snapshot.filter.period));
-      const next = PERIOD_OPTIONS[(current + delta + PERIOD_OPTIONS.length) % PERIOD_OPTIONS.length]!;
-      if (next.id === "custom" && this.onCustomPeriod) {
-        void this.onCustomPeriod().then((range) => {
-          if (!range) return;
-          this.onQueryChange({ ...this.snapshot.filter, period: "custom", customFrom: range.from, customTo: range.to, now: Date.now() });
-        });
+      return PERIOD_OPTIONS.map((option) => ({ value: option.id, label: option.label }));
+    }
+    const values = this.filterFocus === "router" ? this.snapshot.availableRouters : this.snapshot.availableModels;
+    return [{ value: undefined, label: "Todos" }, ...values.map((value) => ({ value, label: value }))];
+  }
+
+  private applyFilterSelection(selection: FilterSelection): void {
+    const next: TokenMonitorQuery = { ...this.snapshot.filter, now: Date.now() };
+    if (this.filterFocus === "period") {
+      next.period = selection.value as PeriodPreset;
+      if (selection.value === "custom") {
+        next.customFrom = selection.customFrom;
+        next.customTo = selection.customTo;
       } else {
-        this.onQueryChange({ ...this.snapshot.filter, period: next.id, now: Date.now() });
+        delete next.customFrom;
+        delete next.customTo;
       }
+      delete next.model;
+    } else if (this.filterFocus === "router") {
+      next.router = selection.value;
+      // Modelos disponíveis dependem do período e do router selecionados.
+      delete next.model;
+    } else {
+      next.model = selection.value;
+    }
+    this.onQueryChange(next);
+  }
+
+  private changeFilter(delta: number): void {
+    const options = this.filterOptions();
+    const currentValue = this.filterFocus === "period"
+      ? this.snapshot.filter.period
+      : this.filterFocus === "router"
+        ? this.snapshot.filter.router
+        : this.snapshot.filter.model;
+    const current = Math.max(0, options.findIndex((option) => option.value === currentValue));
+    const next = options[(current + delta + options.length) % options.length];
+    if (!next) return;
+    if (this.filterFocus === "period" && next.value === "custom" && this.onCustomPeriod) {
+      void this.onCustomPeriod().then((range) => {
+        if (range) this.applyFilterSelection({ value: "custom", customFrom: range.from, customTo: range.to });
+      });
       return;
     }
-    const groups = this.filterFocus === "router" ? this.snapshot.routers : this.snapshot.models;
-    const values = groups.map((group) => group.key);
-    const currentValue = this.filterFocus === "router" ? this.snapshot.filter.router : this.snapshot.filter.model;
-    const current = currentValue ? values.indexOf(currentValue) : -1;
-    const nextValue = current + delta < 0 || current + delta >= values.length ? undefined : values[current + delta];
-    const next: TokenMonitorQuery = { ...this.snapshot.filter, now: Date.now() };
-    if (this.filterFocus === "router") next.router = nextValue;
-    else next.model = nextValue;
-    this.onQueryChange(next);
+    this.applyFilterSelection({ value: next.value });
   }
 }

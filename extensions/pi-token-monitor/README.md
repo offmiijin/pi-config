@@ -7,7 +7,7 @@ Extensão TUI para acompanhar tokens e custos do Pi através de `/token-monitor`
 - `data.ts` é a fonte de dados: percorre os JSONL de sessão, mantém um cache por arquivo (`mtime`/tamanho) e agrega mensagens `assistant` finalizadas.
 - `types.ts` define o contrato entre coleta, agregação e interface.
 - `panel.ts` implementa o painel overlay e os três modos: resumo, tabela e detalhes.
-- `index.ts` integra comandos, atalho, eventos do Pi e polling de sessões externas.
+- `index.ts` integra comandos, atalho, eventos do Pi e polling de sessões externas, além do seletor de filtros em overlay menor.
 
 Os arquivos JSONL em `~/.pi/agent/sessions` (ou `$PI_CODING_AGENT_DIR/sessions`) são a fonte persistente. O cache existe apenas em memória e pode ser reconstruído sem perda de dados.
 
@@ -29,4 +29,6 @@ O painel não expõe nem agrega chaves de API.
 - `R` força uma atualização;
 - `Esc` fecha o painel.
 
-O período `Data personalizada` solicita data inicial e final no formato `DD/MM/AAAA HH:mm`.
+O período `Data personalizada` solicita data inicial e final no formato `DD/MM/AAAA HH:mm`. Pressionar `Enter` sobre Período, Router ou Modelo abre um seletor menor; `Esc` cancela e `Enter` confirma.
+
+As opções de Router combinam os providers configurados no registro de modelos com os providers encontrados no histórico. As opções de Modelo são recalculadas usando o período e router atuais, antes de aplicar o filtro de modelo.

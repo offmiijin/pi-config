@@ -1,7 +1,15 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isKeyRepeat, Key, matchesKey } from "@earendil-works/pi-tui";
-import { UsageStore } from "./data.ts";
-import { TokenMonitorPanel, type TokenMonitorQuery } from "./panel.ts";
+import { UsageStore, type UsageCatalog } from "./data.ts";
+import type { UsageFilter } from "./types.ts";
+import {
+  FilterSelector,
+  TokenMonitorPanel,
+  type FilterFocus,
+  type FilterOption,
+  type FilterSelection,
+  type TokenMonitorQuery,
+} from "./panel.ts";
 
 const REFRESH_INTERVAL_MS = 1500;
 const TOGGLE_DEBOUNCE_MS = 250;
@@ -30,6 +38,64 @@ export async function requestCustomPeriod(ctx: ExtensionContext): Promise<{ from
   return { from, to: to + 60_000 };
 }
 
+function getUsageCatalog(ctx: ExtensionContext): UsageCatalog {
+  const configured = ctx.modelRegistry.getAll().map((model) => model.provider);
+  const registered = typeof ctx.modelRegistry.getRegisteredProviderIds === "function"
+    ? [...ctx.modelRegistry.getRegisteredProviderIds()]
+    : [];
+  return { configuredRouters: [...new Set([...configured, ...registered])].sort() };
+}
+
+function filterTitle(focus: FilterFocus): string {
+  if (focus === "period") return "Selecionar período";
+  if (focus === "router") return "Selecionar router";
+  return "Selecionar modelo";
+}
+
+async function selectFilter(
+  ctx: ExtensionContext,
+  focus: FilterFocus,
+  current: UsageFilter,
+  options: readonly FilterOption[],
+): Promise<FilterSelection | null> {
+  const currentValue = focus === "period" ? current.period : focus === "router" ? current.router : current.model;
+  const choice = await ctx.ui.custom<FilterSelection | null>(
+    (tui, theme, _keybindings, done) => {
+      const selector = new FilterSelector(
+        filterTitle(focus),
+        options,
+        currentValue,
+        (value) => done({ value }),
+        () => done(null),
+      );
+      return {
+        render: (width) => selector.render(width),
+        handleInput: (data) => {
+          selector.handleInput(data);
+          tui.requestRender();
+        },
+        invalidate: () => selector.invalidate(),
+      };
+    },
+    {
+      overlay: true,
+      overlayOptions: {
+        anchor: "center",
+        width: "45%",
+        minWidth: 36,
+        maxHeight: "65%",
+        margin: 1,
+      },
+    },
+  );
+  if (!choice) return null;
+  if (focus === "period" && choice.value === "custom") {
+    const range = await requestCustomPeriod(ctx);
+    return range ? { value: "custom", customFrom: range.from, customTo: range.to } : null;
+  }
+  return choice;
+}
+
 export function shouldToggleTokenMonitor(data: string, now: number, lastToggleAt: number): boolean {
   return matchesKey(data, Key.alt("m")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
 }
@@ -49,7 +115,7 @@ export default function (pi: ExtensionAPI): void {
     refreshInFlight = true;
     try {
       const currentQuery = query ?? panel.getQuery();
-      const snapshot = await store.snapshot({ ...currentQuery, now: Date.now() });
+      const snapshot = await store.snapshot({ ...currentQuery, now: Date.now() }, getUsageCatalog(ctx));
       if (activePanel === panel) panel.setSnapshot(snapshot);
     } finally {
       refreshInFlight = false;
@@ -70,7 +136,7 @@ export default function (pi: ExtensionAPI): void {
 
     openingPanel = true;
     try {
-      const initialSnapshot = await store.snapshot({ period: "today", now: Date.now() });
+      const initialSnapshot = await store.snapshot({ period: "today", now: Date.now() }, getUsageCatalog(ctx));
       await ctx.ui.custom<void>(
         (tui, theme, _keybindings, done) => {
           const panel = new TokenMonitorPanel(
@@ -81,6 +147,7 @@ export default function (pi: ExtensionAPI): void {
             () => void refreshPanel(ctx, panel),
             done,
             () => requestCustomPeriod(ctx),
+            (focus, current, options) => selectFilter(ctx, focus, current, options),
           );
           activePanel = panel;
           closeActivePanel = done;

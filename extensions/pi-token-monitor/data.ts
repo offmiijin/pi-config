@@ -86,6 +86,10 @@ function sessionTimestamp(date: Date, startOf: "day" | "week" | "month" | "year"
   return date.getTime();
 }
 
+export interface UsageCatalog {
+  configuredRouters?: readonly string[];
+}
+
 export function getPeriodBounds(period: PeriodPreset, now = Date.now(), custom?: { from?: number; to?: number }): { from: number; to: number } {
   const end = now;
   const date = new Date(now);
@@ -265,14 +269,15 @@ export class UsageStore {
     return [...this.cache.values()].flatMap((file) => file.records);
   }
 
-  async snapshot(filter: UsageFilter): Promise<UsageSnapshot> {
+  async snapshot(filter: UsageFilter, catalog: UsageCatalog = {}): Promise<UsageSnapshot> {
     const now = filter.now ?? Date.now();
     const bounds = getPeriodBounds(filter.period, now, { from: filter.customFrom, to: filter.customTo });
     const allRecords = await this.loadRecords();
-    const records = allRecords
+    const periodRecords = allRecords
       .filter((record) => record.timestamp >= bounds.from && record.timestamp < bounds.to)
+      .filter((record) => !filter.router || record.provider === filter.router);
+    const records = periodRecords
       .filter((record) => !filter.model || record.model === filter.model || record.responseModel === filter.model)
-      .filter((record) => !filter.router || record.provider === filter.router)
       .sort((a, b) => b.timestamp - a.timestamp);
     const totals = records.reduce((result, record) => {
       addTotals(result, record);
@@ -287,6 +292,11 @@ export class UsageStore {
       records,
       routers: groupRecords(records, (record) => record.provider, (record) => record.provider),
       models: groupRecords(records, (record) => record.model, (record) => record.model),
+      availableRouters: [...new Set([
+        ...(catalog.configuredRouters ?? []),
+        ...allRecords.map((record) => record.provider),
+      ])].sort(),
+      availableModels: [...new Set(periodRecords.map((record) => record.model))].sort(),
     };
   }
 

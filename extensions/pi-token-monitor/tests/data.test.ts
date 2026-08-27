@@ -76,13 +76,21 @@ describe("monitor de tokens — leitura de sessões", () => {
     ].join("\n"));
 
     const store = new UsageStore(root);
-    const snapshot = await store.snapshot({ period: "last15m", now: 100_000, router: "anthropic" });
+    const snapshot = await store.snapshot(
+      { period: "last15m", now: 100_000, router: "anthropic" },
+      { configuredRouters: ["anthropic", "openrouter", "google"] },
+    );
     expect(snapshot.records).toHaveLength(1);
     expect(snapshot.totals.requests).toBe(1);
     expect(snapshot.totals.freshTokens).toBe(130);
     expect(snapshot.totals.cacheHit).toBeCloseTo(80 / 190);
     expect(snapshot.routers[0]?.label).toBe("anthropic");
     expect(snapshot.models[0]?.label).toBe("claude-sonnet");
+    expect(snapshot.availableRouters).toEqual(["anthropic", "google", "openai", "openrouter"]);
+    expect(snapshot.availableModels).toEqual(["claude-sonnet"]);
+
+    const otherRouter = await store.snapshot({ period: "last15m", now: 100_000, router: "openai" });
+    expect(otherRouter.availableModels).toEqual(["gpt-5"]);
 
     const second = await store.snapshot({ period: "last15m", now: 100_000 });
     expect(second.records).toHaveLength(2);

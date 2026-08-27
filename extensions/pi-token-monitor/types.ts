@@ -76,4 +76,6 @@ export interface UsageSnapshot {
   records: UsageRecord[];
   routers: UsageGroup[];
   models: UsageGroup[];
+  availableRouters: string[];
+  availableModels: string[];
 }
