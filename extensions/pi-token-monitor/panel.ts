@@ -232,7 +232,7 @@ export class LogDetailsPanel implements Component {
       ["Tok. Saída", formatCompact(this.record.output)],
       ["Cache R/W", `${formatCompact(this.record.cacheRead)} / ${formatCompact(this.record.cacheWrite)}`],
       ["Custo", formatCost(this.record.costTotal)],
-      ["Sessão", shortSessionId(this.record.sessionId)],
+      ["Sessão", this.record.sessionId],
     ];
     const lines = [
       `╭${"─".repeat(innerWidth)}╮`,
@@ -333,14 +333,6 @@ export class TokenMonitorPanel implements Component {
       }
       return;
     }
-    if (this.focusArea === "content" && this.view === "logs" && matchesKey(data, Key.pageUp)) {
-      this.changeLogsPage(-1);
-      return;
-    }
-    if (this.focusArea === "content" && this.view === "logs" && matchesKey(data, Key.pageDown)) {
-      this.changeLogsPage(1);
-      return;
-    }
     if (data === "r") {
       this.onRefresh();
       return;
@@ -355,7 +347,9 @@ export class TokenMonitorPanel implements Component {
       return;
     }
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-      if (this.focusArea === "filters") {
+      if (this.focusArea === "content" && this.view === "logs") {
+        this.changeLogsPage(matchesKey(data, Key.left) ? -1 : 1);
+      } else if (this.focusArea === "filters") {
         const delta = matchesKey(data, Key.left) ? -1 : 1;
         this.filterFocus = FILTERS[(FILTERS.indexOf(this.filterFocus) + delta + FILTERS.length) % FILTERS.length]!;
         this.tui.requestRender();
@@ -395,7 +389,7 @@ export class TokenMonitorPanel implements Component {
     const visibleContent = content.slice(contentOffset, contentOffset + availableBodyRows);
     lines.push(...visibleContent.map(row));
     lines.push(separator);
-    lines.push(row(this.theme.fg("dim", " Tab modo/filtros  ←→ campo  Enter selecionar  ↑↓ navegar  PgUp/PgDn página  V modo  R atualizar  Esc fechar ")));
+    lines.push(row(this.theme.fg("dim", " Tab modo/filtros  ←→ campo/página  Enter selecionar  ↑↓ navegar  V modo  R atualizar  Esc fechar ")));
     lines.push(`╰${"─".repeat(innerWidth)}╯`);
     return lines.slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
   }

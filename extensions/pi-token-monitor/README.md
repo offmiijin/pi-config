@@ -28,7 +28,7 @@ O painel não expõe nem agrega chaves de API.
 - `←`/`→` alternam o campo de filtro focado, sem alterar o valor;
 - `Enter` abre/confirmar a seleção do filtro;
 - `↑`/`↓` navegam pelos itens da Tabela e pelos logs quando o conteúdo está focado;
-- `PageUp`/`PageDown` alternam as páginas de Logs, com 50 registros por página;
+- `←`/`→` alternam as páginas de Logs quando o conteúdo está focado, com 50 registros por página;
 - `Enter` abre os detalhes do log selecionado no modo Logs;
 - `V` alterna Resumo, Tabela e Logs;
 - `R` força uma atualização;
@@ -38,4 +38,4 @@ O período `Data personalizada` solicita data inicial e final no formato `DD/MM/
 
 As opções de Router mostram apenas os providers com credencial armazenada no `auth.json`. As opções de Modelo são recalculadas usando o período e router atuais, antes de aplicar o filtro de modelo.
 
-O modo Logs exibe as colunas `Data`, `Modelo`, `Provedor`, `Tot. Tok.`, `Tok. Ent.`, `Tok. Saída`, `Cache R/W`, `Custo` e `Sessão` em uma única linha, com 50 registros por página. O horário aparece no formato `HH:MM`, o custo usa de duas a seis casas decimais e a sessão mostra uma versão curta do hash.
+O modo Logs exibe as colunas `Data`, `Modelo`, `Provedor`, `Tot. Tok.`, `Tok. Ent.`, `Tok. Saída`, `Cache R/W`, `Custo` e `Sessão` em uma única linha, com 50 registros por página. O horário aparece no formato `HH:MM`, o custo usa de duas a seis casas decimais e a sessão mostra uma versão curta do hash; o painel de detalhes exibe o hash completo.

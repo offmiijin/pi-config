@@ -138,7 +138,7 @@ describe("painel do monitor de tokens", () => {
     panel.handleInput("\t"); // conteúdo
     expect(panel.render(100).join("\n")).toContain("Página 1/2");
     expect(panel.render(100).join("\n")).not.toContain("m50");
-    panel.handleInput("\x1b[6~"); // PageDown
+    panel.handleInput("\x1b[C"); // direita
     const pageTwo = panel.render(100).join("\n");
     expect(pageTwo).toContain("Página 2/2");
     expect(pageTwo).toContain("m50");
@@ -202,8 +202,7 @@ describe("painel do monitor de tokens", () => {
     const body = details.render(100).join("\n");
     expect(body).toContain("DETALHES DO LOG");
     expect(body).toContain("Provedor:");
-    expect(body).toContain("01234567");
-    expect(body).not.toContain("0123456789abcdef0123456789abcdef0123");
+    expect(body).toContain("0123456789abcdef0123456789abcdef0123");
     expect(body).not.toContain("Modelo respondido");
   });
 
