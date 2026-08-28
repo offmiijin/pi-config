@@ -123,6 +123,27 @@ describe("painel do monitor de tokens", () => {
     }
   });
 
+  it("pagina os logs em blocos de 50 registros", () => {
+    const source = snapshot();
+    const base = source.records[0]!;
+    source.records = Array.from({ length: 51 }, (_, index) => ({
+      ...base,
+      id: `session:${index}`,
+      model: `m${index}`,
+      timestamp: base.timestamp + index,
+    }));
+    const { panel } = setup(source);
+    panel.handleInput("v"); // tabela
+    panel.handleInput("v"); // logs
+    panel.handleInput("\t"); // conteúdo
+    expect(panel.render(100).join("\n")).toContain("Página 1/2");
+    expect(panel.render(100).join("\n")).not.toContain("m50");
+    panel.handleInput("\x1b[6~"); // PageDown
+    const pageTwo = panel.render(100).join("\n");
+    expect(pageTwo).toContain("Página 2/2");
+    expect(pageTwo).toContain("m50");
+  });
+
   it("não exibe gráficos nem oferece um quarto modo", () => {
     const { panel } = setup();
     panel.handleInput("v");

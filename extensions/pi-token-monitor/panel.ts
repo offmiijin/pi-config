@@ -31,6 +31,7 @@ const VIEW_LABELS: Record<TokenMonitorView, string> = {
 };
 const FILTERS = ["period", "router", "model"] as const;
 type FocusArea = "filters" | "content";
+const LOG_PAGE_SIZE = 50;
 
 function formatCompact(value: number): string {
   const absolute = Math.abs(value);
@@ -74,6 +75,14 @@ function logColumnGap(totalWidth: number): number {
 
 function shortSessionId(sessionId: string): string {
   return sessionId.slice(0, 8);
+}
+
+function sameFilter(left: UsageFilter, right: UsageFilter): boolean {
+  return left.period === right.period
+    && left.model === right.model
+    && left.router === right.router
+    && left.customFrom === right.customFrom
+    && left.customTo === right.customTo;
 }
 
 function fitLogColumnWidths(totalWidth: number, sessionWidth: number): { widths: number[]; gap: number } {
@@ -260,6 +269,7 @@ export class TokenMonitorPanel implements Component {
   private focusArea: FocusArea = "filters";
   private filterFocus: FilterFocus = "period";
   private selectedRow = 0;
+  private logsPage = 0;
 
   constructor(
     tui: TUI,
@@ -282,7 +292,12 @@ export class TokenMonitorPanel implements Component {
   }
 
   setSnapshot(snapshot: UsageSnapshot): void {
+    if (!sameFilter(this.snapshot.filter, snapshot.filter)) {
+      this.logsPage = 0;
+      this.selectedRow = 0;
+    }
     this.snapshot = snapshot;
+    this.logsPage = Math.min(this.logsPage, this.lastLogsPage());
     this.clampSelectedRow();
     this.tui.requestRender();
   }
@@ -313,9 +328,17 @@ export class TokenMonitorPanel implements Component {
           if (selection) this.applyFilterSelection(selection);
         });
       } else if (this.focusArea === "content" && this.view === "logs" && this.onLogSelect) {
-        const record = this.snapshot.records[this.selectedRow];
+        const record = this.pageRecords()[this.selectedRow];
         if (record) this.onLogSelect(record);
       }
+      return;
+    }
+    if (this.focusArea === "content" && this.view === "logs" && matchesKey(data, Key.pageUp)) {
+      this.changeLogsPage(-1);
+      return;
+    }
+    if (this.focusArea === "content" && this.view === "logs" && matchesKey(data, Key.pageDown)) {
+      this.changeLogsPage(1);
       return;
     }
     if (data === "r") {
@@ -325,7 +348,7 @@ export class TokenMonitorPanel implements Component {
     if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
       if (this.focusArea === "content" && (this.view === "table" || this.view === "logs")) {
         const delta = matchesKey(data, Key.up) ? -1 : 1;
-        const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.snapshot.records.length - 1;
+        const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.pageRecords().length - 1;
         this.selectedRow = Math.max(0, Math.min(maxRow, this.selectedRow + delta));
         this.tui.requestRender();
       }
@@ -340,7 +363,7 @@ export class TokenMonitorPanel implements Component {
       return;
     }
     if (this.focusArea === "content" && (data === "j" || data === "J")) {
-      const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.snapshot.records.length - 1;
+      const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.pageRecords().length - 1;
       this.selectedRow = Math.min(maxRow, this.selectedRow + 1);
       this.tui.requestRender();
     } else if (this.focusArea === "content" && (data === "k" || data === "K")) {
@@ -372,7 +395,7 @@ export class TokenMonitorPanel implements Component {
     const visibleContent = content.slice(contentOffset, contentOffset + availableBodyRows);
     lines.push(...visibleContent.map(row));
     lines.push(separator);
-    lines.push(row(this.theme.fg("dim", " Tab modo/filtros  ←→ campo  Enter selecionar  ↑↓ navegar  V modo  R atualizar  Esc fechar ")));
+    lines.push(row(this.theme.fg("dim", " Tab modo/filtros  ←→ campo  Enter selecionar  ↑↓ navegar  PgUp/PgDn página  V modo  R atualizar  Esc fechar ")));
     lines.push(`╰${"─".repeat(innerWidth)}╯`);
     return lines.slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
   }
@@ -451,19 +474,21 @@ export class TokenMonitorPanel implements Component {
   }
 
   private renderLogs(width: number): string[] {
-    const lines = [this.theme.fg("accent", this.theme.bold(" LOGS"))];
-    const sessionWidth = Math.max(8, ...this.snapshot.records.map((record) => shortSessionId(record.sessionId).length));
+    const records = this.pageRecords();
+    const pageCount = Math.max(1, Math.ceil(this.snapshot.records.length / LOG_PAGE_SIZE));
+    const lines = [this.theme.fg("accent", this.theme.bold(` LOGS · Página ${this.logsPage + 1}/${pageCount}`))];
+    const sessionWidth = Math.max(8, ...records.map((record) => shortSessionId(record.sessionId).length));
     const layout = fitLogColumnWidths(width, sessionWidth);
     const separator = " ".repeat(layout.gap);
     const headerValues = LOG_HEADERS.map((header, index) => index === 0 ? `  ${header}` : header);
     const header = headerValues.map((value, index) => this.pad(value, layout.widths[index]!)).join(separator);
     lines.push(this.theme.fg("muted", ` ${header}`));
     lines.push(this.theme.fg("dim", ` ${"─".repeat(Math.min(width, visibleWidth(header)))}`));
-    if (this.snapshot.records.length === 0) {
+    if (records.length === 0) {
       lines.push(this.theme.fg("dim", " Nenhum log no período selecionado."));
       return lines;
     }
-    for (const [index, record] of this.snapshot.records.entries()) {
+    for (const [index, record] of records.entries()) {
       const data = `${index === this.selectedRow ? "▶" : " "} ${formatLogDate(record.timestamp)}`;
       const values = [
         data,
@@ -482,13 +507,30 @@ export class TokenMonitorPanel implements Component {
     return lines;
   }
 
+  private pageRecords(): UsageRecord[] {
+    const start = this.logsPage * LOG_PAGE_SIZE;
+    return this.snapshot.records.slice(start, start + LOG_PAGE_SIZE);
+  }
+
+  private lastLogsPage(): number {
+    return Math.max(0, Math.ceil(this.snapshot.records.length / LOG_PAGE_SIZE) - 1);
+  }
+
+  private changeLogsPage(delta: number): void {
+    const nextPage = Math.max(0, Math.min(this.lastLogsPage(), this.logsPage + delta));
+    if (nextPage === this.logsPage) return;
+    this.logsPage = nextPage;
+    this.selectedRow = 0;
+    this.tui.requestRender();
+  }
+
   private clampSelectedRow(): void {
-    const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.snapshot.records.length - 1;
+    const maxRow = this.view === "table" ? this.snapshot.models.length - 1 : this.pageRecords().length - 1;
     this.selectedRow = Math.max(0, Math.min(maxRow, this.selectedRow));
   }
 
   private getContentOffset(contentLength: number, visibleRows: number): number {
-    const itemCount = this.view === "table" ? this.snapshot.models.length : this.snapshot.records.length;
+    const itemCount = this.view === "table" ? this.snapshot.models.length : this.pageRecords().length;
     if ((this.view !== "table" && this.view !== "logs") || itemCount === 0) return 0;
     const selectedContentRow = 3 + this.selectedRow;
     return Math.max(0, Math.min(
