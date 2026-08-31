@@ -33,7 +33,7 @@ mcp-cache.json
 # Rust build artifacts (gen-seccomp)
 extensions/pi-sandbox/gen-seccomp/target/
 extensions/pi-sandbox/gen-seccomp-bin
-# Memory store (runtime data from pi-memory extension)
+# Memory store (versioned by the nested repository in memories/)
 memories/
 
 # Configuração pessoal (não distribuível — criada/gerenciada pelo pi)
@@ -41,9 +41,13 @@ mcp.json
 settings.json
 models-store.json
 trust.json
+memory-config.json
 
 # Pacotes npm gerenciados pelo pi (runtime, instalados em ~/.pi/agent/npm)
 npm/
 
 # caveman
 pi-caveman/
+
+# pi config
+.pi/

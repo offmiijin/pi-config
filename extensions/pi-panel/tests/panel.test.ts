@@ -13,22 +13,34 @@ function fakeTheme() {
 
 function snapshot(): ChangesSnapshot {
 	return {
-		files: [
+		groups: [
 			{
-				path: "src/components/very/long/path/app.ts",
-				status: "M",
-				additions: 12,
-				deletions: 4,
-				diff: "diff --git a/app.ts b/app.ts\n@@ -1 +1 @@\n-old\n+new",
-				content: Array.from({ length: 15 }, (_, index) => `line-${index + 1}`).join("\n"),
+				id: "commit:abc123",
+				label: "abc123 feat: altera app",
+				kind: "commit",
+				files: [{
+					path: "src/components/very/long/path/app.ts",
+					status: "M",
+					additions: 12,
+					deletions: 4,
+					diff: "@@ -19,3 +19,4 @@",
+					content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\n"),
+					changedLineRanges: [{ start: 20, end: 20 }],
+				}],
 			},
 			{
-				path: "src/utils.ts",
-				status: "A",
-				additions: 3,
-				deletions: 0,
-				diff: "diff --git a/utils.ts b/utils.ts\n+created",
-				content: "const created = true;",
+				id: "working-tree",
+				label: "Não commitadas",
+				kind: "working-tree",
+				files: [{
+					path: "src/utils.ts",
+					status: "A",
+					additions: 3,
+					deletions: 0,
+					diff: "@@ -0,0 +1,3 @@",
+					content: "const created = true;",
+					changedLineRanges: [{ start: 1, end: 3 }],
+				}],
 			},
 		],
 		totalAdditions: 15,
@@ -54,19 +66,26 @@ describe("painel — truncamento e layout", () => {
 		expect(visibleWidth(value)).toBeLessThanOrEqual(12);
 	});
 
-	it("renderiza o código à esquerda e metadados em uma coluna menor à direita", () => {
+	it("exibe commits recolhidos e arquivos não commitados normalmente", () => {
 		const { panel } = setup();
-		const lines = panel.render(100);
-		const body = lines.join("\n");
-		expect(body).toContain("line-1");
-		expect(body).not.toContain("+new");
-		expect(body).toContain("+12");
-		expect(body).toContain("-4");
+		const body = panel.render(100).join("\n");
+		expect(body).toContain("abc123");
+		expect(body).not.toContain("app.ts");
 		expect(body).toContain("src/utils.ts");
-		expect(body).not.toContain("PgUp");
-		expect(body).not.toContain("PgDn");
-		expect(body).not.toContain("Home/End");
-		for (const line of lines) expect(visibleWidth(line)).toBe(100);
+		expect(body).toContain("Não commitadas");
+	});
+
+	it("expande o commit selecionado e permite selecionar seus arquivos", () => {
+		const { panel } = setup();
+		panel.handleInput("\r");
+		let body = panel.render(100).join("\n");
+		expect(body).toContain("app.ts");
+		expect(body).not.toContain("line-20");
+
+		panel.handleInput("\x1b[B");
+		body = panel.render(100).join("\n");
+		expect(body).toContain("line-20");
+		for (const line of panel.render(100)) expect(visibleWidth(line)).toBe(100);
 	});
 
 	it("mantém a divisória dentro da moldura e alinha os cantos laterais", () => {
@@ -86,35 +105,68 @@ describe("painel — truncamento e layout", () => {
 });
 
 describe("painel — seleção", () => {
-	it("setas e J/K para cima/baixo selecionam arquivos e trocam o código", () => {
+	it("setas e J/K para cima/baixo selecionam commits e arquivos", () => {
 		const { panel, calls } = setup();
 		panel.handleInput("\x1b[B");
 		const selected = panel.render(100).join("\n");
 		expect(selected).toContain("const created = true;");
-		expect(selected).not.toContain("line-1");
+		expect(selected).not.toContain("line-20");
 		expect(calls.length).toBeGreaterThan(0);
 
 		panel.handleInput("k");
-		expect(panel.render(100).join("\n")).toContain("line-1");
+		expect(panel.render(100).join("\n")).not.toContain("line-20");
+		panel.handleInput("\r");
 		panel.handleInput("J");
-		expect(panel.render(100).join("\n")).toContain("const created = true;");
+		expect(panel.render(100).join("\n")).toContain("line-20");
 	});
 
-	it("Enter move o foco para o código e as setas passam a rolá-lo", () => {
+	it("Enter move o foco para o arquivo e F alterna todas as linhas", () => {
 		const { panel } = setup();
 		panel.handleInput("\r");
-		expect(panel.render(100).join("\n")).toContain("rolar código");
+		panel.handleInput("J");
+		panel.handleInput("\r");
+		expect(panel.render(100).join("\n")).toContain("rolar arquivo");
 
 		panel.handleInput("J");
+		panel.handleInput("J");
 		const scrolled = panel.render(100).join("\n");
-		expect(scrolled).not.toMatch(/line-1\s+│/);
-		expect(scrolled).toContain("line-13");
+		expect(scrolled).not.toContain("│ toolDiffContext:line-10");
+		expect(scrolled).toContain("line-21");
 
-		panel.handleInput("K");
-		expect(panel.render(100).join("\n")).toMatch(/line-1\s+│/);
+		panel.handleInput("F");
+		const fullFile = panel.render(100).join("\n");
+		expect(fullFile).toContain("line-1");
+		expect(fullFile).toContain("F contexto");
+
+		panel.handleInput("f");
+		expect(panel.render(100).join("\n")).not.toContain("│dim: 1 │ toolDiffContext:line-1");
 
 		panel.handleInput("\x1b[D");
-		expect(panel.render(100).join("\n")).toContain("Enter código");
+		expect(panel.render(100).join("\n")).toContain("Enter arquivo");
+	});
+
+	it("rola a lista da coluna direita até o item selecionado", () => {
+		const files = Array.from({ length: 10 }, (_, index) => ({
+			path: `src/file-${String(index + 1).padStart(2, "0")}.ts`,
+			status: "M" as const,
+			additions: 1,
+			deletions: 0,
+			diff: "@@ -1 +1 @@",
+			content: `const file = ${index + 1};`,
+			changedLineRanges: [{ start: 1, end: 1 }],
+		}));
+		const tui = { terminal: { rows: 20 }, requestRender: () => {} } as any;
+		const panel = new ChangesPanel(tui, fakeTheme(), {
+			groups: [{ id: "commit:many", label: "many arquivos", kind: "commit", files }],
+			totalAdditions: 10,
+			totalDeletions: 0,
+		}, () => {});
+
+		panel.handleInput("\r");
+		for (let index = 0; index < files.length; index++) panel.handleInput("j");
+		const body = panel.render(100).join("\n");
+		expect(body).toContain("src/file-10.ts");
+		expect(body).not.toContain("src/file-01.ts");
 	});
 
 	it("Esc chama o fechamento", () => {

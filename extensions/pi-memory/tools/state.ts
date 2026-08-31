@@ -9,6 +9,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMemoryStats } from "../memory/memory.ts";
+import type { MemoryGitRepository, MemoryGitResult } from "../memory/memory-git.ts";
 import type { IndexDocument, MemoryIndex } from "../memory/memory-index.ts";
 import type { MemoryActivityStore } from "../memory/retention-store.ts";
 import type { RetentionScheduler } from "../memory/retention-scheduler.ts";
@@ -32,6 +33,8 @@ export interface ToolState {
 	retention: MemoryActivityStore | null;
 	/** Scheduler de retenção — null se desativado/indisponível. */
 	retentionScheduler: RetentionScheduler | null;
+	/** Repositório Git aninhado das memórias — null quando indisponível. */
+	memoryGit?: MemoryGitRepository | null;
 }
 
 /**
@@ -42,6 +45,22 @@ export interface ToolState {
  *                o índice marca needsRebuild e o próximo syncIncremental reconcilia.
  */
 export type IndexStatus = "off" | "synced" | "degraded";
+
+/** Versiona paths já persistidos, sem transformar falha do Git em perda de Markdown. */
+export function commitGit(
+	state: ToolState,
+	paths: string[],
+	message: string,
+): MemoryGitResult {
+	if (!state.memoryGit) {
+		return { ok: false, action: "degraded", error: "repositório Git de memórias indisponível" };
+	}
+	try {
+		return state.memoryGit.commit(paths, message);
+	} catch (err) {
+		return { ok: false, action: "degraded", error: (err as Error).message ?? String(err) };
+	}
+}
 
 /**
  * Aplica uma mutação de escrita ao índice de forma tolerante a falha.

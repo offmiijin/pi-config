@@ -25,6 +25,9 @@ import {
 	BINARY_TIMEOUT_MS,
 	DEFAULT_CONCURRENCY,
 } from "./utils";
+import { getRendererMode } from "./config";
+import { isRendererInstallationInProgress } from "./renderer-install";
+import { getSharedRendererClient } from "./renderer-client";
 
 // Types
 export interface FetchItemResult {
@@ -39,6 +42,8 @@ export interface FetchItemResult {
 	textFile?: string;
 	/** aviso não-fatal (ex.: extração indisponível) */
 	note?: string;
+	/** true quando o HTML foi obtido após executar JavaScript */
+	rendered?: boolean;
 }
 
 export interface FetchOutput {
@@ -189,6 +194,19 @@ function isPdfBuffer(buf: Buffer): boolean {
 	return buf.subarray(0, 5).toString("latin1") === "%PDF-";
 }
 
+// JavaScript rendering
+
+/** Detecta um shell de SPA sem penalizar páginas HTML com conteúdo normal. */
+function isLikelySpaShell(html: string, markdown: string): boolean {
+	const meaningfulText = markdown.replace(/[`#*_>\[\]()\-]/g, "").replace(/\s/g, "");
+	if (meaningfulText.length >= 200) return false;
+
+	const frameworkMarker =
+		/(id=["'](?:root|app|__next|app-root)["']|__next|__nuxt|ng-version|webpackJsonp|vite)/i;
+	const scriptCount = (html.match(/<script\b/gi) || []).length;
+	return frameworkMarker.test(html) || scriptCount >= 3;
+}
+
 // Public API
 
 /**
@@ -291,10 +309,49 @@ export async function fetchPages(
 			if (isText) {
 				// HTML → Markdown (.md) via html-to-markdown (baseUrl = URL final,
 				// após redirects, para resolver links relativos no conteúdo convertido)
-				const html = await response.text();
-				const { markdown } = htmlToMarkdown(html, {
-					baseUrl: response.url || url,
-				});
+				let html = await response.text();
+				let baseUrl = response.url || url;
+				let status = response.status;
+				let { markdown } = htmlToMarkdown(html, { baseUrl });
+				let rendered = false;
+				let note: string | undefined;
+				const rendererMode = getRendererMode();
+				const rendererInstalling = isRendererInstallationInProgress();
+				const shouldRender =
+					!rendererInstalling &&
+					rendererMode !== "never" &&
+					(rendererMode === "required" || isLikelySpaShell(html, markdown));
+
+				if (rendererInstalling && rendererMode !== "never") {
+					if (rendererMode === "required") {
+						results.push({ url, error: "Renderer obrigatório: instalação em andamento" });
+						return;
+					}
+					note = "renderer em instalação; conteúdo estático utilizado";
+				}
+
+				if (shouldRender) {
+					try {
+						const renderedPage = await getSharedRendererClient().render(
+							baseUrl,
+							signal,
+						);
+						html = renderedPage.html;
+						baseUrl = renderedPage.finalUrl || baseUrl;
+						status = renderedPage.status ?? status;
+						({ markdown } = htmlToMarkdown(html, { baseUrl }));
+						rendered = true;
+						note = "conteúdo renderizado com Playwright";
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						if (rendererMode === "required") {
+							results.push({ url, error: `Renderer obrigatório: ${message}` });
+							return;
+						}
+						note = `renderer indisponível: ${message}`;
+					}
+				}
+
 				filename = uniqueFilename(`${urlToBaseName(url)}.md`, usedFilenames);
 				usedFilenames.add(filename);
 				const filePath = path.join(outputDir, filename);
@@ -304,7 +361,9 @@ export async function fetchPages(
 					url,
 					file: filename,
 					size: Buffer.byteLength(markdown, "utf-8"),
-					status: response.status,
+					status,
+					note,
+					rendered,
 				});
 			} else {
 				// Download binário: preserva bytes originais

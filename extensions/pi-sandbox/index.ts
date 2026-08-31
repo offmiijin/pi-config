@@ -31,11 +31,13 @@
  * Uso:
  *   pi                          → sandbox ativo por padrão
  *   pi --no-sandbox             → desabilita sandbox (tools do host)
- *   /sandbox                    → mostra status e configuração
+ *   /sandbox                    → abre as configurações interativas
+ *   /sandbox info               → mostra informações da sessão
  */
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
+  getSettingsListTheme,
   createReadTool,
   createWriteTool,
   createEditTool,
@@ -47,7 +49,17 @@ import {
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, isBwrapAvailable, getBwrapInstallGuide, isRgAvailable, getRgInstallGuide } from "./config";
+import { getSandboxArgumentCompletions } from "./command-completions";
+import {
+  loadConfig,
+  isBwrapAvailable,
+  getBwrapInstallGuide,
+  isRgAvailable,
+  getRgInstallGuide,
+  saveBooleanSetting,
+  saveSetting,
+  type SandboxConfigScope,
+} from "./config";
 import {
   resolveLandlockExecPath,
   resolveSeccompBpfPath,
@@ -55,6 +67,16 @@ import {
   archTriplet,
 } from "./portability";
 import type { SandboxConfig } from "./types";
+import {
+  getSandboxBooleanSetting,
+  getSandboxEnumSetting,
+  SANDBOX_BOOLEAN_SETTINGS,
+  SANDBOX_ENUM_SETTINGS,
+  setSandboxBooleanSetting,
+  setSandboxEnumSetting,
+  type SandboxBooleanSettingKey,
+  type SandboxEnumSettingKey,
+} from "./sandbox-settings";
 import type { SandboxSession } from "./session";
 import {
   cleanupOrphanedWorktrees,
@@ -72,6 +94,7 @@ import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
 import { dependencyBootstrapHint } from "./dependency-bootstrap";
 import { createNpmInstallPlan } from "./dependency-install";
 import { Type } from "typebox";
+import { Container, SettingsList, Text, type SettingItem } from "@earendil-works/pi-tui";
 import { createReadOps } from "./tools/read-ops";
 import { createWriteOps } from "./tools/write-ops";
 import { createEditOps } from "./tools/edit-ops";
@@ -131,13 +154,16 @@ export default function (pi: ExtensionAPI) {
     pi.events?.emit("custom:dev-sandbox-session", {
       originalCwd: session.originalCwd,
       workspaceCwd: session.workspaceCwd,
+      worktreePath: session.worktreePath,
+      baseCommit: session.baseCommit,
       branchName: session.branchName,
       originalBranchName: session.originalBranchName,
+      inPlace: session.inPlace,
     });
   }
 
   function persistActiveBranch(): void {
-    if (!session?.gitRoot || !session.branchName || session.branchName === session.temporaryBranchName) return;
+    if (!session?.gitRoot || session.inPlace || !session.branchName || session.branchName === session.temporaryBranchName) return;
     if (session.branchName === persistedBranchName) return;
     try {
       pi.appendEntry(SANDBOX_STATE_ENTRY, { version: 1, branchName: session.branchName });
@@ -234,13 +260,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Worktree temporário ───────────────────
-      if (!config.worktree.enabled && isGitRepository(originalCwd)) {
+      const inPlace = config.worktree.mode === "in-place";
+      if (!inPlace && !config.worktree.enabled && isGitRepository(originalCwd)) {
         throw new Error("[pi-sandbox] Worktree temporário desabilitado na configuração.");
       }
-      const persistedState = readPersistedSandboxState(ctx);
+      const persistedState = inPlace ? null : readPersistedSandboxState(ctx);
       persistedBranchName = persistedState?.branchName ?? "";
       try {
         session = createWorktree(originalCwd, config.worktree.root, {
+          mode: config.worktree.mode,
           restoreBranch: persistedState?.branchName,
         });
       } catch (err) {
@@ -250,7 +278,7 @@ export default function (pi: ExtensionAPI) {
           `A branch persistida '${err.branchName}' não existe mais. ` +
           `Novo sandbox criado em '${session.branchName}' a partir da branch original atual.`;
       }
-      if (session.gitRoot) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
+      if (session.gitRoot && !session.inPlace) cleanupOrphanedWorktrees(config.worktree.root, session.gitRoot);
       localCwd = session.workspaceCwd;
       emitSessionState();
 
@@ -457,7 +485,7 @@ export default function (pi: ExtensionAPI) {
     name: "sandbox_install_dependencies",
     label: "Sandbox Install Dependencies",
     description:
-      "Installs npm dependencies in the current trusted temporary worktree. " +
+      "Installs npm dependencies in the current trusted sandbox workspace. " +
       "Uses npm ci/install with --ignore-scripts and persistent npm cache. " +
       "Does not accept arbitrary commands or run lifecycle scripts.",
     parameters: Type.Object({}),
@@ -649,6 +677,7 @@ export default function (pi: ExtensionAPI) {
     const sandboxNote =
       `Current working directory: ${cwd} (sandboxed — bubblewrap namespaces)\n` +
       `Active Git branch: ${session?.branchName || "detached HEAD"}.\n` +
+      `Git workspace mode: ${session?.inPlace ? "in-place (commits update the checked-out reference branch)" : "temporary worktree (commits stay on the sandbox branch)"}.\n` +
       (restoreWarning ? `Warning: ${restoreWarning}\n` : "") +
       `Persistent dirs (survive between commands): npm cache ${caches.npm}, pip cache ${caches.pip}. ` +
       `Clone remote repos for this session in ${caches.clones}. /tmp is ephemeral — data written there is lost.`;
@@ -662,7 +691,7 @@ export default function (pi: ExtensionAPI) {
       "\nInstalling or executing external code (npm install, pip install, curl|bash) is BLOCKED in bash. " +
       "Download/run external code through the quarantine profiles:\n" +
       "- sandbox_fetch: download a file/URL (network ON, NO access to the project).\n" +
-      "- sandbox_install_dependencies: install npm dependencies in trusted worktree with --ignore-scripts.\n" +
+      "- sandbox_install_dependencies: install npm dependencies in the trusted sandbox workspace with --ignore-scripts.\n" +
       "- sandbox_quarantine_exec: install (npm/pip) or run downloaded code (NO network, NO project " +
       "access, writes only under .sandbox-cache/runs/<work> and configured caches).\n" +
       "- sandbox_promote: copy ONE specific artifact from runs/ back into the project — explicit, " +
@@ -671,41 +700,141 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n${sandboxNote}${dependencyNote}${landlockNote}${quarantineNote}` };
   });
 
+  function showSandboxInfo(ctx: any): void {
+    if (!enabled || !config) {
+      ctx.ui.notify(
+        "Sandbox desabilitado.\nUse '--no-sandbox' ou verifique a instalação do bubblewrap.",
+        "info",
+      );
+      return;
+    }
+
+    const caches = resolveCacheDirs(config, localCwd);
+    const qdirs = resolveQuarantineDirs(config, localCwd);
+    const prof = config.profiles;
+    const lines = [
+      `🔒 Sandbox de Desenvolvimento`,
+      ``,
+      `Status: ativo`,
+      `Workspace: ${localCwd}`,
+      `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
+      `Branch: ${session?.branchName || "detached HEAD"}`,
+      `Workspace Git: ${session?.inPlace ? "in-place (raiz original)" : "worktree temporário"}`,
+      `Worktree cleanup: ${config.worktree.cleanup}`,
+      `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
+      `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
+      `Landlock: ${config.landlock.enabled ? "ativo (ABI min: " + config.landlock.minAbi + ")" : "desabilitado"}`,
+      `Seccomp: ${config.seccomp.enabled ? "ativo (" + config.seccomp.bpfPath + ")" : "desabilitado"}`,
+      `Capabilities: ${config.capabilities.drop.length} droppadas`,
+      `Perfis: normal=${prof.normal.enabled ? "ok" : "off"} | fetch=${prof.fetch.enabled ? "ok" : "off"} | quarantine=${prof.quarantine.enabled ? "ok" : "off"}`,
+      `Quarentena: fetch=${qdirs.fetch} | runs=${qdirs.runs}`,
+      `Caches: npm=${caches.npm} | pip=${caches.pip}`,
+      `Clones: ${caches.clones}`,
+    ];
+
+    ctx.ui.notify(lines.join("\n"), "info");
+  }
+
+  async function showSandboxSettings(ctx: any): Promise<void> {
+    if (!ctx.hasUI) {
+      ctx.ui.notify("As configurações do sandbox exigem uma sessão interativa.", "warning");
+      return;
+    }
+
+    const scopes: Array<{ value: SandboxConfigScope; label: string }> = [
+      { value: "global", label: "Global (~/.pi/agent/extensions/pi-sandbox.json)" },
+    ];
+    if (projectTrusted) scopes.push({ value: "project", label: "Projeto (.pi/sandbox.json)" });
+
+    const selectedScope = await ctx.ui.select("Escopo da configuração do sandbox", scopes.map((scope) => scope.label));
+    if (!selectedScope) return;
+    const scope = scopes.find((candidate) => candidate.label === selectedScope)?.value;
+    if (!scope) return;
+
+    const settingsConfig = config ?? loadConfig(originalCwd, { projectTrusted });
+    const items: SettingItem[] = [
+      ...SANDBOX_BOOLEAN_SETTINGS.map((setting) => ({
+        id: setting.key,
+        label: setting.label,
+        description: setting.description,
+        currentValue: getSandboxBooleanSetting(settingsConfig, setting.key) ? "true" : "false",
+        values: ["true", "false"],
+      })),
+      ...SANDBOX_ENUM_SETTINGS.map((setting) => ({
+        id: setting.key,
+        label: setting.label,
+        description: setting.description,
+        currentValue: getSandboxEnumSetting(settingsConfig, setting.key),
+        values: [...setting.values],
+      })),
+    ];
+
+    await ctx.ui.custom((tui: any, theme: any, _keybindings: any, done: () => void) => {
+      const container = new Container();
+      container.addChild(new Text(theme.fg("accent", theme.bold("Configuração do sandbox")), 1, 1));
+      const settingsList = new SettingsList(
+        items,
+        Math.min(items.length + 2, 15),
+        getSettingsListTheme(),
+        (id: string, newValue: string) => {
+          const booleanSetting = SANDBOX_BOOLEAN_SETTINGS.find((candidate) => candidate.key === id);
+          const enumSetting = SANDBOX_ENUM_SETTINGS.find((candidate) => candidate.key === id);
+          if (!booleanSetting && !enumSetting) return;
+          try {
+            const filePath = booleanSetting
+              ? saveBooleanSetting(
+                originalCwd,
+                booleanSetting.key as SandboxBooleanSettingKey,
+                newValue === "true",
+                scope,
+              )
+              : saveSetting(originalCwd, enumSetting!.key as SandboxEnumSettingKey, newValue, scope);
+            if (config) {
+              if (booleanSetting) setSandboxBooleanSetting(config, booleanSetting.key, newValue === "true");
+              else setSandboxEnumSetting(config, enumSetting!.key, newValue);
+            }
+            const label = booleanSetting?.label ?? enumSetting!.label;
+            const restart = booleanSetting?.key === "enabled" || enumSetting?.key === "worktree.mode"
+              ? " Reinicie a sessão para aplicar."
+              : "";
+            ctx.ui.notify(`${label}: ${newValue}. Salvo em ${filePath}.${restart}`, "info");
+          } catch (error) {
+            ctx.ui.notify(
+              `Falha ao salvar configuração: ${error instanceof Error ? error.message : String(error)}`,
+              "error",
+            );
+          }
+        },
+        () => done(),
+        { enableSearch: true },
+      );
+      container.addChild(settingsList);
+      return {
+        render: (width: number) => container.render(width),
+        invalidate: () => container.invalidate(),
+        handleInput: (data: string) => {
+          settingsList.handleInput?.(data);
+          tui.requestRender();
+        },
+      };
+    });
+  }
+
   // ── /sandbox command ──────────────────────────
   pi.registerCommand("sandbox", {
-    description: "Mostra status e configuração do sandbox",
-    handler: async (_args, ctx) => {
-      if (!enabled || !config) {
-        ctx.ui.notify(
-          "Sandbox desabilitado.\nUse '--no-sandbox' para desabilitar ou verifique a instalação do bubblewrap.",
-          "info",
-        );
+    description: "Configura o sandbox; use /sandbox info para informações da sessão",
+    getArgumentCompletions: getSandboxArgumentCompletions,
+    handler: async (args, ctx) => {
+      const command = args.trim();
+      if (command === "info") {
+        showSandboxInfo(ctx);
         return;
       }
-
-      const caches = resolveCacheDirs(config, localCwd);
-      const qdirs = resolveQuarantineDirs(config, localCwd);
-      const prof = config.profiles;
-      const lines = [
-        `🔒 Sandbox de Desenvolvimento`,
-        ``,
-        `Status: ativo`,
-        `Workspace: ${localCwd}`,
-        `Worktree: ${session?.gitRoot ? session.worktreePath : "não aplicável (projeto sem Git)"}`,
-        `Branch: ${session?.branchName || "detached HEAD"}`,
-        `Worktree cleanup: ${config.worktree.cleanup}`,
-        `Rede: ${config.internet.enabled ? "compartilhada com host" : "isolada"}`,
-        `SSH: ${config.ssh.mode === "agent" ? "ssh-agent socket" : config.ssh.mode === "mount" ? "~/.ssh montado read-only" : "não montado"}`,
-        `Landlock: ${config.landlock.enabled ? "ativo (ABI min: " + config.landlock.minAbi + ")" : "desabilitado"}`,
-        `Seccomp: ${config.seccomp.enabled ? "ativo (" + config.seccomp.bpfPath + ")" : "desabilitado"}`,
-        `Capabilities: ${config.capabilities.drop.length} droppadas`,
-        `Perfis: normal=${prof.normal.enabled ? "ok" : "off"} | fetch=${prof.fetch.enabled ? "ok" : "off"} | quarantine=${prof.quarantine.enabled ? "ok" : "off"}`,
-        `Quarentena: fetch=${qdirs.fetch} | runs=${qdirs.runs}`,
-        `Caches: npm=${caches.npm} | pip=${caches.pip}`,
-        `Clones: ${caches.clones}`,
-      ];
-
-      ctx.ui.notify(lines.join("\n"), "info");
+      if (command === "") {
+        await showSandboxSettings(ctx);
+        return;
+      }
+      ctx.ui.notify("Uso: /sandbox ou /sandbox info", "warning");
     },
   });
 

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,7 +40,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import {
   deepMerge, normalizeSshConfig, loadConfig, sanitizeConfig,
-  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson,
+  readOsRelease, matchesOsRelease, getBwrapInstallGuide, safeReadJson, saveBooleanSetting, saveSetting,
 } from "../config";
 import { DEFAULT_CONFIG, type SandboxConfig } from "../types";
 
@@ -73,6 +73,29 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const f of fixtures.splice(0)) rmSync(f, { recursive: true, force: true });
+});
+
+describe("configuração booleana", () => {
+  it("salva modo enum no arquivo do projeto", () => {
+    const cwd = fixture();
+    const filePath = saveSetting(cwd, "worktree.mode", "in-place", "project");
+
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toEqual({
+      worktree: { mode: "in-place" },
+    });
+  });
+
+  it("salva no arquivo global e no arquivo do projeto", () => {
+    const agentDir = fixture();
+    state.agentDir = agentDir;
+    const cwd = fixture();
+
+    const globalPath = saveBooleanSetting(cwd, "internet.enabled", false, "global");
+    const projectPath = saveBooleanSetting(cwd, "seccomp.enabled", false, "project");
+
+    expect(JSON.parse(readFileSync(globalPath, "utf8"))).toEqual({ internet: { enabled: false } });
+    expect(JSON.parse(readFileSync(projectPath, "utf8"))).toEqual({ seccomp: { enabled: false } });
+  });
 });
 
 describe("deepMerge", () => {
@@ -147,6 +170,16 @@ describe("loadConfig", () => {
   it("sem arquivos → DEFAULT_CONFIG", () => {
     const config = loadConfig("/cwd/sem-config");
     expect(config).toEqual(DEFAULT_CONFIG);
+  });
+
+  it("preserva worktree como modo padrão", () => {
+    expect(loadConfig("/cwd/proj").worktree.mode).toBe("worktree");
+  });
+
+  it("global configura o modo in-place", () => {
+    const agentDir = writeGlobal('{"worktree": {"mode": "in-place"}}');
+    state.agentDir = agentDir;
+    expect(loadConfig("/cwd/proj").worktree.mode).toBe("in-place");
   });
 
   it("global parcial mergeia com defaults", () => {

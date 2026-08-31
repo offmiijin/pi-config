@@ -30,6 +30,8 @@ export interface FetchRecord {
 	binary?: boolean;
 	/** texto extraído do binário (PDF → pdftotext) */
 	textFile?: string;
+	/** conteúdo HTML obtido após executar JavaScript */
+	rendered?: boolean;
 	error?: string;
 }
 
@@ -204,7 +206,7 @@ function formatState(): string {
 						: "⏳";
 			const detail =
 				f.status === "done"
-					? `${f.file} (${((f.size ?? 0) / 1024).toFixed(1)} KB)${f.binary ? " — binário" : ""}${f.textFile ? `, texto: ${f.textFile}` : ""}`
+					? `${f.file} (${((f.size ?? 0) / 1024).toFixed(1)} KB)${f.binary ? " — binário" : ""}${f.rendered ? " — JavaScript renderizado" : ""}${f.textFile ? `, texto: ${f.textFile}` : ""}`
 					: f.status === "error"
 						? f.error ?? "error"
 						: "pending";
@@ -373,6 +375,7 @@ function registerListeners(pi: ExtensionAPI): void {
 					size?: number;
 					binary?: boolean;
 					textFile?: string;
+					rendered?: boolean;
 					error?: string;
 				}>;
 			};
@@ -392,6 +395,7 @@ function registerListeners(pi: ExtensionAPI): void {
 					record.size = r.size;
 					record.binary = r.binary;
 					record.textFile = r.textFile;
+					record.rendered = r.rendered;
 				}
 			}
 		}

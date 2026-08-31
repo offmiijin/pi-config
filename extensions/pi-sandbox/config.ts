@@ -7,12 +7,13 @@
  *   3. .pi/sandbox.json (projeto)
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getAgentDir, CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import type { SandboxConfig } from "./types";
 import { DEFAULT_CONFIG, PROFILE_NAMES } from "./types";
+import type { SandboxBooleanSettingKey } from "./sandbox-settings";
 
 // ── Detecção de SO ────────────────────────────────────────────────────
 
@@ -112,6 +113,53 @@ export interface LoadConfigOptions {
   projectTrusted?: boolean;
 }
 
+export type SandboxConfigScope = "global" | "project";
+
+/** Persiste uma opção simples sem expor listas, caminhos ou enums ao UI. */
+export function saveSetting(
+  cwd: string,
+  key: string,
+  value: boolean | string,
+  scope: SandboxConfigScope,
+): string {
+  const filePath = scope === "global"
+    ? join(getAgentDir(), "extensions", "pi-sandbox.json")
+    : join(cwd, CONFIG_DIR_NAME, "sandbox.json");
+
+  let data: Record<string, unknown> = {};
+  if (existsSync(filePath)) {
+    const parsed: unknown = JSON.parse(readFileSync(filePath, "utf-8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`Configuração do sandbox inválida: ${filePath}`);
+    }
+    data = parsed as Record<string, unknown>;
+  }
+
+  const parts = key.split(".");
+  let target = data;
+  for (const part of parts.slice(0, -1)) {
+    const current = target[part];
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      target[part] = {};
+    }
+    target = target[part] as Record<string, unknown>;
+  }
+  target[parts[parts.length - 1]] = value;
+
+  mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
+  writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  return filePath;
+}
+
+export function saveBooleanSetting(
+  cwd: string,
+  key: SandboxBooleanSettingKey,
+  value: boolean,
+  scope: SandboxConfigScope,
+): string {
+  return saveSetting(cwd, key, value, scope);
+}
+
 /**
  * Valida a configuração final: campos com tipo errado (JSON inválido)
  * são resetados para o default. Configuração corrompida não pode
@@ -123,6 +171,7 @@ export function sanitizeConfig(raw: SandboxConfig): SandboxConfig {
   if (raw.worktree && typeof raw.worktree === "object") {
     const wt = raw.worktree as unknown as Record<string, unknown>;
     if (typeof wt.enabled === "boolean") out.worktree.enabled = wt.enabled;
+    if (wt.mode === "worktree" || wt.mode === "in-place") out.worktree.mode = wt.mode;
     if (typeof wt.root === "string" && wt.root.trim() !== "") out.worktree.root = wt.root;
     if (wt.cleanup === "always" || wt.cleanup === "never") out.worktree.cleanup = wt.cleanup;
   }

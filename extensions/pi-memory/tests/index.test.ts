@@ -21,7 +21,7 @@
 
 import { after as afterAll, before as beforeAll, describe, it } from "node:test";
 import { expect } from "./expect-shim.ts";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -54,7 +54,8 @@ if (isNode) {
 			if (specifier === "@earendil-works/pi-coding-agent") {
 				return {
 					url: dataUrl(
-						`import { homedir } from "node:os";
+						`export class DynamicBorder { constructor() {} }
+						import { homedir } from "node:os";
 						import { join } from "node:path";
 						export const CONFIG_DIR_NAME = ".pi";
 						export function getAgentDir() {
@@ -75,9 +76,11 @@ interface MockPi {
 	pi: {
 		on(event: string, fn: (...args: unknown[]) => unknown): void;
 		registerTool(tool: { name: string; execute: (...args: unknown[]) => unknown }): void;
+		registerCommand(command: string, definition: { handler: (...args: unknown[]) => unknown }): void;
 		sendUserMessage(): Promise<void>;
 	};
 	handlers: Map<string, ((...args: unknown[]) => unknown)[]>;
+	commands: Map<string, { handler: (...args: unknown[]) => unknown }>;
 	tools: Map<string, { name: string; execute: (...args: unknown[]) => Promise<{ content: { type: string; text: string }[]; details: Record<string, unknown> }> }>;
 	fire(event: string, ...args: unknown[]): Promise<unknown[]>;
 }
@@ -85,6 +88,7 @@ interface MockPi {
 function createMockPi(): MockPi {
 	const handlers = new Map<string, ((...args: unknown[]) => unknown)[]>();
 	const tools = new Map();
+	const commands = new Map();
 	const pi = {
 		on(event: string, fn: (...args: unknown[]) => unknown) {
 			handlers.set(event, [...(handlers.get(event) ?? []), fn]);
@@ -92,12 +96,16 @@ function createMockPi(): MockPi {
 		registerTool(tool: { name: string; execute: (...args: unknown[]) => unknown }) {
 			tools.set(tool.name, tool);
 		},
+		registerCommand(command: string, definition: { handler: (...args: unknown[]) => unknown }) {
+			commands.set(command, definition);
+		},
 		sendUserMessage: async () => {},
 	};
 	return {
 		pi,
 		handlers,
 		tools,
+		commands,
 		async fire(event: string, ...args: unknown[]) {
 			const out: unknown[] = [];
 			for (const fn of handlers.get(event) ?? []) out.push(await fn(...args));
@@ -167,7 +175,7 @@ const ctxB = { cwd: cwdB, sessionManager: { getSessionFile: () => null } };
 // Os testes abaixo são ORDENADOS (estado da extensão é compartilhado entre eles).
 // Só executa em Node (registerHooks é Node 22+; Bun não suporta).
 if (isNode) describe("index.ts lifecycle", () => {
-	it("registra os 5 handlers e as 5 tools", () => {
+	it("registra os handlers, as tools e o comando de configuração", () => {
 		for (const ev of [
 			"session_start",
 			"session_tree",
@@ -177,9 +185,10 @@ if (isNode) describe("index.ts lifecycle", () => {
 		]) {
 			expect(mock.handlers.has(ev)).toBeTrue();
 		}
-		for (const t of ["memory_status", "memory_save", "memory_search", "memory_decay", "memory_extract"]) {
+		for (const t of ["memory_status", "memory_save", "memory_search", "memory_decay", "memory_extract", "memory_git"]) {
 			expect(mock.tools.has(t)).toBeTrue();
 		}
+		expect(mock.commands.has("memory")).toBeTrue();
 	});
 
 	it("busca sem session_start → erro no_active_project", async () => {
@@ -207,6 +216,39 @@ if (isNode) describe("index.ts lifecycle", () => {
 		// Escopo project = projeto ATUAL (B) — "cache" vive só em A e não vaza
 		const iso = await search.execute("t3", { query: ["cache"], scope: "project" }, undefined, undefined, {});
 		expect(iso.details.count).toBe(0);
+	});
+
+	it("configura o modelo apenas entre opções autenticadas", async () => {
+		const command = mock.commands.get("memory")!;
+		const selectedTitles: string[] = [];
+		let selectCalls = 0;
+		const commandCtx = {
+			ui: {
+				select: async (_title: string, items: string[]) => {
+					selectCalls++;
+					selectedTitles.push(...items);
+					return selectCalls === 1
+						? items[0]
+						: items.find((item) => item.startsWith("anthropic/")) ?? items[0];
+				},
+				notify: () => {},
+			},
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "openai", id: "sem-auth" },
+					{ provider: "anthropic", id: "claude-test", name: "Claude Test" },
+				],
+				hasConfiguredAuth: (model: { provider: string }) => model.provider === "anthropic",
+			},
+			scopedModels: [],
+		};
+
+		await command.handler("config", commandCtx);
+		const config = JSON.parse(readFileSync(join(agentDir, "memory-config.json"), "utf-8")) as {
+			modelProcessor: { provider: string; id: string };
+		};
+		expect(config.modelProcessor).toEqual({ provider: "anthropic", id: "claude-test" });
+		expect(selectedTitles.some((item) => item.includes("openai/sem-auth"))).toBeFalse();
 	});
 
 	it("before_agent_start injeta o índice de memórias no system prompt", async () => {

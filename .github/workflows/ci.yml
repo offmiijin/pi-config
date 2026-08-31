@@ -37,12 +37,14 @@ jobs:
         run: npm run test:github
       - name: pi-web-search (vitest)
         run: npm run test:websearch
+      - name: pi-token-monitor (vitest)
+        run: npm run test:pi-token-monitor
+      - name: Typecheck pi-token-monitor
+        run: npm run typecheck --workspace=extensions/pi-token-monitor
       - name: pi-memory (node --test)
         run: npm run test:memory
       - name: doctor (vitest)
         run: npm run test:pi-doctor
-      - name: thinking-level (vitest)
-        run: npm run test:pi-thinking-level
       - name: Typecheck pi-sandbox
         run: npm run typecheck
       - name: Doctor smoke — ambiente completo sem pendências
