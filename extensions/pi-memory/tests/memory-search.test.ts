@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 
 import {
 	MAX_MEMORY_SEARCH_ATTEMPTS,
-	MEMORIES_ROOT
+	MEMORIES_ROOT,
+	MIN_MEMORY_SEARCH_TERMS,
 } from "../constants.ts";
 
 import {
@@ -75,9 +76,13 @@ describe("buildSearchPattern", () => {
 	});
 });
 
-describe("MAX_MEMORY_SEARCH_ATTEMPTS", () => {
-	it("is 3", () => {
-		expect(MAX_MEMORY_SEARCH_ATTEMPTS).toBe(3);
+describe("memory_search limits", () => {
+	it("allows 5 consecutive empty searches", () => {
+		expect(MAX_MEMORY_SEARCH_ATTEMPTS).toBe(5);
+	});
+
+	it("requires 5 terms", () => {
+		expect(MIN_MEMORY_SEARCH_TERMS).toBe(5);
 	});
 });
 

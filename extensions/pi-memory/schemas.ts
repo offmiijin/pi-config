@@ -3,6 +3,7 @@
  */
 
 import { Type } from "typebox";
+import { MIN_MEMORY_SEARCH_TERMS } from "./constants.ts";
 
 /**
  * Cria uma união TypeBox de tipos literal string.
@@ -60,10 +61,14 @@ export const SaveSchema = Type.Object({
 
 export const SearchSchema = Type.Object({
 	query: Type.Array(
-		Type.String({ description: "Keyword to search for (OR semantics — any term matches)" }),
-		{
+		Type.String({
 			description:
-				"One or more keywords. Pack synonyms/alternatives in one call (e.g. ['cache', 'invalidation']).",
+				"Palavra-chave específica ou frase curta em português brasileiro — nunca uma pergunta ou frase longa.",
+		}),
+		{
+			minItems: MIN_MEMORY_SEARCH_TERMS,
+			description:
+				`Use pelo menos ${MIN_MEMORY_SEARCH_TERMS} palavras-chave específicas ou frases curtas em português brasileiro. A busca usa OR: qualquer termo pode coincidir. Exemplo: ['invalidação de cache', 'cache', 'expiração', 'política de retenção', 'armazenamento temporário'].`,
 		},
 	),
 	scope: Type.Optional(SearchScopeEnum),
@@ -72,6 +77,12 @@ export const SearchSchema = Type.Object({
 		Type.Number({ description: "Minimum confidence filter (default 0.5)" }),
 	),
 	limit: Type.Optional(Type.Number({ description: "Max results (default 10)" })),
+});
+
+export const MemoryReadSchema = Type.Object({
+	path: Type.String({
+		description: "Caminho exato retornado por memory_search, como memories/_global/gotchas/cache.md",
+	}),
 });
 
 export const StatusSchema = Type.Object({});

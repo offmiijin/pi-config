@@ -79,6 +79,7 @@ import { registerMemoryExtract } from "./tools/extract.ts";
 import { registerMemoryRetention } from "./tools/retention.ts";
 import { registerMemorySave } from "./tools/save.ts";
 import { registerMemorySearch } from "./tools/search.ts";
+import { registerMemoryRead } from "./tools/read.ts";
 import { registerMemoryStatus } from "./tools/status.ts";
 import { registerMemoryConfig } from "./tools/config.ts";
 import { registerMemoryGit } from "./tools/git.ts";
@@ -542,6 +543,7 @@ export default function (pi: ExtensionAPI) {
 	registerMemoryStatus(pi, state);
 	registerMemorySave(pi, state);
 	registerMemorySearch(pi, state);
+	registerMemoryRead(pi, state);
 	registerMemoryDecay(pi, state);
 	registerMemoryExtract(pi, state);
 	registerMemoryRetention(pi, state);

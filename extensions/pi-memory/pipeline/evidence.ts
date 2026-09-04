@@ -424,6 +424,17 @@ export function classifyToolCall(input: {
 				redactionFlags: redacted ? 1 : 0,
 			};
 		}
+		case "memory_read": {
+			const { text, redacted } = sanitizeEvidenceText(`path: ${str(args.path)}`);
+			return {
+				kind: "memory-op",
+				toolName: "memory_read",
+				payload: { text },
+				isError,
+				priority: 0,
+				redactionFlags: redacted ? 1 : 0,
+			};
+		}
 		case "memory_decay": {
 			const raw = `context: ${str(args.context)} delta: ${str(args.delta)} reason: ${str(args.reason)}`;
 			const { text, redacted } = sanitizeEvidenceText(raw);
