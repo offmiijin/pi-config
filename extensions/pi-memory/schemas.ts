@@ -62,12 +62,13 @@ export const SaveSchema = Type.Object({
 export const SearchSchema = Type.Object({
 	query: Type.Array(
 		Type.String({
-			description: "Termo de busca em português brasileiro (semântica OR — qualquer termo pode coincidir)",
+			description:
+				"Palavra-chave específica ou frase curta em português brasileiro — nunca uma pergunta ou frase longa.",
 		}),
 		{
 			minItems: MIN_MEMORY_SEARCH_TERMS,
 			description:
-				`Pelo menos ${MIN_MEMORY_SEARCH_TERMS} termos em português brasileiro. Use sinônimos/alternativas na mesma chamada.`,
+				`Use pelo menos ${MIN_MEMORY_SEARCH_TERMS} palavras-chave específicas ou frases curtas em português brasileiro. A busca usa OR: qualquer termo pode coincidir. Exemplo: ['invalidação de cache', 'cache', 'expiração', 'política de retenção', 'armazenamento temporário'].`,
 		},
 	),
 	scope: Type.Optional(SearchScopeEnum),

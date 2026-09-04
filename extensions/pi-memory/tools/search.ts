@@ -137,17 +137,19 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 		label: "Memory Search",
 		description:
 			"Searches memories via SQLite FTS5/BM25 index (ripgrep fallback). " +
-			`query requires at least ${MIN_MEMORY_SEARCH_TERMS} search terms in Brazilian Portuguese (OR semantics — any term matches). ` +
+			`query requires at least ${MIN_MEMORY_SEARCH_TERMS} specific Brazilian Portuguese keywords or short phrases — never a question or long sentence. ` +
+			"Terms use OR semantics, so any one term may match; avoid generic terms and combine keywords with short phrases when useful. " +
 			"scope: 'global' (only global), 'project' (only current project), 'all' (default: current project + global). " +
 			"Use when you need past context about a topic. " +
 			`Max ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results — then abandon and search the code instead. ` +
 			"NATIVE pi tool — call memory_search directly, NOT via mcp({ tool: 'memory_search' }) or the mcp gateway.",
 		promptSnippet:
-			"memory_search: Search past memories (multi-term; max 5 empty tries)",
+			"memory_search: Search past memories (at least 5 specific PT-BR keywords or short phrases; OR semantics; max 5 empty tries)",
 		promptGuidelines: [
 			"Before searching the codebase or web for information about a topic, use memory_search FIRST — past learnings, decisions, patterns and gotchas may already be stored in memories.",
 			"Use memory_search when you need past context about a topic, pattern, decision, or gotcha.",
-			`Pass at least ${MIN_MEMORY_SEARCH_TERMS} search terms in Brazilian Portuguese as an array — OR semantics. Pack synonyms/alternatives in one call.`,
+			`Build query with at least ${MIN_MEMORY_SEARCH_TERMS} specific Brazilian Portuguese keywords or short phrases — never a full question or long sentence. Mix single words and short phrases when useful.`,
+			"Terms use OR semantics: one matching term is enough, so avoid generic words such as 'projeto' or 'memória' unless they are truly relevant. Pack synonyms and alternatives in the same call.",
 			"Memories are stored in PT-BR — use Portuguese terms in your queries.",
 			`After ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches with no results, stop searching memories and continue searching the code instead.`,
 		],
