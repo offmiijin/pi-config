@@ -37,7 +37,7 @@ function snapshot(): ChangesSnapshot {
 					status: "A",
 					additions: 3,
 					deletions: 0,
-					diff: "@@ -0,0 +1,3 @@",
+					diff: "@@ -1 +1 @@\n-old value\n+const created = true;",
 					content: "const created = true;",
 					changedLineRanges: [{ start: 1, end: 3 }],
 				}],
@@ -84,8 +84,9 @@ describe("painel — truncamento e layout", () => {
 
 		panel.handleInput("\x1b[B");
 		body = panel.render(100).join("\n");
-		expect(body).toContain("-line-20");
-		expect(body).toContain("+line-20 updated");
+		expect(body).toContain("toolDiffRemoved:line-20");
+		expect(body).toContain("toolDiffAdded:line-20 updated");
+		expect(body).not.toContain("@@ -19,3 +19,4 @@");
 		for (const line of panel.render(100)) expect(visibleWidth(line)).toBe(100);
 	});
 
@@ -127,7 +128,9 @@ describe("painel — seleção", () => {
 		const { panel, calls } = setup();
 		panel.handleInput("\x1b[B");
 		const selected = panel.render(100).join("\n");
-		expect(selected).toContain("const created = true;");
+		expect(selected).toContain("toolDiffRemoved:old value");
+		expect(selected).toContain("toolDiffAdded:const created = true;");
+		expect(selected).not.toContain("@@ -1 +1 @@");
 		expect(selected).not.toContain("line-20");
 		expect(calls.length).toBeGreaterThan(0);
 

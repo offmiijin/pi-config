@@ -41,19 +41,6 @@ function statusColor(status: ChangedFile["status"]): "success" | "error" | "warn
 	}
 }
 
-function diffLineColor(line: string): "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext" | "accent" | "dim" {
-	if (line.startsWith("+") && !line.startsWith("+++")) return "toolDiffAdded";
-	if (line.startsWith("-") && !line.startsWith("---")) return "toolDiffRemoved";
-	if (line.startsWith("@@")) return "accent";
-	if (
-		line.startsWith("diff --git ") ||
-		line.startsWith("index ") ||
-		line.startsWith("---") ||
-		line.startsWith("+++")
-	) return "dim";
-	return "toolDiffContext";
-}
-
 function formatNumber(value: number): string {
 	return value.toLocaleString("pt-BR");
 }
@@ -225,9 +212,7 @@ export class ChangesPanel implements Component {
 		const codeWidth = Math.max(1, innerWidth - metadataWidth - 1);
 		const viewportRows = this.viewportRows();
 		const selection = fileSelection(this.selectedItem());
-		const codeLines = selection
-			? this.renderCodeLines(selection.file, codeWidth, selection.group.kind === "commit" && !this.showFullFile)
-			: this.emptyCodeLines(codeWidth);
+		const codeLines = selection ? this.renderCodeLines(selection.file, codeWidth) : this.emptyCodeLines(codeWidth);
 		const metadata = this.renderMetadataLines(metadataWidth);
 		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadata.lines.length)));
 		const maxCodeOffset = Math.max(0, codeLines.length - bodyRows);
@@ -266,9 +251,7 @@ export class ChangesPanel implements Component {
 			lines.push(`│${padToWidth(codeLine, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
 		}
 
-		const toggleLabel = selection?.group.kind === "commit"
-			? (this.showFullFile ? "diff" : "arquivo completo")
-			: (this.showFullFile ? "contexto" : "arquivo completo");
+		const toggleLabel = this.showFullFile ? "diff" : "arquivo completo";
 		const footerText = this.focus === "files"
 			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${toggleLabel}  Alt+D/Esc fechar `
 			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${toggleLabel}  Alt+D/Esc fechar `;
@@ -318,8 +301,8 @@ export class ChangesPanel implements Component {
 		return Math.max(3, Math.floor(this.tui.terminal.rows * 0.9) - 6);
 	}
 
-	private renderCodeLines(file: ChangedFile, width: number, showDiff = false): string[] {
-		if (showDiff || file.content === undefined) return this.renderDiffLines(file, width);
+	private renderCodeLines(file: ChangedFile, width: number): string[] {
+		if (!this.showFullFile || file.content === undefined) return this.renderDiffLines(file, width);
 
 		const rawLines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 		const totalLines = rawLines.length;
@@ -354,11 +337,38 @@ export class ChangesPanel implements Component {
 
 	private renderDiffLines(file: ChangedFile, width: number): string[] {
 		const rawLines = file.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-		return rawLines.map((line) => truncateToWidth(
-			this.theme.fg(diffLineColor(line), line),
-			width,
-			"",
-		));
+		const lines: string[] = [];
+		for (const line of rawLines) {
+			if (
+				line.startsWith("diff --git ") ||
+				line.startsWith("index ") ||
+				line.startsWith("@@") ||
+				line.startsWith("--- ") ||
+				line.startsWith("+++ ") ||
+				line.startsWith("old mode ") ||
+				line.startsWith("new mode ") ||
+				line.startsWith("new file mode ") ||
+				line.startsWith("deleted file mode ") ||
+				line.startsWith("similarity index ") ||
+				line.startsWith("rename from ") ||
+				line.startsWith("rename to ") ||
+				line.startsWith("Binary files ") ||
+				line === "\\ No newline at end of file"
+			) continue;
+
+			const isAdded = line.startsWith("+");
+			const isRemoved = line.startsWith("-");
+			const color = isAdded
+				? "toolDiffAdded"
+				: isRemoved
+					? "toolDiffRemoved"
+					: "toolDiffContext";
+			const content = line.startsWith(" ") || isAdded || isRemoved ? line.slice(1) : line;
+			lines.push(truncateToWidth(this.theme.fg(color, content), width, ""));
+		}
+		return lines.length > 0
+			? lines
+			: [truncateToWidth(this.theme.fg("dim", "Nenhum conteúdo textual disponível."), width, "")];
 	}
 
 	private emptyCodeLines(width: number): string[] {
