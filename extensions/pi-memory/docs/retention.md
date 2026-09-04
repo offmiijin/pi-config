@@ -72,8 +72,7 @@ Banco apagado → reconstrói no próximo `session_start` com scores 1.0
 ## Contagem de uso
 
 Conta como uso: resultado retornado por `memory_search` (engine SQLite **ou**
-fallback rg). Não conta: listagem no system prompt, busca vazia, busca interna
-da extração, rebuild/sync do índice, `memory_status`, `memory_decay`.
+fallback rg) ou leitura realizada por `memory_read`. Não conta: listagem no system prompt, busca vazia, busca interna da extração, rebuild/sync do índice, `memory_status`, `memory_decay`.
 
 `recordAccess` é por path, deduplicado por chamada de busca, e imediato:
 
@@ -133,7 +132,7 @@ de relevância/confiança semelhantes. Sem exclusão automática da busca na v1.
 
 ## Tools e observabilidade
 
-- `memory_search` — registra acesso (fire-and-forget; falha degrada).
+- `memory_search` e `memory_read` — registram acesso (fire-and-forget; falha degrada).
 - `memory_status` — seção `retention:` (enabled, last_sweep_at, tracked,
   never_used, protected, low_retention).
 - **nova** `memory_retention` — ações `status` / `preview` (dry-run sem

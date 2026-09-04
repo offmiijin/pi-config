@@ -185,7 +185,7 @@ if (isNode) describe("index.ts lifecycle", () => {
 		]) {
 			expect(mock.handlers.has(ev)).toBeTrue();
 		}
-		for (const t of ["memory_status", "memory_save", "memory_search", "memory_decay", "memory_extract", "memory_git"]) {
+		for (const t of ["memory_status", "memory_save", "memory_search", "memory_read", "memory_decay", "memory_extract", "memory_git"]) {
 			expect(mock.tools.has(t)).toBeTrue();
 		}
 		expect(mock.commands.has("memory")).toBeTrue();

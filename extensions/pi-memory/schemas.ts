@@ -79,6 +79,12 @@ export const SearchSchema = Type.Object({
 	limit: Type.Optional(Type.Number({ description: "Max results (default 10)" })),
 });
 
+export const MemoryReadSchema = Type.Object({
+	path: Type.String({
+		description: "Caminho exato retornado por memory_search, como memories/_global/gotchas/cache.md",
+	}),
+});
+
 export const StatusSchema = Type.Object({});
 
 export const GitActionEnum = Type.Union([
