@@ -171,6 +171,8 @@ afterAll(() => {
 
 const ctxA = { cwd: cwdA, sessionManager: { getSessionFile: () => null } };
 const ctxB = { cwd: cwdB, sessionManager: { getSessionFile: () => null } };
+const cacheTerms = ["cache", "invalidação", "configuração", "armazenamento", "retenção"];
+const nextTerms = ["nextjs", "roteador", "aplicação", "estrutura", "navegação"];
 
 // Os testes abaixo são ORDENADOS (estado da extensão é compartilhado entre eles).
 // Só executa em Node (registerHooks é Node 22+; Bun não suporta).
@@ -192,14 +194,14 @@ if (isNode) describe("index.ts lifecycle", () => {
 	});
 
 	it("busca sem session_start → erro no_active_project", async () => {
-		const res = await search.execute("t0", { query: ["cache"] }, undefined, undefined, {});
+		const res = await search.execute("t0", { query: cacheTerms }, undefined, undefined, {});
 		expect(res.details.error).toBe("no_active_project");
 	});
 
 	it("session_start abre o índice e sincroniza o projeto (engine sqlite)", async () => {
 		await mock.fire("session_start", {}, ctxA);
 
-		const res = await search.execute("t1", { query: ["cache"] }, undefined, undefined, {});
+		const res = await search.execute("t1", { query: cacheTerms }, undefined, undefined, {});
 		expect(res.details.engine).toBe("sqlite");
 		expect(res.details.count).toBeGreaterThanOrEqual(1);
 		expect(res.content[0].text).toContain("memories/");
@@ -208,13 +210,13 @@ if (isNode) describe("index.ts lifecycle", () => {
 	it("session_tree troca de projeto e sincroniza o novo (isolamento)", async () => {
 		await mock.fire("session_tree", {}, ctxB);
 
-		const proj = await search.execute("t2", { query: ["nextjs"], scope: "project" }, undefined, undefined, {});
+		const proj = await search.execute("t2", { query: nextTerms, scope: "project" }, undefined, undefined, {});
 		expect(proj.details.engine).toBe("sqlite");
 		expect(proj.details.count).toBeGreaterThanOrEqual(1);
 		expect(proj.content[0].text).toContain(projB);
 
 		// Escopo project = projeto ATUAL (B) — "cache" vive só em A e não vaza
-		const iso = await search.execute("t3", { query: ["cache"], scope: "project" }, undefined, undefined, {});
+		const iso = await search.execute("t3", { query: cacheTerms, scope: "project" }, undefined, undefined, {});
 		expect(iso.details.count).toBe(0);
 	});
 
@@ -263,7 +265,7 @@ if (isNode) describe("index.ts lifecycle", () => {
 		await mock.fire("session_shutdown", {});
 
 		// rg busca em global + projeto atual (B) — "nextjs" está em B
-		const res = await search.execute("t4", { query: ["nextjs"] }, undefined, undefined, {});
+		const res = await search.execute("t4", { query: nextTerms }, undefined, undefined, {});
 		expect(res.details.engine).toBe("rg");
 		expect(res.details.count).toBeGreaterThanOrEqual(1);
 	});
