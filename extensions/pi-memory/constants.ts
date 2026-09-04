@@ -27,8 +27,10 @@ export const OBSERVATION_TOKEN_BUDGETS = {
 
 /** Approximate chars per token for size estimation (English-centric heuristic). */
 export const CHARS_PER_TOKEN = 4;
+/** Minimum number of terms required for each direct memory_search query. */
+export const MIN_MEMORY_SEARCH_TERMS = 5;
 /** Max consecutive memory_search calls with no results before the model abandons. */
-export const MAX_MEMORY_SEARCH_ATTEMPTS = 3;
+export const MAX_MEMORY_SEARCH_ATTEMPTS = 5;
 
 export const MEMORY_TYPES = ["_rules", "decisions", "gotchas", "lessons", "patterns"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];

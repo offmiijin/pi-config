@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { MAX_MEMORY_SEARCH_ATTEMPTS } from "../constants.ts";
+import { MAX_MEMORY_SEARCH_ATTEMPTS, MIN_MEMORY_SEARCH_TERMS } from "../constants.ts";
 import { buildSearchPattern, searchMemories, type SearchResult } from "../memory/memory-search.ts";
 import type { IndexSearchResult } from "../memory/memory-index.ts";
 import { relFromMemoriesRoot } from "../memory/memory-index.ts";
@@ -137,17 +137,17 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 		label: "Memory Search",
 		description:
 			"Searches memories via SQLite FTS5/BM25 index (ripgrep fallback). " +
-			"query accepts multiple keywords (OR semantics — any term matches). " +
+			`query requires at least ${MIN_MEMORY_SEARCH_TERMS} search terms in Brazilian Portuguese (OR semantics — any term matches). ` +
 			"scope: 'global' (only global), 'project' (only current project), 'all' (default: current project + global). " +
 			"Use when you need past context about a topic. " +
 			`Max ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results — then abandon and search the code instead. ` +
 			"NATIVE pi tool — call memory_search directly, NOT via mcp({ tool: 'memory_search' }) or the mcp gateway.",
 		promptSnippet:
-			"memory_search: Search past memories (multi-term; max 3 empty tries)",
+			"memory_search: Search past memories (multi-term; max 5 empty tries)",
 		promptGuidelines: [
 			"Before searching the codebase or web for information about a topic, use memory_search FIRST — past learnings, decisions, patterns and gotchas may already be stored in memories.",
 			"Use memory_search when you need past context about a topic, pattern, decision, or gotcha.",
-			"Pass multiple keywords as an array — OR semantics (e.g. query: ['cache', 'invalidation']). Pack synonyms/alternatives in one call.",
+			`Pass at least ${MIN_MEMORY_SEARCH_TERMS} search terms in Brazilian Portuguese as an array — OR semantics. Pack synonyms/alternatives in one call.`,
 			"Memories are stored in PT-BR — use Portuguese terms in your queries.",
 			`After ${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches with no results, stop searching memories and continue searching the code instead.`,
 		],
@@ -161,6 +161,21 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 						details: { error: "empty_query" },
 					};
 				}
+				if (params.query.length < MIN_MEMORY_SEARCH_TERMS) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Error: query must contain at least ${MIN_MEMORY_SEARCH_TERMS} terms in Brazilian Portuguese.`,
+							},
+						],
+						details: {
+							error: "too_few_terms",
+							required_terms: MIN_MEMORY_SEARCH_TERMS,
+							provided_terms: params.query.length,
+						},
+					};
+				}
 				// Termos só com espaços → nem SQLite nem rg rodam (rg com padrão
 				// vazio casaria todos os arquivos). Conta como busca vazia.
 				if (!hasMeaningfulTerm(params.query)) {
@@ -172,7 +187,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 								{
 									type: "text",
 									text:
-										`No memories found. Memory search limit reached (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results) — ` +
+										`No memories found for query ${JSON.stringify(params.query)}. Memory search limit reached (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results) — ` +
 										"stop searching memories and continue searching the code instead.",
 								},
 							],
@@ -188,7 +203,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 							{
 								type: "text",
 								text:
-									`No memories found matching your query. Attempts remaining before abandoning memory search: ${remaining}.`,
+									`No memories found matching query ${JSON.stringify(params.query)}. Attempts remaining before abandoning memory search: ${remaining}.`,
 							},
 						],
 						details: { count: 0, consecutive_empty: state.consecutiveEmptySearches },
@@ -200,7 +215,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 							{
 								type: "text",
 								text:
-									`Memory search limit reached (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results). ` +
+									`Memory search limit reached for query ${JSON.stringify(params.query)} (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results). ` +
 									"Stop searching memories and continue searching the code instead.",
 							},
 						],
@@ -299,7 +314,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 								{
 									type: "text",
 									text:
-										`No memories found. Memory search limit reached (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results) — ` +
+										`No memories found for query ${JSON.stringify(params.query)}. Memory search limit reached (${MAX_MEMORY_SEARCH_ATTEMPTS} consecutive searches without results) — ` +
 										"stop searching memories and continue searching the code instead.",
 								},
 							],
@@ -317,7 +332,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 							{
 								type: "text",
 								text:
-									`No memories found matching your query. Attempts remaining before abandoning memory search: ${remaining}.`,
+									`No memories found matching query ${JSON.stringify(params.query)}. Attempts remaining before abandoning memory search: ${remaining}.`,
 							},
 						],
 						details: { count: 0, consecutive_empty: state.consecutiveEmptySearches },

@@ -3,6 +3,7 @@
  */
 
 import { Type } from "typebox";
+import { MIN_MEMORY_SEARCH_TERMS } from "./constants.ts";
 
 /**
  * Cria uma união TypeBox de tipos literal string.
@@ -60,10 +61,13 @@ export const SaveSchema = Type.Object({
 
 export const SearchSchema = Type.Object({
 	query: Type.Array(
-		Type.String({ description: "Keyword to search for (OR semantics — any term matches)" }),
+		Type.String({
+			description: "Termo de busca em português brasileiro (semântica OR — qualquer termo pode coincidir)",
+		}),
 		{
+			minItems: MIN_MEMORY_SEARCH_TERMS,
 			description:
-				"One or more keywords. Pack synonyms/alternatives in one call (e.g. ['cache', 'invalidation']).",
+				`Pelo menos ${MIN_MEMORY_SEARCH_TERMS} termos em português brasileiro. Use sinônimos/alternativas na mesma chamada.`,
 		},
 	),
 	scope: Type.Optional(SearchScopeEnum),

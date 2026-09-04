@@ -70,7 +70,9 @@ import {
 	dispatchSearch,
 	formatRgResults,
 	hasMeaningfulTerm,
+	registerMemorySearch,
 } from "../tools/search.ts";
+import type { ToolState } from "../tools/state.ts";
 import type { SearchResult } from "../memory/memory-search.ts";
 
 function rgResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -107,6 +109,39 @@ describe("formatRgResults", () => {
 	});
 	it("lida com lista vazia", () => {
 		expect(formatRgResults([])).toContain("Found 0 result(s):");
+	});
+});
+
+describe("memory_search sem resultados", () => {
+	it("exibe os termos usados na mensagem", async () => {
+		type SearchTool = { execute: (...args: unknown[]) => Promise<{ content: { text: string }[] }> };
+		let capturedTool: SearchTool | undefined;
+		const fakePi = {
+			registerTool: (definition: SearchTool) => {
+				capturedTool = definition;
+			},
+		};
+		const state: ToolState = {
+			projectId: `__test_search_terms_${Date.now()}`,
+			currentSessionHash: "session",
+			consecutiveEmptySearches: 0,
+			cachedIndexText: null,
+			index: null,
+			pipeline: null,
+			worker: null,
+			retention: null,
+			retentionScheduler: null,
+		};
+		registerMemorySearch(fakePi as never, state);
+		if (!capturedTool) throw new Error("registerTool não capturou a definição");
+
+		const terms = ["termo-inexistente", "palavra-improvável", "inlocalizável", "desconhecida", "incombinável"];
+		const response = await capturedTool.execute("id", { query: terms, scope: "project" });
+		expect(response.content[0].text).toContain(JSON.stringify(terms));
+		expect(response.content[0].text).toContain("Attempts remaining before abandoning memory search: 4");
+
+		const tooFew = await capturedTool.execute("id", { query: ["busca", "memória", "projeto", "contexto"] });
+		expect(tooFew.content[0].text).toContain("at least 5 terms");
 	});
 });
 
