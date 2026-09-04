@@ -75,6 +75,29 @@ describe("painel — truncamento e layout", () => {
 		expect(body).toContain("Não commitadas");
 	});
 
+	it("mostra o commit selecionado à esquerda e os totais coloridos à direita", () => {
+		const { panel } = setup();
+		let header = panel.render(240)[1]!;
+
+		expect(header).toContain("abc123 feat: altera app");
+		expect(header).toContain("Tot. Commit:");
+		expect(header).toContain("success:+12 error:-4 (success:+0 error:-0)");
+		expect(header).toContain("Tot. Branch: success:+12 error:-4");
+		expect(header.indexOf("Tot. Commit:")).toBeGreaterThan(header.indexOf("abc123 feat: altera app"));
+
+		panel.handleInput("\r");
+		panel.handleInput("\x1b[B");
+		header = panel.render(240)[1]!;
+		expect(header).toContain("abc123 feat: altera app");
+		expect(header).toContain("success:+12 error:-4 (success:+12 error:-4)");
+
+		panel.handleInput("\x1b[B");
+		header = panel.render(240)[1]!;
+		expect(header).toContain("Não commitadas");
+		expect(header).toContain("success:+0 error:-0 (success:+3 error:-0)");
+		expect(header).toContain("Tot. Branch: success:+12 error:-4");
+	});
+
 	it("expande o commit selecionado e permite selecionar seus arquivos", () => {
 		const { panel } = setup();
 		panel.handleInput("\r");

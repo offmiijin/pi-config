@@ -14,6 +14,21 @@ const METADATA_RATIO = 0.3;
 const FILE_CONTEXT_LINES = 10;
 const MIN_PANEL_WIDTH = 32;
 
+interface ChangeTotals {
+	additions: number;
+	deletions: number;
+}
+
+function totalsForFiles(files: readonly ChangedFile[]): ChangeTotals {
+	return files.reduce(
+		(totals, file) => ({
+			additions: totals.additions + file.additions,
+			deletions: totals.deletions + file.deletions,
+		}),
+		{ additions: 0, deletions: 0 },
+	);
+}
+
 /** Mantém o sufixo do caminho, útil para distinguir arquivos em pastas profundas. */
 export function truncatePathFromLeft(path: string, width: number): string {
 	if (width <= 0) return "";
@@ -211,7 +226,8 @@ export class ChangesPanel implements Component {
 		const metadataWidth = Math.max(18, Math.floor(innerWidth * METADATA_RATIO));
 		const codeWidth = Math.max(1, innerWidth - metadataWidth - 1);
 		const viewportRows = this.viewportRows();
-		const selection = fileSelection(this.selectedItem());
+		const selectedItem = this.selectedItem();
+		const selection = fileSelection(selectedItem);
 		const codeLines = selection ? this.renderCodeLines(selection.file, codeWidth) : this.emptyCodeLines(codeWidth);
 		const metadata = this.renderMetadataLines(metadataWidth);
 		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadata.lines.length)));
@@ -228,11 +244,28 @@ export class ChangesPanel implements Component {
 			}
 		}
 
+		const selectedGroup = selectedItem?.group;
 		const title = this.snapshot.error
 			? this.theme.fg("error", "Git indisponível")
-			: this.theme.fg("accent", this.theme.bold(
-				`Alterações  +${formatNumber(this.snapshot.totalAdditions)} -${formatNumber(this.snapshot.totalDeletions)}`,
-			));
+			: this.theme.fg("accent", this.theme.bold(selectedGroup?.label ?? "Alterações"));
+		const selectedFile = selectedItem?.kind === "file" ? selectedItem.file : undefined;
+		const commitTotals = selectedGroup?.kind === "commit"
+			? totalsForFiles(selectedGroup.files)
+			: { additions: 0, deletions: 0 };
+		const fileTotals = selectedFile ? totalsForFiles([selectedFile]) : { additions: 0, deletions: 0 };
+		const branchTotals = totalsForFiles(this.snapshot.groups
+			.filter((group) => group.kind === "commit")
+			.flatMap((group) => group.files));
+		const formatTotals = (totals: ChangeTotals): string =>
+			`${this.theme.fg("success", `+${formatNumber(totals.additions)}`)} ${this.theme.fg("error", `-${formatNumber(totals.deletions)}`)}`;
+		const stats = this.snapshot.error
+			? ""
+			: `Tot. Commit: ${formatTotals(commitTotals)} (${formatTotals(fileTotals)})    Tot. Branch: ${formatTotals(branchTotals)} `;
+		const headerWidth = Math.max(1, innerWidth - 1);
+		const statsWidth = visibleWidth(stats);
+		const titleValue = truncateToWidth(title, Math.max(1, headerWidth - statsWidth - 1), "…");
+		const headerGap = Math.max(1, headerWidth - visibleWidth(titleValue) - statsWidth);
+		const header = ` ${titleValue}${" ".repeat(headerGap)}${stats}`;
 		const contentRow = (content: string): string =>
 			`│${padToWidth(content, innerWidth)}│`;
 		const horizontalRow = (left: string, right: string): string =>
@@ -241,7 +274,7 @@ export class ChangesPanel implements Component {
 		const separator = `├${"─".repeat(codeWidth)}┬${"─".repeat(metadataWidth)}┤`;
 		const lines = [
 			horizontalRow("╭", "╮"),
-			contentRow(` ${title}`),
+			contentRow(header),
 			separator,
 		];
 
