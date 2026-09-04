@@ -102,6 +102,23 @@ describe("painel — truncamento e layout", () => {
 		expect(lines.at(-1)!.endsWith("╯")).toBe(true);
 		for (const line of lines) expect(visibleWidth(line)).toBe(160);
 	});
+
+	it("exibe apenas Git indisponível no título quando a consulta falha", () => {
+		const tui = { terminal: { rows: 20 }, requestRender: () => {} } as any;
+		const panel = new ChangesPanel(tui, fakeTheme(), {
+			groups: [],
+			totalAdditions: 0,
+			totalDeletions: 0,
+			error: "fatal: not a git repository\nStopping at filesystem boundary",
+		}, () => {});
+		const lines = panel.render(100);
+		const body = lines.join("\n");
+
+		expect(body).toContain("error:Git indisponível");
+		expect(body).not.toContain("fatal: not a git repository");
+		expect(body).not.toContain("Stopping at filesystem boundary");
+		for (const line of lines) expect(visibleWidth(line)).toBe(100);
+	});
 });
 
 describe("painel — seleção", () => {

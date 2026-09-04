@@ -242,7 +242,7 @@ export class ChangesPanel implements Component {
 		}
 
 		const title = this.snapshot.error
-			? this.theme.fg("error", "Alterações — Git indisponível")
+			? this.theme.fg("error", "Git indisponível")
 			: this.theme.fg("accent", this.theme.bold(
 				`Alterações  +${formatNumber(this.snapshot.totalAdditions)} -${formatNumber(this.snapshot.totalDeletions)}`,
 			));
@@ -357,7 +357,6 @@ export class ChangesPanel implements Component {
 	}
 
 	private emptyCodeLines(width: number): string[] {
-		if (this.snapshot.error) return [truncateToWidth(this.theme.fg("error", this.snapshot.error), width, "")];
 		if (panelItems(this.snapshot, this.expandedCommits).length === 0) {
 			return [truncateToWidth(this.theme.fg("dim", "Nenhuma alteração desde o início da sessão."), width, "")];
 		}
