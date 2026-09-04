@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `pi-panel`: melhora a visualização Git com fallback para Git indisponível, diffs como código numerado com linhas removidas e totais do commit, arquivo e branch.
+
 ## [1.3.0] - 2026-08-28
 
 ### Added

@@ -11,8 +11,22 @@ import {
 import type { ChangedFile, ChangeGroup, ChangesSnapshot, LineRange } from "./types.ts";
 
 const METADATA_RATIO = 0.3;
-const FILE_CONTEXT_LINES = 10;
 const MIN_PANEL_WIDTH = 32;
+
+interface ChangeTotals {
+	additions: number;
+	deletions: number;
+}
+
+function totalsForFiles(files: readonly ChangedFile[]): ChangeTotals {
+	return files.reduce(
+		(totals, file) => ({
+			additions: totals.additions + file.additions,
+			deletions: totals.deletions + file.deletions,
+		}),
+		{ additions: 0, deletions: 0 },
+	);
+}
 
 /** Mantém o sufixo do caminho, útil para distinguir arquivos em pastas profundas. */
 export function truncatePathFromLeft(path: string, width: number): string {
@@ -41,43 +55,61 @@ function statusColor(status: ChangedFile["status"]): "success" | "error" | "warn
 	}
 }
 
-function diffLineColor(line: string): "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext" | "accent" | "dim" {
-	if (line.startsWith("+") && !line.startsWith("+++")) return "toolDiffAdded";
-	if (line.startsWith("-") && !line.startsWith("---")) return "toolDiffRemoved";
-	if (line.startsWith("@@")) return "accent";
-	if (
-		line.startsWith("diff --git ") ||
-		line.startsWith("index ") ||
-		line.startsWith("---") ||
-		line.startsWith("+++")
-	) return "dim";
-	return "toolDiffContext";
-}
-
 function formatNumber(value: number): string {
 	return value.toLocaleString("pt-BR");
 }
 
-function mergeLineRanges(ranges: LineRange[]): LineRange[] {
-	const sorted = [...ranges].sort((a, b) => a.start - b.start);
-	const merged: LineRange[] = [];
-	for (const range of sorted) {
-		const previous = merged.at(-1);
-		if (previous && range.start <= previous.end + 1) {
-			previous.end = Math.max(previous.end, range.end);
-		} else {
-			merged.push({ ...range });
-		}
-	}
-	return merged;
+interface HunkPosition {
+	oldLine: number;
+	newLine: number;
 }
 
-function contextRanges(ranges: LineRange[], totalLines: number): LineRange[] {
-	if (totalLines <= 0 || ranges.length === 0) return [{ start: 1, end: Math.max(1, totalLines) }];
-	return mergeLineRanges(ranges.map((range) => ({
-		start: Math.max(1, range.start - FILE_CONTEXT_LINES),
-		end: Math.min(totalLines, range.end + FILE_CONTEXT_LINES),
-	})));
+function parseHunkPosition(line: string): HunkPosition | undefined {
+	const header = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+	return header
+		? { oldLine: Number(header[1]), newLine: Number(header[2]) }
+		: undefined;
+}
+
+interface RemovedLine {
+	lineNumber: number;
+	position: number;
+	content: string;
+}
+
+function parseRemovedLines(diff: string): RemovedLine[] {
+	const removed: RemovedLine[] = [];
+	let oldLine = 0;
+	let newLine = 0;
+	let inHunk = false;
+	for (const line of diff.split("\n")) {
+		const hunk = parseHunkPosition(line);
+		if (hunk) {
+			oldLine = hunk.oldLine;
+			newLine = hunk.newLine;
+			inHunk = true;
+			continue;
+		}
+		if (!inHunk) continue;
+
+		if (line.startsWith("-") && !line.startsWith("--- ")) {
+			removed.push({
+				lineNumber: oldLine,
+				position: Math.max(1, newLine),
+				content: line.slice(1),
+			});
+			oldLine++;
+		} else if (line.startsWith("+") && !line.startsWith("+++ ")) {
+			newLine++;
+		} else if (line.startsWith(" ")) {
+			oldLine++;
+			newLine++;
+		} else if (!line.startsWith("\\")) {
+			oldLine++;
+			newLine++;
+		}
+	}
+	return removed;
 }
 
 function lineIsInRange(line: number, ranges: LineRange[]): boolean {
@@ -224,7 +256,8 @@ export class ChangesPanel implements Component {
 		const metadataWidth = Math.max(18, Math.floor(innerWidth * METADATA_RATIO));
 		const codeWidth = Math.max(1, innerWidth - metadataWidth - 1);
 		const viewportRows = this.viewportRows();
-		const selection = fileSelection(this.selectedItem());
+		const selectedItem = this.selectedItem();
+		const selection = fileSelection(selectedItem);
 		const codeLines = selection ? this.renderCodeLines(selection.file, codeWidth) : this.emptyCodeLines(codeWidth);
 		const metadata = this.renderMetadataLines(metadataWidth);
 		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadata.lines.length)));
@@ -241,11 +274,28 @@ export class ChangesPanel implements Component {
 			}
 		}
 
+		const selectedGroup = selectedItem?.group;
 		const title = this.snapshot.error
-			? this.theme.fg("error", "Alterações — Git indisponível")
-			: this.theme.fg("accent", this.theme.bold(
-				`Alterações  +${formatNumber(this.snapshot.totalAdditions)} -${formatNumber(this.snapshot.totalDeletions)}`,
-			));
+			? this.theme.fg("error", "Git indisponível")
+			: this.theme.fg("accent", this.theme.bold(selectedGroup?.label ?? "Alterações"));
+		const selectedFile = selectedItem?.kind === "file" ? selectedItem.file : undefined;
+		const commitTotals = selectedGroup?.kind === "commit"
+			? totalsForFiles(selectedGroup.files)
+			: { additions: 0, deletions: 0 };
+		const fileTotals = selectedFile ? totalsForFiles([selectedFile]) : { additions: 0, deletions: 0 };
+		const branchTotals = totalsForFiles(this.snapshot.groups
+			.filter((group) => group.kind === "commit")
+			.flatMap((group) => group.files));
+		const formatTotals = (totals: ChangeTotals): string =>
+			`${this.theme.fg("success", `+${formatNumber(totals.additions)}`)} ${this.theme.fg("error", `-${formatNumber(totals.deletions)}`)}`;
+		const stats = this.snapshot.error
+			? ""
+			: `Tot. Commit: ${formatTotals(commitTotals)} (${formatTotals(fileTotals)})    Tot. Branch: ${formatTotals(branchTotals)} `;
+		const headerWidth = Math.max(1, innerWidth - 1);
+		const statsWidth = visibleWidth(stats);
+		const titleValue = truncateToWidth(title, Math.max(1, headerWidth - statsWidth - 1), "…");
+		const headerGap = Math.max(1, headerWidth - visibleWidth(titleValue) - statsWidth);
+		const header = ` ${titleValue}${" ".repeat(headerGap)}${stats}`;
 		const contentRow = (content: string): string =>
 			`│${padToWidth(content, innerWidth)}│`;
 		const horizontalRow = (left: string, right: string): string =>
@@ -254,7 +304,7 @@ export class ChangesPanel implements Component {
 		const separator = `├${"─".repeat(codeWidth)}┬${"─".repeat(metadataWidth)}┤`;
 		const lines = [
 			horizontalRow("╭", "╮"),
-			contentRow(` ${title}`),
+			contentRow(header),
 			separator,
 		];
 
@@ -264,9 +314,10 @@ export class ChangesPanel implements Component {
 			lines.push(`│${padToWidth(codeLine, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
 		}
 
+		const toggleLabel = this.showFullFile ? "diff" : "arquivo completo";
 		const footerText = this.focus === "files"
-			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `
-			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `;
+			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${toggleLabel}  Alt+D/Esc fechar `
+			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${toggleLabel}  Alt+D/Esc fechar `;
 		const footer = this.theme.fg("dim", footerText);
 		lines.push(contentRow(footer));
 		lines.push(horizontalRow("╰", "╯"));
@@ -314,50 +365,112 @@ export class ChangesPanel implements Component {
 	}
 
 	private renderCodeLines(file: ChangedFile, width: number): string[] {
-		if (file.content === undefined) return this.renderDiffLines(file, width);
+		if (!this.showFullFile || file.content === undefined) return this.renderDiffLines(file, width);
 
 		const rawLines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 		const totalLines = rawLines.length;
-		const ranges = this.showFullFile
-			? [{ start: 1, end: totalLines }]
-			: contextRanges(file.changedLineRanges, totalLines);
-		const lineNumberWidth = String(totalLines).length;
-		const lines: string[] = [];
-		let previousEnd = 0;
-
-		for (const range of ranges) {
-			if (range.start > previousEnd + 1) {
-				lines.push(this.theme.fg("dim", "      …"));
-			}
-			for (let lineNumber = range.start; lineNumber <= range.end; lineNumber++) {
-				const sourceLine = rawLines[lineNumber - 1] ?? "";
-				const number = String(lineNumber).padStart(lineNumberWidth, " ");
-				const color = lineIsInRange(lineNumber, file.changedLineRanges)
-					? "toolDiffAdded"
-					: "toolDiffContext";
-				lines.push(truncateToWidth(
-					`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, sourceLine)}`,
-					width,
-					"",
-				));
-			}
-			previousEnd = range.end;
+		const removedLines = parseRemovedLines(file.diff);
+		const removedByPosition = new Map<number, RemovedLine[]>();
+		for (const removedLine of removedLines) {
+			const linesAtPosition = removedByPosition.get(removedLine.position) ?? [];
+			linesAtPosition.push(removedLine);
+			removedByPosition.set(removedLine.position, linesAtPosition);
 		}
-		if (!this.showFullFile && previousEnd < totalLines) lines.push(this.theme.fg("dim", "      …"));
+		const maxLineNumber = Math.max(1, totalLines, ...removedLines.map((line) => line.lineNumber));
+		const lineNumberWidth = String(maxLineNumber).length;
+		const lines: string[] = [];
+		const renderSourceLine = (lineNumber: number, color: "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext", content: string): void => {
+			const number = String(lineNumber).padStart(lineNumberWidth, " ");
+			lines.push(truncateToWidth(
+				`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, content)}`,
+				width,
+				"",
+			));
+		};
+
+		for (let lineNumber = 1; lineNumber <= totalLines; lineNumber++) {
+			for (const removedLine of removedByPosition.get(lineNumber) ?? []) {
+				renderSourceLine(removedLine.lineNumber, "toolDiffRemoved", removedLine.content);
+			}
+			const color = lineIsInRange(lineNumber, file.changedLineRanges)
+				? "toolDiffAdded"
+				: "toolDiffContext";
+			renderSourceLine(lineNumber, color, rawLines[lineNumber - 1] ?? "");
+		}
+		for (const [position, linesAtPosition] of removedByPosition) {
+			if (position <= totalLines) continue;
+			for (const removedLine of linesAtPosition) {
+				renderSourceLine(removedLine.lineNumber, "toolDiffRemoved", removedLine.content);
+			}
+		}
 		return lines;
 	}
 
 	private renderDiffLines(file: ChangedFile, width: number): string[] {
 		const rawLines = file.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-		return rawLines.map((line) => truncateToWidth(
-			this.theme.fg(diffLineColor(line), line),
+		const codeLines: Array<{
+			lineNumber: number;
+			color: "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext";
+			content: string;
+		}> = [];
+		let oldLine = 0;
+		let newLine = 0;
+		let inHunk = false;
+
+		for (const line of rawLines) {
+			const hunk = parseHunkPosition(line);
+			if (hunk) {
+				oldLine = hunk.oldLine;
+				newLine = hunk.newLine;
+				inHunk = true;
+				continue;
+			}
+			if (
+				line.startsWith("diff --git ") ||
+				line.startsWith("index ") ||
+				line.startsWith("--- ") ||
+				line.startsWith("+++ ") ||
+				line.startsWith("old mode ") ||
+				line.startsWith("new mode ") ||
+				line.startsWith("new file mode ") ||
+				line.startsWith("deleted file mode ") ||
+				line.startsWith("similarity index ") ||
+				line.startsWith("rename from ") ||
+				line.startsWith("rename to ") ||
+				line.startsWith("Binary files ") ||
+				line === "\\ No newline at end of file"
+			) continue;
+			if (!inHunk) continue;
+
+			if (line.startsWith("-") && !line.startsWith("--- ")) {
+				codeLines.push({ lineNumber: Math.max(1, oldLine), color: "toolDiffRemoved", content: line.slice(1) });
+				oldLine++;
+			} else if (line.startsWith("+") && !line.startsWith("+++ ")) {
+				codeLines.push({ lineNumber: Math.max(1, newLine), color: "toolDiffAdded", content: line.slice(1) });
+				newLine++;
+			} else if (line.startsWith(" ")) {
+				codeLines.push({ lineNumber: Math.max(1, newLine), color: "toolDiffContext", content: line.slice(1) });
+				oldLine++;
+				newLine++;
+			} else if (!line.startsWith("\\")) {
+				codeLines.push({ lineNumber: Math.max(1, newLine), color: "toolDiffContext", content: line });
+				oldLine++;
+				newLine++;
+			}
+		}
+
+		if (codeLines.length === 0) {
+			return [truncateToWidth(this.theme.fg("dim", "Nenhum conteúdo textual disponível."), width, "")];
+		}
+		const lineNumberWidth = String(Math.max(...codeLines.map((line) => line.lineNumber))).length;
+		return codeLines.map((line) => truncateToWidth(
+			`${this.theme.fg("dim", String(line.lineNumber).padStart(lineNumberWidth, " "))} │ ${this.theme.fg(line.color, line.content)}`,
 			width,
 			"",
 		));
 	}
 
 	private emptyCodeLines(width: number): string[] {
-		if (this.snapshot.error) return [truncateToWidth(this.theme.fg("error", this.snapshot.error), width, "")];
 		if (panelItems(this.snapshot, this.expandedCommits).length === 0) {
 			return [truncateToWidth(this.theme.fg("dim", "Nenhuma alteração desde o início da sessão."), width, "")];
 		}
