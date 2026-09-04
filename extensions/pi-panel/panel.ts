@@ -11,7 +11,6 @@ import {
 import type { ChangedFile, ChangeGroup, ChangesSnapshot, LineRange } from "./types.ts";
 
 const METADATA_RATIO = 0.3;
-const FILE_CONTEXT_LINES = 10;
 const MIN_PANEL_WIDTH = 32;
 
 interface ChangeTotals {
@@ -60,26 +59,57 @@ function formatNumber(value: number): string {
 	return value.toLocaleString("pt-BR");
 }
 
-function mergeLineRanges(ranges: LineRange[]): LineRange[] {
-	const sorted = [...ranges].sort((a, b) => a.start - b.start);
-	const merged: LineRange[] = [];
-	for (const range of sorted) {
-		const previous = merged.at(-1);
-		if (previous && range.start <= previous.end + 1) {
-			previous.end = Math.max(previous.end, range.end);
-		} else {
-			merged.push({ ...range });
-		}
-	}
-	return merged;
+interface HunkPosition {
+	oldLine: number;
+	newLine: number;
 }
 
-function contextRanges(ranges: LineRange[], totalLines: number): LineRange[] {
-	if (totalLines <= 0 || ranges.length === 0) return [{ start: 1, end: Math.max(1, totalLines) }];
-	return mergeLineRanges(ranges.map((range) => ({
-		start: Math.max(1, range.start - FILE_CONTEXT_LINES),
-		end: Math.min(totalLines, range.end + FILE_CONTEXT_LINES),
-	})));
+function parseHunkPosition(line: string): HunkPosition | undefined {
+	const header = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+	return header
+		? { oldLine: Number(header[1]), newLine: Number(header[2]) }
+		: undefined;
+}
+
+interface RemovedLine {
+	lineNumber: number;
+	position: number;
+	content: string;
+}
+
+function parseRemovedLines(diff: string): RemovedLine[] {
+	const removed: RemovedLine[] = [];
+	let oldLine = 0;
+	let newLine = 0;
+	let inHunk = false;
+	for (const line of diff.split("\n")) {
+		const hunk = parseHunkPosition(line);
+		if (hunk) {
+			oldLine = hunk.oldLine;
+			newLine = hunk.newLine;
+			inHunk = true;
+			continue;
+		}
+		if (!inHunk) continue;
+
+		if (line.startsWith("-") && !line.startsWith("--- ")) {
+			removed.push({
+				lineNumber: oldLine,
+				position: Math.max(1, newLine),
+				content: line.slice(1),
+			});
+			oldLine++;
+		} else if (line.startsWith("+") && !line.startsWith("+++ ")) {
+			newLine++;
+		} else if (line.startsWith(" ")) {
+			oldLine++;
+			newLine++;
+		} else if (!line.startsWith("\\")) {
+			oldLine++;
+			newLine++;
+		}
+	}
+	return removed;
 }
 
 function lineIsInRange(line: number, ranges: LineRange[]): boolean {
@@ -339,43 +369,65 @@ export class ChangesPanel implements Component {
 
 		const rawLines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 		const totalLines = rawLines.length;
-		const ranges = this.showFullFile
-			? [{ start: 1, end: totalLines }]
-			: contextRanges(file.changedLineRanges, totalLines);
-		const lineNumberWidth = String(totalLines).length;
-		const lines: string[] = [];
-		let previousEnd = 0;
-
-		for (const range of ranges) {
-			if (range.start > previousEnd + 1) {
-				lines.push(this.theme.fg("dim", "      …"));
-			}
-			for (let lineNumber = range.start; lineNumber <= range.end; lineNumber++) {
-				const sourceLine = rawLines[lineNumber - 1] ?? "";
-				const number = String(lineNumber).padStart(lineNumberWidth, " ");
-				const color = lineIsInRange(lineNumber, file.changedLineRanges)
-					? "toolDiffAdded"
-					: "toolDiffContext";
-				lines.push(truncateToWidth(
-					`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, sourceLine)}`,
-					width,
-					"",
-				));
-			}
-			previousEnd = range.end;
+		const removedLines = parseRemovedLines(file.diff);
+		const removedByPosition = new Map<number, RemovedLine[]>();
+		for (const removedLine of removedLines) {
+			const linesAtPosition = removedByPosition.get(removedLine.position) ?? [];
+			linesAtPosition.push(removedLine);
+			removedByPosition.set(removedLine.position, linesAtPosition);
 		}
-		if (!this.showFullFile && previousEnd < totalLines) lines.push(this.theme.fg("dim", "      …"));
+		const maxLineNumber = Math.max(1, totalLines, ...removedLines.map((line) => line.lineNumber));
+		const lineNumberWidth = String(maxLineNumber).length;
+		const lines: string[] = [];
+		const renderSourceLine = (lineNumber: number, color: "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext", content: string): void => {
+			const number = String(lineNumber).padStart(lineNumberWidth, " ");
+			lines.push(truncateToWidth(
+				`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, content)}`,
+				width,
+				"",
+			));
+		};
+
+		for (let lineNumber = 1; lineNumber <= totalLines; lineNumber++) {
+			for (const removedLine of removedByPosition.get(lineNumber) ?? []) {
+				renderSourceLine(removedLine.lineNumber, "toolDiffRemoved", removedLine.content);
+			}
+			const color = lineIsInRange(lineNumber, file.changedLineRanges)
+				? "toolDiffAdded"
+				: "toolDiffContext";
+			renderSourceLine(lineNumber, color, rawLines[lineNumber - 1] ?? "");
+		}
+		for (const [position, linesAtPosition] of removedByPosition) {
+			if (position <= totalLines) continue;
+			for (const removedLine of linesAtPosition) {
+				renderSourceLine(removedLine.lineNumber, "toolDiffRemoved", removedLine.content);
+			}
+		}
 		return lines;
 	}
 
 	private renderDiffLines(file: ChangedFile, width: number): string[] {
 		const rawLines = file.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-		const lines: string[] = [];
+		const codeLines: Array<{
+			lineNumber: number;
+			color: "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext";
+			content: string;
+		}> = [];
+		let oldLine = 0;
+		let newLine = 0;
+		let inHunk = false;
+
 		for (const line of rawLines) {
+			const hunk = parseHunkPosition(line);
+			if (hunk) {
+				oldLine = hunk.oldLine;
+				newLine = hunk.newLine;
+				inHunk = true;
+				continue;
+			}
 			if (
 				line.startsWith("diff --git ") ||
 				line.startsWith("index ") ||
-				line.startsWith("@@") ||
 				line.startsWith("--- ") ||
 				line.startsWith("+++ ") ||
 				line.startsWith("old mode ") ||
@@ -388,20 +440,34 @@ export class ChangesPanel implements Component {
 				line.startsWith("Binary files ") ||
 				line === "\\ No newline at end of file"
 			) continue;
+			if (!inHunk) continue;
 
-			const isAdded = line.startsWith("+");
-			const isRemoved = line.startsWith("-");
-			const color = isAdded
-				? "toolDiffAdded"
-				: isRemoved
-					? "toolDiffRemoved"
-					: "toolDiffContext";
-			const content = line.startsWith(" ") || isAdded || isRemoved ? line.slice(1) : line;
-			lines.push(truncateToWidth(this.theme.fg(color, content), width, ""));
+			if (line.startsWith("-") && !line.startsWith("--- ")) {
+				codeLines.push({ lineNumber: Math.max(1, oldLine), color: "toolDiffRemoved", content: line.slice(1) });
+				oldLine++;
+			} else if (line.startsWith("+") && !line.startsWith("+++ ")) {
+				codeLines.push({ lineNumber: Math.max(1, newLine), color: "toolDiffAdded", content: line.slice(1) });
+				newLine++;
+			} else if (line.startsWith(" ")) {
+				codeLines.push({ lineNumber: Math.max(1, newLine), color: "toolDiffContext", content: line.slice(1) });
+				oldLine++;
+				newLine++;
+			} else if (!line.startsWith("\\")) {
+				codeLines.push({ lineNumber: Math.max(1, newLine), color: "toolDiffContext", content: line });
+				oldLine++;
+				newLine++;
+			}
 		}
-		return lines.length > 0
-			? lines
-			: [truncateToWidth(this.theme.fg("dim", "Nenhum conteúdo textual disponível."), width, "")];
+
+		if (codeLines.length === 0) {
+			return [truncateToWidth(this.theme.fg("dim", "Nenhum conteúdo textual disponível."), width, "")];
+		}
+		const lineNumberWidth = String(Math.max(...codeLines.map((line) => line.lineNumber))).length;
+		return codeLines.map((line) => truncateToWidth(
+			`${this.theme.fg("dim", String(line.lineNumber).padStart(lineNumberWidth, " "))} │ ${this.theme.fg(line.color, line.content)}`,
+			width,
+			"",
+		));
 	}
 
 	private emptyCodeLines(width: number): string[] {
