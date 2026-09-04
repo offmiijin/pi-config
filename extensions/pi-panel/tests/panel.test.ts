@@ -23,7 +23,7 @@ function snapshot(): ChangesSnapshot {
 					status: "M",
 					additions: 12,
 					deletions: 4,
-					diff: "@@ -19,3 +19,4 @@",
+					diff: "@@ -19,3 +19,4 @@\n line-19\n-line-20\n+line-20 updated\n line-21",
 					content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\n"),
 					changedLineRanges: [{ start: 20, end: 20 }],
 				}],
@@ -84,7 +84,8 @@ describe("painel — truncamento e layout", () => {
 
 		panel.handleInput("\x1b[B");
 		body = panel.render(100).join("\n");
-		expect(body).toContain("line-20");
+		expect(body).toContain("-line-20");
+		expect(body).toContain("+line-20 updated");
 		for (const line of panel.render(100)) expect(visibleWidth(line)).toBe(100);
 	});
 
@@ -153,7 +154,7 @@ describe("painel — seleção", () => {
 		panel.handleInput("F");
 		const fullFile = panel.render(100).join("\n");
 		expect(fullFile).toContain("line-1");
-		expect(fullFile).toContain("F contexto");
+		expect(fullFile).toContain("F diff");
 
 		panel.handleInput("f");
 		expect(panel.render(100).join("\n")).not.toContain("│dim: 1 │ toolDiffContext:line-1");

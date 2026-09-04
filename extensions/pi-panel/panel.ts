@@ -225,7 +225,9 @@ export class ChangesPanel implements Component {
 		const codeWidth = Math.max(1, innerWidth - metadataWidth - 1);
 		const viewportRows = this.viewportRows();
 		const selection = fileSelection(this.selectedItem());
-		const codeLines = selection ? this.renderCodeLines(selection.file, codeWidth) : this.emptyCodeLines(codeWidth);
+		const codeLines = selection
+			? this.renderCodeLines(selection.file, codeWidth, selection.group.kind === "commit" && !this.showFullFile)
+			: this.emptyCodeLines(codeWidth);
 		const metadata = this.renderMetadataLines(metadataWidth);
 		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadata.lines.length)));
 		const maxCodeOffset = Math.max(0, codeLines.length - bodyRows);
@@ -264,9 +266,12 @@ export class ChangesPanel implements Component {
 			lines.push(`│${padToWidth(codeLine, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
 		}
 
+		const toggleLabel = selection?.group.kind === "commit"
+			? (this.showFullFile ? "diff" : "arquivo completo")
+			: (this.showFullFile ? "contexto" : "arquivo completo");
 		const footerText = this.focus === "files"
-			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `
-			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${this.showFullFile ? "contexto" : "arquivo completo"}  Alt+D/Esc fechar `;
+			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${toggleLabel}  Alt+D/Esc fechar `
+			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${toggleLabel}  Alt+D/Esc fechar `;
 		const footer = this.theme.fg("dim", footerText);
 		lines.push(contentRow(footer));
 		lines.push(horizontalRow("╰", "╯"));
@@ -313,8 +318,8 @@ export class ChangesPanel implements Component {
 		return Math.max(3, Math.floor(this.tui.terminal.rows * 0.9) - 6);
 	}
 
-	private renderCodeLines(file: ChangedFile, width: number): string[] {
-		if (file.content === undefined) return this.renderDiffLines(file, width);
+	private renderCodeLines(file: ChangedFile, width: number, showDiff = false): string[] {
+		if (showDiff || file.content === undefined) return this.renderDiffLines(file, width);
 
 		const rawLines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 		const totalLines = rawLines.length;
