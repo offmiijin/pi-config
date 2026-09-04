@@ -31,9 +31,11 @@ function result(overrides: Partial<IndexSearchResult> = {}): IndexSearchResult {
 }
 
 describe("formatIndexResults", () => {
-	it("formata contagem, path, metadados, título e snippet", () => {
-		const text = formatIndexResults([result()]);
+	it("formata contagem, query, path, metadados, título e snippet", () => {
+		const query = ["cache", "invalidação"];
+		const text = formatIndexResults([result()], query);
 		expect(text).toContain("Found 1 result(s):");
+		expect(text).toContain(`Search query: ${JSON.stringify(query)}`);
 		expect(text).toContain("memories/_global/gotchas/cache.md (0.8, 2026-08-01)");
 		expect(text).toContain("tipo: gotchas · contexto: cache · escopo: global");
 		expect(text).toContain("título: Cache invalidação");
@@ -96,9 +98,11 @@ describe("hasMeaningfulTerm", () => {
 });
 
 describe("formatRgResults", () => {
-	it("formata contagem, path relativo e linhas", () => {
-		const text = formatRgResults([rgResult()]);
+	it("formata contagem, query, path relativo e linhas", () => {
+		const query = ["cache", "invalidação"];
+		const text = formatRgResults([rgResult()], query);
 		expect(text).toContain("Found 1 result(s):");
+		expect(text).toContain(`Search query: ${JSON.stringify(query)}`);
 		expect(text).toContain("memories/_global/gotchas/cache.md");
 		expect(text).toContain("L7: O bug era no cache");
 	});
@@ -147,11 +151,14 @@ describe("memory_search sem resultados", () => {
 
 describe("dispatchSearch", () => {
 	it("SQLite ok → engine sqlite, sem primaryError", () => {
+		const query = ["cache", "invalidação"];
 		const d = dispatchSearch(
 			() => [{ path: "a.md" } as IndexSearchResult],
 			() => [rgResult()],
+			query,
 		);
 		expect(d.engine).toBe("sqlite");
+		expect(d.text).toContain(`Search query: ${JSON.stringify(query)}`);
 		expect(d.count).toBe(1);
 		expect(d.text).toContain("memories/a.md");
 		expect(d.primaryError).toBeUndefined();

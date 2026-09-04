@@ -16,8 +16,10 @@ import { SearchSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 
 /** Formata resultados do índice (BM25) para o modelo. */
-export function formatIndexResults(results: IndexSearchResult[]): string {
-	const lines: string[] = [`Found ${results.length} result(s):`, ""];
+export function formatIndexResults(results: IndexSearchResult[], query?: string[]): string {
+	const lines: string[] = [`Found ${results.length} result(s):`];
+	if (query) lines.push(`Search query: ${JSON.stringify(query)}`);
+	lines.push("");
 	for (const r of results) {
 		lines.push(`  memories/${r.path} (${r.confidence}, ${r.updated})`);
 		lines.push(`    tipo: ${r.type} · contexto: ${r.context} · escopo: ${r.scope}`);
@@ -30,8 +32,10 @@ export function formatIndexResults(results: IndexSearchResult[]): string {
 }
 
 /** Formata resultados do fallback ripgrep (mesmo contrato do rg antigo). */
-export function formatRgResults(results: SearchResult[]): string {
-	const lines: string[] = [`Found ${results.length} result(s):`, ""];
+export function formatRgResults(results: SearchResult[], query?: string[]): string {
+	const lines: string[] = [`Found ${results.length} result(s):`];
+	if (query) lines.push(`Search query: ${JSON.stringify(query)}`);
+	lines.push("");
 	for (const r of results) {
 		const displayPath = r.file.replace(/^.*\/memories\//, "memories/");
 		lines.push(`  ${displayPath}`);
@@ -75,16 +79,17 @@ export interface SearchDispatch {
 export function dispatchSearch(
 	indexSearch: () => IndexSearchResult[],
 	rgSearch: () => SearchResult[],
+	query?: string[],
 ): SearchDispatch {
 	try {
 		const results = indexSearch();
-		const text = results.length > 0 ? formatIndexResults(results) : "";
+		const text = results.length > 0 ? formatIndexResults(results, query) : "";
 		return { engine: "sqlite", count: results.length, text };
 	} catch (err) {
 		const primaryError = (err as Error).message ?? String(err);
 		try {
 			const results = rgSearch();
-			const text = results.length > 0 ? formatRgResults(results) : "";
+			const text = results.length > 0 ? formatRgResults(results, query) : "";
 			return { engine: "rg-after-sqlite-error", count: results.length, text, primaryError };
 		} catch (err2) {
 			const msg = (err2 as Error).message ?? String(err2);
@@ -267,6 +272,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 							});
 							return rgResults;
 						},
+						params.query,
 					);
 					engine = dispatch.engine;
 					count = dispatch.count;
@@ -287,7 +293,7 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 						projectId: state.projectId,
 					});
 					count = rgResults.length;
-					text = count > 0 ? formatRgResults(rgResults) : "";
+					text = count > 0 ? formatRgResults(rgResults, params.query) : "";
 				}
 
 				// Uso conta apenas com resultados reais (busca vazia não registra).
@@ -351,8 +357,13 @@ export function registerMemorySearch(pi: ExtensionAPI, state: ToolState): void {
 			} catch (e: unknown) {
 				const msg = (e as Error).message ?? String(e);
 				return {
-					content: [{ type: "text", text: `Search failed: ${msg}` }],
-					details: { error: msg },
+					content: [
+						{
+							type: "text",
+							text: `Search failed for query ${JSON.stringify(params.query)}: ${msg}`,
+						},
+					],
+					details: { error: msg, query: params.query },
 				};
 			}
 		},
