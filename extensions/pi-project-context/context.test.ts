@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectProjectContext, formatProjectContext, saveProjectContext } from "./context";
+import { detectProjectContext, formatProjectContext, saveProjectContext } from "./context.ts";
 
 async function fixture(): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "pi-context-"));

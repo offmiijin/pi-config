@@ -3,10 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.0",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
     "vitest": "^4.1.9"
   }
 }
