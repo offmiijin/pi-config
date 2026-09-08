@@ -112,10 +112,11 @@ jobs:
         run: |
           set -e
           rm -rf /tmp/ci-copy && cp -r . /tmp/ci-copy
-          docker run --rm -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
+          docker run --rm --privileged -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
             bash -c '${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
               test -d ~/.pi/agent/node_modules/@earendil-works/pi-coding-agent && \
               test -d ~/.pi/agent/node_modules/typebox && \
               test -s ~/.pi/agent/extensions/pi-sandbox/seccomp.bpf && \
               test -f ~/.pi/agent/settings.json && \
-              echo "OK: ${{ matrix.name }} — deps instaladas via pm nativo"'
+              cd ~/.pi/agent && PI_SANDBOX_REQUIRE_INTEGRATION=1 npm run test:pi-sandbox && \
+              echo "OK: ${{ matrix.name }} — deps e sandbox real validados"'

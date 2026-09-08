@@ -49,6 +49,10 @@ if (bwrapAvailable) {
   }
 }
 
+if (process.env.PI_SANDBOX_REQUIRE_INTEGRATION === "1" && !nestedBwrapWorks) {
+  throw new Error("bwrap real não está disponível neste ambiente de integração");
+}
+
 describe.skipIf(!nestedBwrapWorks)("integração com bwrap real", () => {
   const config = noLandlockConfig;
 
