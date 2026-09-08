@@ -102,6 +102,7 @@ import { createFindOps } from "./tools/find-ops";
 import { createLsOps } from "./tools/ls-ops";
 import { createGrepTool } from "./tools/grep";
 import { compactBashToolResult, compactBashToolError } from "./tools/bash-output";
+import { createVerifyTool } from "./tools/verify";
 
 /** Diretório desta extensão — usado para resolver seccomp.bpf. */
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -479,6 +480,21 @@ export default function (pi: ExtensionAPI) {
     (cwd) => createGrepToolSdk(cwd),
     (config, cwd, workspaceRoot) => createGrepTool(cwd, config, workspaceRoot),
   ));
+
+  pi.registerTool(createVerifyTool((_cwd) => {
+    if (!enabled || !config) throw sandboxBlockedError("verify");
+    const activeConfig = config;
+    return async (command, signal, timeout) => {
+      const cwd = _cwd;
+      const chunks: Buffer[] = [];
+      const result = await createBashOps(activeConfig, cwd, session?.worktreePath, refreshBranchState).exec(
+        command,
+        cwd,
+        { signal, timeout: timeout / 1000, onData: (chunk: Buffer) => chunks.push(chunk) },
+      );
+      return { exitCode: result.exitCode, output: Buffer.concat(chunks).toString("utf8") };
+    };
+  }, () => session?.workspaceCwd ?? localCwd));
 
   // ── Instalação segura de dependências ─────────
   pi.registerTool({
