@@ -3,35 +3,29 @@ import { registerAutoError } from "../errors.ts";
 import { TODO_STATE_ENTRY } from "../reconstruct.ts";
 import { addTodos, createTodoState, updateTodo } from "../state.ts";
 import type { TodoToolState } from "../state.ts";
-import { WIDGET_ID } from "../widget.ts";
 
 function setup() {
 	const holder: TodoToolState = { value: createTodoState() };
 	const handlers: Record<string, (event: any, ctx: any) => Promise<void>> = {};
 	const appended: { type: string; data: unknown }[] = [];
-	const widgetCalls: { id: string; content: unknown }[] = [];
 	const fakePi = {
 		on: (name: string, handler: (event: any, ctx: any) => Promise<void>) => {
 			handlers[name] = handler;
 		},
 		appendEntry: (type: string, data: unknown) => appended.push({ type, data }),
 	};
-	const ctx = {
-		hasUI: true,
-		ui: { setWidget: (id: string, content: unknown) => widgetCalls.push({ id, content }) },
-	};
+	const ctx = { hasUI: false, ui: {} };
 	registerAutoError(fakePi as any, holder);
 	return {
 		holder,
 		appended,
-		widgetCalls,
 		fire: (event: any) => handlers["tool_execution_end"]!(event, ctx as any),
 	};
 }
 
 describe("erro automático", () => {
 	it("erro de ferramenta marca a tarefa ativa como error", async () => {
-		const { holder, appended, widgetCalls, fire } = setup();
+		const { holder, appended, fire } = setup();
 		holder.value = updateTodo(addTodos(createTodoState(), ["a", "b"]).state, 1, "in-progress").state;
 
 		await fire({ isError: true, toolName: "bash", result: { content: [{ type: "text", text: "EACCES" }] } });
@@ -41,7 +35,6 @@ describe("erro automático", () => {
 		expect(appended).toHaveLength(1);
 		expect(appended[0]!.type).toBe(TODO_STATE_ENTRY);
 		expect((appended[0]!.data as any).items[0].status).toBe("error");
-		expect(widgetCalls.at(-1)!.id).toBe(WIDGET_ID);
 	});
 
 	it("motivo extraído do 1º bloco de texto e truncado a 200 chars", async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createTodoState, type TodoToolState } from "../state.ts";
 import { registerTodoTool, type TodoParamsInput } from "../tools.ts";
 import type { TodoDetails } from "../types.ts";
+import { statusColor } from "../render.ts";
 
 function fakeTheme() {
 	const fg = (color: string, text: string) => `${color}:${text}`;
@@ -144,6 +145,17 @@ describe("tool — renderização", () => {
 		expect(renderText(tool.renderCall({ action: "add", texts: ["x"] }, fakeTheme()))).toContain("todo");
 	});
 
+	it("renderResult avança a janela após concluir a primeira tarefa", async () => {
+		const { tool } = setup();
+		await tool.execute("1", { action: "add", texts: ["1", "2", "3", "4", "5", "6"] }, undefined, undefined, noUiCtx);
+		await tool.execute("2", { action: "update", id: 1, status: "done" }, undefined, undefined, noUiCtx);
+		const r = await tool.execute("3", { action: "list" }, undefined, undefined, noUiCtx);
+		const rendered = renderText(tool.renderResult(r, { expanded: false }, fakeTheme()));
+		expect(rendered).not.toContain("text:1");
+		expect(rendered).toContain("text:2");
+		expect(rendered).toContain("text:6");
+	});
+
 	it("renderResult list colapsado limita a 5 com indicador; expandido mostra tudo", async () => {
 		const { tool } = setup();
 		await tool.execute("1", { action: "add", texts: ["1", "2", "3", "4", "5", "6"] }, undefined, undefined, noUiCtx);
@@ -154,9 +166,10 @@ describe("tool — renderização", () => {
 		expect(expanded).not.toContain("...");
 	});
 
-	it("renderResult com erro de operação → vermelho", async () => {
+	it("erro e status error usam warning, nunca vermelho", async () => {
+		expect(statusColor("error")).toBe("warning");
 		const { tool } = setup();
 		const r = await tool.execute("1", { action: "add", texts: [] }, undefined, undefined, noUiCtx);
-		expect(renderText(tool.renderResult(r, { expanded: false }, fakeTheme()))).toContain("error:Erro:");
+		expect(renderText(tool.renderResult(r, { expanded: false }, fakeTheme()))).toContain("warning:Erro:");
 	});
 });

@@ -41,7 +41,8 @@ export function normalizeTodoItem(value: unknown): TodoItem | null {
  * `null`) snapshots que violam invariantes:
  * - `nextId` inválido ou `<=` maior id existente;
  * - ids duplicados;
- * - mais de um item `in-progress`.
+ * - mais de um item `in-progress`;
+ * - tarefas fora de ordem (uma tarefa posterior não pode ter começado).
  */
 export function normalizeTodoState(value: unknown): TodoState | null {
 	if (!isRecord(value)) return null;
@@ -53,6 +54,7 @@ export function normalizeTodoState(value: unknown): TodoState | null {
 	const seen = new Set<number>();
 	let maxId = 0;
 	let inProgress = 0;
+	let foundIncomplete = false;
 
 	for (const raw of value.items) {
 		const item = normalizeTodoItem(raw);
@@ -61,6 +63,12 @@ export function normalizeTodoState(value: unknown): TodoState | null {
 		items.push(item);
 		maxId = Math.max(maxId, item.id);
 		if (item.status === "in-progress") inProgress++;
+		if (item.status !== "done") foundIncomplete = true;
+		else if (foundIncomplete) return null;
+		if (foundIncomplete && item.status !== "done" && items.length > 1) {
+			const previous = items[items.length - 2];
+			if (previous && previous.status !== "done" && item.status !== "pending") return null;
+		}
 	}
 
 	if (inProgress > 1) return null;

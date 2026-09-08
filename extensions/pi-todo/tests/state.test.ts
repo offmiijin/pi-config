@@ -41,11 +41,12 @@ describe("estado — update", () => {
 		expect(s.items[0]!.status).toBe("in-progress");
 		s = updateTodo(s, 1, "done").state;
 		expect(s.items[0]!.status).toBe("done");
-		s = updateTodo(s, 1, "pending").state; // retrabalho
-		expect(s.items[0]!.status).toBe("pending");
+		const reopened = updateTodo(s, 1, "pending");
+		expect(reopened.ok).toBe(false);
+		expect(s.items[0]!.status).toBe("done");
 	});
 
-	it("registra erro com motivo e limpa o motivo ao sair de error", () => {
+	it("registra erro e permite tentar novamente a tarefa atual", () => {
 		let s = addTodos(createTodoState(), ["a"]).state;
 		s = updateTodo(s, 1, "error", "  motivo  ").state;
 		expect(s.items[0]).toEqual({ id: 1, text: "a", status: "error", error: "motivo" });
@@ -69,21 +70,21 @@ describe("estado — update", () => {
 		expect(updateTodo(s, 1, "error", "  ").ok).toBe(false);
 	});
 
-	it("permite no máximo um in-progress (novo reverte anterior)", () => {
-		let s = addTodos(createTodoState(), ["a", "b", "c"]).state;
-		s = updateTodo(s, 1, "in-progress").state;
-		s = updateTodo(s, 2, "in-progress").state;
-		const byId = Object.fromEntries(s.items.map((t) => [t.id, t.status]));
-		expect(byId[1]).toBe("pending");
-		expect(byId[2]).toBe("in-progress");
+	it("rejeita pular para uma tarefa posterior", () => {
+		const s = addTodos(createTodoState(), ["a", "b", "c"]).state;
+		const result = updateTodo(s, 2, "in-progress");
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain("fora de ordem");
+		expect(s.items[1]!.status).toBe("pending");
 	});
 });
 
 describe("estado — invariantes", () => {
-	it("preserva ordem de criação", () => {
+	it("exige conclusão em ordem e preserva ordem de criação", () => {
 		let s = addTodos(createTodoState(), ["a", "b", "c"]).state;
-		s = updateTodo(s, 2, "done").state;
-		s = updateTodo(s, 1, "in-progress").state;
+		expect(updateTodo(s, 2, "done").ok).toBe(false);
+		s = updateTodo(s, 1, "done").state;
+		s = updateTodo(s, 2, "in-progress").state;
 		expect(s.items.map((t) => t.text)).toEqual(["a", "b", "c"]);
 	});
 

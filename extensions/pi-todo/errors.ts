@@ -16,7 +16,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { TODO_STATE_ENTRY } from "./reconstruct.ts";
 import { snapshot, updateTodo, type TodoToolState } from "./state.ts";
-import { updateTodoWidget } from "./widget.ts";
 
 /** Limita o texto do motivo extraído do resultado da ferramenta. */
 const MAX_ERROR_MESSAGE_LENGTH = 200;
@@ -35,7 +34,7 @@ function extractErrorText(toolName: string, result: unknown): string {
 }
 
 export function registerAutoError(pi: ExtensionAPI, holder: TodoToolState): void {
-	pi.on("tool_execution_end", async (event, ctx) => {
+	pi.on("tool_execution_end", async (event, _ctx) => {
 		if (!event.isError || event.toolName === "todo") return;
 
 		const active = holder.value.items.findIndex((t) => t.status === "in-progress");
@@ -50,9 +49,7 @@ export function registerAutoError(pi: ExtensionAPI, holder: TodoToolState): void
 		if (!r.ok) return;
 		holder.value = r.state;
 
-		// Persiste o novo snapshot (sobrevive a /resume e à navegação de árvore)
-		// e reflete no widget acima do editor.
+		// Persiste o novo snapshot (sobrevive a /resume e à navegação de árvore).
 		pi.appendEntry(TODO_STATE_ENTRY, snapshot(r.state));
-		updateTodoWidget(ctx, holder);
 	});
 }

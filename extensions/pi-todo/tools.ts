@@ -10,9 +10,8 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { renderTodoLine } from "./render.ts";
+import { renderTodoLine, visibleTodoItems } from "./render.ts";
 import { addTodos, clearTodos, isTodoStatus, snapshot, updateTodo, type TodoToolState } from "./state.ts";
-import { updateTodoWidget } from "./widget.ts";
 import type { TodoAction, TodoDetails, TodoState, TodoStatus } from "./types.ts";
 
 /**
@@ -91,7 +90,7 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 		parameters: TodoParams,
 		executionMode: "sequential",
 
-		async execute(_toolCallId, params: TodoParamsInput, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params: TodoParamsInput, _signal, _onUpdate, _ctx) {
 			const state = holder.value;
 
 			switch (params.action) {
@@ -102,7 +101,6 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 					const r = addTodos(state, params.texts ?? []);
 					if (!r.ok) return fail("add", state, r.error!);
 					holder.value = r.state;
-					updateTodoWidget(ctx, holder);
 					const added = r.added.map((t) => `#${t.id} ${t.text}`).join(", ");
 					return ok("add", r.state, `Adicionadas ${r.added.length} tarefa(s): ${added}`);
 				}
@@ -115,14 +113,12 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 					const r = updateTodo(state, params.id, params.status, params.error);
 					if (!r.ok) return fail("update", state, r.error!);
 					holder.value = r.state;
-					updateTodoWidget(ctx, holder);
 					return ok("update", r.state, `Tarefa #${params.id} → ${r.updated!.text}`);
 				}
 
 				case "clear": {
 					const count = state.items.length;
 					holder.value = clearTodos();
-					updateTodoWidget(ctx, holder);
 					return ok("clear", holder.value, `Lista limpa (${count} tarefa(s) removidas)`);
 				}
 
@@ -147,11 +143,11 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 				const text = result.content[0];
 				return new Text(text?.type === "text" ? text.text : "", 0, 0);
 			}
-			if (details.error) return new Text(theme.fg("error", `Erro: ${details.error}`), 0, 0);
+			if (details.error) return new Text(theme.fg("warning", `Erro: ${details.error}`), 0, 0);
 
 			if (details.action === "list") {
 				if (details.items.length === 0) return new Text(theme.fg("dim", "Lista vazia"), 0, 0);
-				const shown = expanded ? details.items : details.items.slice(0, 5);
+				const shown = expanded ? details.items : visibleTodoItems(details.items);
 				const lines = [
 					theme.fg("muted", `${details.items.length} tarefa(s):`),
 					...shown.map((t) => renderTodoLine(t, theme)),
