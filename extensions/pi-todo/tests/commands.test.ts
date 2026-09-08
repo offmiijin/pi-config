@@ -38,6 +38,7 @@ function setup(mode: string) {
 			custom: async (f: any) => {
 				customCalled++;
 				factory = f;
+				f(null, fakeTheme(), null, () => {});
 			},
 		},
 	};
@@ -88,10 +89,13 @@ describe("comando /todos", () => {
 		expect(lines(comp).some((l: string) => l.includes("0/2 concluídas"))).toBe(true);
 	});
 
-	it("Alt+T abre a lista completa", async () => {
+	it("Alt+T abre e fecha a lista completa", async () => {
 		const s = setup("tui");
 		s.holder.value = addTodos(createTodoState(), ["1", "2", "3", "4", "5", "6"]).state;
 		await s.start();
+		s.fireTerminalInput("\x1b\x74");
+		await Promise.resolve();
+		expect(s.customCalled()).toBe(1);
 		s.fireTerminalInput("\x1b\x74");
 		await Promise.resolve();
 		expect(s.customCalled()).toBe(1);

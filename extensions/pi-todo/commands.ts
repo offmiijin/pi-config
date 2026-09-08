@@ -71,23 +71,41 @@ export function shouldToggleTodos(data: string, now: number, lastToggleAt: numbe
 	return matchesKey(data, Key.alt("t")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
 }
 
-export async function openTodos(holder: TodoToolState, ctx: ExtensionContext): Promise<void> {
+export async function openTodos(
+	holder: TodoToolState,
+	ctx: ExtensionContext,
+	onOpened?: (close: () => void) => void,
+): Promise<void> {
 	if (ctx.mode !== "tui") {
 		ctx.ui.notify("/todos requer modo interativo (TUI)", "error");
 		return;
 	}
 	await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+		onOpened?.(done);
 		return new TodoListComponent(holder, theme, () => done());
 	});
 }
 
 export function registerTodosCommand(pi: ExtensionAPI, holder: TodoToolState): void {
 	let removeTerminalInputListener: (() => void) | undefined;
+	let closeActiveTodos: (() => void) | null = null;
 	let lastToggleAt = Number.NEGATIVE_INFINITY;
+
+	const toggleTodos = async (ctx: ExtensionContext): Promise<void> => {
+		if (closeActiveTodos) {
+			closeActiveTodos();
+			return;
+		}
+		try {
+			await openTodos(holder, ctx, (close) => { closeActiveTodos = close; });
+		} finally {
+			closeActiveTodos = null;
+		}
+	};
 
 	pi.registerCommand("todos", {
 		description: "Mostra a lista completa de tarefas (to-do). Atalho: Alt+T",
-		handler: async (_args, ctx) => openTodos(holder, ctx),
+		handler: async (_args, ctx) => toggleTodos(ctx),
 	});
 
 	pi.on("session_start", (_event, ctx) => {
@@ -99,7 +117,7 @@ export function registerTodosCommand(pi: ExtensionAPI, holder: TodoToolState): v
 			const now = Date.now();
 			if (shouldToggleTodos(data, now, lastToggleAt)) {
 				lastToggleAt = now;
-				void openTodos(holder, ctx);
+				void toggleTodos(ctx);
 			}
 			return { consume: true };
 		});
@@ -108,5 +126,7 @@ export function registerTodosCommand(pi: ExtensionAPI, holder: TodoToolState): v
 	pi.on("session_shutdown", () => {
 		removeTerminalInputListener?.();
 		removeTerminalInputListener = undefined;
+		closeActiveTodos?.();
+		closeActiveTodos = null;
 	});
 }
