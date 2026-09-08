@@ -20,9 +20,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -56,9 +53,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -96,16 +90,16 @@ jobs:
         include:
           - name: Ubuntu 24.04
             image: ubuntu:24.04
-            update: apt-get update && apt-get install -y curl
+            update: apt-get update && apt-get install -y ca-certificates curl
             node_setup: curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs
-          - name: Fedora 41
-            image: fedora:41
-            update: dnf makecache
-            node_setup: 'true'
+          - name: Fedora 43
+            image: fedora:43
+            update: dnf -y makecache
+            node_setup: dnf install -y ca-certificates curl && curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - && dnf install -y nodejs
           - name: Arch Linux
             image: archlinux:latest
-            update: pacman -Sy --noconfirm
-            node_setup: 'true'
+            update: pacman -Syu --noconfirm ca-certificates
+            node_setup: pacman -S --noconfirm nodejs npm
     steps:
       - uses: actions/checkout@v4
       - name: install.sh --yes no container (${{ matrix.name }} — pm nativo)
@@ -113,7 +107,7 @@ jobs:
           set -e
           rm -rf /tmp/ci-copy && cp -r . /tmp/ci-copy
           docker run --rm --privileged -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
-            bash -c '${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
+            bash -c 'set -euo pipefail && ${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
               test -d ~/.pi/agent/node_modules/@earendil-works/pi-coding-agent && \
               test -d ~/.pi/agent/node_modules/typebox && \
               test -s ~/.pi/agent/extensions/pi-sandbox/seccomp.bpf && \
