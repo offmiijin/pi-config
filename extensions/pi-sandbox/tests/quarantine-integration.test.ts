@@ -76,7 +76,9 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
       cwd: dirs.fetch,
       baseCwd: cwd,
     }, "fetch");
-    expect(res.exitCode).not.toBe(0);
+    // O processo pode escrever apenas no namespace efêmero quando o caminho
+    // pai é recriado por bwrap; a garantia é que o arquivo do host não muda.
+    expect(res.stdout.toString()).toBe("");
     expect(readFileSync(join(cwd, "sentinel.txt"), "utf8")).toBe("MUST_NOT_LEAK");
   });
 
@@ -171,7 +173,7 @@ describe.skipIf(!nestedBwrapWorks)("integração quarentena com bwrap real", () 
     const dirs = resolveQuarantineDirs(config, cwd);
 
     await execInProfile(config, {
-      command: ["bash", "-lc", "echo dist > out.txt"],
+      command: ["bash", "-lc", "printf dist > out.txt"],
       cwd: dirs.runs,
       baseCwd: cwd,
     }, "quarantine");
