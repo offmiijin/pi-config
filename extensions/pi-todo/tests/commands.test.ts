@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { registerTodosCommand } from "../commands.ts";
+import { registerTodosCommand, shouldToggleTodos } from "../commands.ts";
 import { addTodos, createTodoState } from "../state.ts";
 import type { TodoToolState } from "../state.ts";
 
@@ -16,14 +16,25 @@ function setup(mode: string) {
 	const notified: string[] = [];
 	let customCalled = 0;
 	let factory: ((tui: any, theme: any, kb: any, done: () => void) => any) | null = null;
+	let terminalHandler: ((data: string) => unknown) | undefined;
+	let sessionStart: ((event: unknown, ctx: any) => void) | undefined;
 	registerTodosCommand(
-		{ registerCommand: (_name: string, d: any) => (handler = d.handler) } as any,
+		{
+			registerCommand: (_name: string, d: any) => (handler = d.handler),
+			on: (event: string, handler: (event: unknown, ctx: any) => void) => {
+				if (event === "session_start") sessionStart = handler;
+			},
+		} as any,
 		holder,
 	);
 	const ctx = {
 		mode,
 		ui: {
 			notify: (m: string) => notified.push(m),
+			onTerminalInput: (f: (data: string) => unknown) => {
+				terminalHandler = f;
+				return () => { terminalHandler = undefined; };
+			},
 			custom: async (f: any) => {
 				customCalled++;
 				factory = f;
@@ -34,8 +45,10 @@ function setup(mode: string) {
 		holder,
 		notified,
 		run: () => handler("", ctx as any),
+		start: () => sessionStart?.({}, ctx as any),
 		customCalled: () => customCalled,
 		factory: () => factory,
+		fireTerminalInput: (data: string) => terminalHandler?.(data),
 	};
 }
 
@@ -73,6 +86,20 @@ describe("comando /todos", () => {
 		await s.run();
 		const comp = s.factory()!(null, fakeTheme(), null, () => {});
 		expect(lines(comp).some((l: string) => l.includes("0/2 concluídas"))).toBe(true);
+	});
+
+	it("Alt+T abre a lista completa", async () => {
+		const s = setup("tui");
+		s.holder.value = addTodos(createTodoState(), ["1", "2", "3", "4", "5", "6"]).state;
+		await s.start();
+		s.fireTerminalInput("\x1b\x74");
+		await Promise.resolve();
+		expect(s.customCalled()).toBe(1);
+	});
+
+	it("ignora repetição e respeita debounce do Alt+T", () => {
+		expect(shouldToggleTodos("\x1b\x74", 1000, 0)).toBe(true);
+		expect(shouldToggleTodos("\x1b\x74", 1100, 1000)).toBe(false);
 	});
 
 	it("Esc fecha o componente", async () => {

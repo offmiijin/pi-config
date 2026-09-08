@@ -116,9 +116,7 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 					if (!r.ok) return fail("update", state, r.error!);
 					holder.value = r.state;
 					updateTodoWidget(ctx, holder);
-					const label =
-						r.updated!.status === "error" ? `error: ${r.updated!.error}` : r.updated!.status;
-					return ok("update", r.state, `Tarefa #${params.id} → ${label}`);
+					return ok("update", r.state, `Tarefa #${params.id} → ${r.updated!.text}`);
 				}
 
 				case "clear": {

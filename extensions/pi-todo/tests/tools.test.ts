@@ -93,7 +93,7 @@ describe("tool — execute e snapshot em details", () => {
 		const { holder, tool } = setup();
 		await tool.execute("1", { action: "add", texts: ["a"] }, undefined, undefined, noUiCtx);
 		const r = await tool.execute("2", { action: "update", id: 1, status: "error", error: "x" }, undefined, undefined, noUiCtx);
-		expect(r.content[0]!.text).toBe("Tarefa #1 → error: x");
+		expect(r.content[0]!.text).toBe("Tarefa #1 → a");
 		expect(r.details.items[0]).toEqual({ id: 1, text: "a", status: "error", error: "x" });
 		expect(holder.value.items[0]!.status).toBe("error");
 	});
