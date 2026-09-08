@@ -1,0 +1,12 @@
+{
+  "name": "pi-project-context",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.0",
+    "vitest": "^4.1.9"
+  }
+}
