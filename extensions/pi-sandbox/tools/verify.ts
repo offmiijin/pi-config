@@ -39,6 +39,14 @@ export async function discoverChecks(cwd: string, requested?: VerifyCheck[]): Pr
 }
 
 async function detectPackageManager(cwd: string): Promise<string> {
+  try {
+    const context = JSON.parse(await readFile(join(cwd, ".pi", "project-context.json"))) as { packageManager?: unknown };
+    if (typeof context.packageManager === "string" && context.packageManager.trim()) {
+      return context.packageManager.trim();
+    }
+  } catch {
+    // Contexto é derivado; lockfile continua sendo a fonte de fallback.
+  }
   for (const [file, command] of [
     ["pnpm-lock.yaml", "pnpm"],
     ["yarn.lock", "yarn"],
