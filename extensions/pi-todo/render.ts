@@ -11,7 +11,7 @@ import type { TodoItem, TodoStatus } from "./types.ts";
 export const TODO_DOT = "●";
 
 /** Cor do tema para cada status: cinza / amarelo / verde / amarelo para erro. */
-export function statusColor(status: TodoStatus): "muted" | "warning" | "success" | "error" {
+export function statusColor(status: TodoStatus): "muted" | "warning" | "success" {
 	switch (status) {
 		case "pending":
 			return "muted";

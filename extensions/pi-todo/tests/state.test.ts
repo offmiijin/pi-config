@@ -77,6 +77,14 @@ describe("estado — update", () => {
 		expect(result.error).toContain("fora de ordem");
 		expect(s.items[1]!.status).toBe("pending");
 	});
+
+	it("erro na tarefa atual também bloqueia as seguintes", () => {
+		let s = addTodos(createTodoState(), ["a", "b"]).state;
+		s = updateTodo(s, 1, "error", "falhou").state;
+		const result = updateTodo(s, 2, "done");
+		expect(result.ok).toBe(false);
+		expect(s.items[1]!.status).toBe("pending");
+	});
 });
 
 describe("estado — invariantes", () => {

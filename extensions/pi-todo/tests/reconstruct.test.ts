@@ -84,6 +84,16 @@ describe("reconstrução — normalizeTodoState", () => {
 			}),
 		).toBeNull();
 	});
+
+	it("rejeita snapshot com tarefa posterior iniciada", () => {
+		expect(normalizeTodoState({
+			items: [
+				{ id: 1, text: "a", status: "pending" },
+				{ id: 2, text: "b", status: "done" },
+			],
+			nextId: 3,
+		})).toBeNull();
+	});
 });
 
 describe("reconstrução — reconstructState a partir do branch", () => {
