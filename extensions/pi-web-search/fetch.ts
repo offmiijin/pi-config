@@ -28,7 +28,7 @@ import {
 import { getRendererMode } from "./config";
 import { isRendererInstallationInProgress } from "./renderer-install";
 import { getSharedRendererClient } from "./renderer-client";
-import { isPrivateOrLocalHost } from "./url-safety";
+import { assertPublicUrl, fetchWithSafeRedirects } from "./url-safety";
 
 // Types
 export interface FetchItemResult {
@@ -255,13 +255,7 @@ export async function fetchPages(
 		// web_fetch roda fora do namespace do sandbox; valide antes de qualquer
 		// requisição para evitar SSRF contra serviços locais ou endpoints internos.
 		try {
-			const parsed = new URL(url);
-			if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
-				throw new Error('somente URLs HTTP(S) sem credenciais são permitidas');
-			}
-			if (isPrivateOrLocalHost(parsed.hostname)) {
-				throw new Error('acesso a hosts locais ou redes privadas não é permitido');
-			}
+			assertPublicUrl(url);
 		} catch (error) {
 			results.push({ url, error: `URL bloqueada: ${error instanceof Error ? error.message : 'URL inválida'}` });
 			return;
@@ -286,7 +280,7 @@ export async function fetchPages(
 		);
 
 		try {
-			const response = await fetch(url, {
+			const response = await fetchWithSafeRedirects(url, {
 				signal: controller.signal,
 				headers: {
 					"User-Agent": ua,
