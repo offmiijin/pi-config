@@ -36,18 +36,30 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
-function isForcePushToMainOrMaster(command: string): boolean {
-	if (!/\bgit\s+push\b/i.test(command)) return false;
+export function isForcePushToMainOrMaster(command: string): boolean {
+	// Analisa cada comando simples separadamente; um `git push` dentro de uma
+	// cadeia também deve respeitar a política.
+	const commands = command.split(/[;&|\n]+/);
+	return commands.some((part) => {
+		if (!/\bgit\s+push\b/i.test(part)) return false;
+		const tokens = part.trim().split(/\s+/).filter(Boolean);
+		const pushIndex = tokens.findIndex((token) => /^git$/i.test(token)) + 1;
+		if (pushIndex <= 0 || tokens[pushIndex]?.toLowerCase() !== "push") return false;
+		const args = tokens.slice(pushIndex + 1);
+		const hasForceFlag = args.some((token) =>
+			/^(?:--force(?:-with-lease)?(?:=.*)?|-f(?:[a-z]+)?)$/i.test(token),
+		);
+		if (!hasForceFlag) return false;
+		if (args.some((token) => token === "--all" || token === "--mirror")) return true;
 
-	const tokens = command.split(/\s+/);
-	const hasForceFlag = tokens.some(
-		(t) => t === "--force" || t === "--force-with-lease" || t === "-f",
-	);
-	if (!hasForceFlag) return false;
-
-	const pushesToMainOrMaster = tokens.some(
-		(t) => t === "main" || t === "master",
-	);
-
-	return pushesToMainOrMaster;
+		// Aceita refspecs (`+main:main`, `HEAD:refs/heads/main`) e ignora
+		// opções antes de procurar o nome da branch protegida.
+		return args
+			.filter((token) => !token.startsWith("-"))
+			.some((token) => token.split(":").some((ref) =>
+				["main", "master", "refs/heads/main", "refs/heads/master"].includes(
+					ref.replace(/^\+/, "").replace(/^refs\/heads\//, "refs/heads/"),
+				),
+			));
+	});
 }
