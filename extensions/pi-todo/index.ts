@@ -2,12 +2,11 @@
  * pi-todo — Entry point
  *
  * Composição da extensão: registra a tool `todo`, a detecção automática de
- * erro e o comando /todos; mantém o estado compartilhado e o reconstrói a
- * partir do branch atual da sessão.
+ * erro; mantém o estado compartilhado e o reconstrói a partir do branch atual
+ * da sessão.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { registerTodosCommand } from "./commands.ts";
 import { registerAutoError } from "./errors.ts";
 import { reconstructState } from "./reconstruct.ts";
 import { createTodoState, type TodoToolState } from "./state.ts";
@@ -15,7 +14,7 @@ import { registerTodoTool } from "./tools.ts";
 import { updateTodoWidget } from "./widget.ts";
 
 export default function (pi: ExtensionAPI) {
-	// Estado em memória compartilhado entre tools, eventos e widget.
+	// Estado em memória compartilhado entre composição (reconstrução) e tool.
 	const holder: TodoToolState = { value: createTodoState() };
 
 	const rebuildState = (ctx: ExtensionContext): void => {
@@ -36,5 +35,4 @@ export default function (pi: ExtensionAPI) {
 
 	registerTodoTool(pi, holder);
 	registerAutoError(pi, holder);
-	registerTodosCommand(pi, holder);
 }

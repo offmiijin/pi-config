@@ -91,9 +91,8 @@ export interface UpdateTodoResult {
  * - `id` inexistente → erro de operação (não cria item novo).
  * - `error` exige mensagem; mensagem só é gravada quando status é `error`
  *   (e é removida ao sair de `error`).
- * - Iniciar um novo `in-progress` devolve o anterior para `pending`.
- * - Transições conforme matrix em types.ts (qualquer status → qualquer status
- *   permitido; mesmo status é no-op).
+ * - Somente a primeira tarefa não concluída pode ser atualizada.
+ * - Uma tarefa concluída não pode ser reaberta enquanto a lista segue em ordem.
  */
 export function updateTodo(
 	state: TodoState,
@@ -112,22 +111,25 @@ export function updateTodo(
 		return { ok: false, state, error: "status error exige descrição do motivo" };
 	}
 
-	const errorText = errorMessage?.trim();
-	const items = state.items.map((item) => {
-		if (item.id === id) {
-			// Guard acima garante errorText não-vazio quando status === "error"
-			return status === "error"
-				? { id: item.id, text: item.text, status, error: errorText! }
-				: { id: item.id, text: item.text, status };
-		}
-		// Inicia novo in-progress → anterior volta para pending (sem `error` residual)
-		if (status === "in-progress" && item.status === "in-progress") {
-			return { id: item.id, text: item.text, status: "pending" as const };
-		}
-		return item;
-	});
+	const firstIncomplete = state.items.findIndex((item) => item.status !== "done");
+	if (firstIncomplete !== -1 && index > firstIncomplete) {
+		return {
+			ok: false,
+			state,
+			error: `tarefa #${id} está fora de ordem; conclua a tarefa #${state.items[firstIncomplete]!.id} primeiro`,
+		};
+	}
+	if (state.items[index]!.status === "done" && status !== "done") {
+		return { ok: false, state, error: `tarefa #${id} já foi concluída e não pode ser reaberta` };
+	}
 
-	return { ok: true, state: { ...state, items }, updated: items[index] };
+	const errorText = errorMessage?.trim();
+	const updated = status === "error"
+		? { id: state.items[index]!.id, text: state.items[index]!.text, status, error: errorText! }
+		: { id: state.items[index]!.id, text: state.items[index]!.text, status };
+	const items = state.items.map((item, itemIndex) => itemIndex === index ? updated : item);
+
+	return { ok: true, state: { ...state, items }, updated };
 }
 
 // clear

@@ -4,7 +4,7 @@
 #
 # Copia a configuração deste repositório para o diretório do agente e
 # instala as dependências. Fluxo:
-#   1. Node.js >= 22.19 + npm (via gerenciador de pacotes do sistema)
+#   1. Node.js >= 24 + npm (via gerenciador de pacotes do sistema)
 #   2. Pacotes de sistema: bubblewrap, ripgrep, git (+ gh e docker opcionais)
 #   3. Copia extensions/, skills/, themes/, package*.json para o agente
 #      (cria settings.json a partir de settings.example.json se ausente)
@@ -144,7 +144,7 @@ pkg_name() {
     zypper)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
-        gh) echo gh;; node) echo nodejs20;; npm) echo npm;;
+        gh) echo gh;; node) echo nodejs24;; npm) echo npm;;
         docker) echo docker;; docker-compose) echo docker-compose-plugin;; rust) echo rust;;
       esac ;;
     apk)
@@ -254,8 +254,8 @@ print_backup_notice() {
 }
 
 # ── Node.js / npm ────────────────────────────────────────────────────────
-# Node >= 22.19.0 (mesmo requisito do doctor/pi-coding-agent).
-MIN_NODE_MAJ=22; MIN_NODE_MIN=19
+# Node >= 24.0.0 (requisito comum das extensões e do pi-coding-agent).
+MIN_NODE_MAJ=24; MIN_NODE_MIN=0
 
 node_sufficient() {
   local full maj min
@@ -268,13 +268,13 @@ node_sufficient() {
   [ "$min" -ge "$MIN_NODE_MIN" ]
 }
 
-# Instruções de instalação de Node >= 22.19 por distro (sem gerenciador de versão).
+# Instruções de instalação de Node >= 24 por distro (sem gerenciador de versão).
 node_install_guide() {
   local ids="$OS_ID $OS_LIKE"
   case "$ids" in
     *debian*|*ubuntu*|*pop*|*zorin*|*mint*)
-      echo "Ubuntu/Debian: NodeSource fornece Node 22.x (https://github.com/nodesource/distributions)"
-      echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
+      echo "Ubuntu/Debian: NodeSource fornece Node 24.x (https://github.com/nodesource/distributions)"
+      echo "  curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -"
       echo "  sudo apt-get install -y nodejs" ;;
     *) echo "Instale Node.js >= ${MIN_NODE_MAJ}.${MIN_NODE_MIN} manualmente (https://nodejs.org/en/download) ou via gerenciador de pacotes da distro." ;;
   esac
@@ -288,9 +288,9 @@ ensure_node() {
 
   # Node ausente ou antigo → tenta instalar/atualizar via gerenciador do sistema
   if ! has_cmd node || ! has_cmd npm || ! node_sufficient; then
-    # openSUSE: nodejs20 é antigo demais (precisa >= 22.19); instrui manual
+    # openSUSE: nodejs24 pode não existir nos repositórios habilitados; instrui manual
     if [ "$PKG_MGR" = "zypper" ]; then
-      warn "openSUSE: pacote nodejs20 é < 22.19."
+      warn "openSUSE: confirme a disponibilidade do pacote Node 24."
       node_install_guide
       die "Node >= ${MIN_NODE_MAJ}.${MIN_NODE_MIN} obrigatório. Instale manualmente e rode de novo."
     fi

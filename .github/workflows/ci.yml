@@ -20,9 +20,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -56,12 +53,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Rust estável (p/ landlock-exec)
         uses: dtolnay/rust-toolchain@stable
       - name: Roda install.sh --yes (copia config → ~/.pi/agent, deps, landlock)
@@ -96,26 +90,27 @@ jobs:
         include:
           - name: Ubuntu 24.04
             image: ubuntu:24.04
-            update: apt-get update && apt-get install -y curl
-            node_setup: curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs
-          - name: Fedora 41
-            image: fedora:41
-            update: dnf makecache
-            node_setup: 'true'
+            update: apt-get update && apt-get install -y ca-certificates curl python3 python3-venv
+            node_setup: curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs
+          - name: Fedora 43
+            image: fedora:43
+            update: dnf -y makecache
+            node_setup: dnf install -y ca-certificates curl python3 python3-pip && curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - && dnf install -y nodejs
           - name: Arch Linux
             image: archlinux:latest
-            update: pacman -Sy --noconfirm
-            node_setup: 'true'
+            update: pacman -Syu --noconfirm ca-certificates python
+            node_setup: pacman -S --noconfirm nodejs npm
     steps:
       - uses: actions/checkout@v4
       - name: install.sh --yes no container (${{ matrix.name }} — pm nativo)
         run: |
           set -e
           rm -rf /tmp/ci-copy && cp -r . /tmp/ci-copy
-          docker run --rm -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
-            bash -c '${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
+          docker run --rm --privileged -v /tmp/ci-copy:/app -w /app "${{ matrix.image }}" \
+            bash -c 'set -euo pipefail && ${{ matrix.update }} && ${{ matrix.node_setup }} && ./install.sh --yes && \
               test -d ~/.pi/agent/node_modules/@earendil-works/pi-coding-agent && \
               test -d ~/.pi/agent/node_modules/typebox && \
               test -s ~/.pi/agent/extensions/pi-sandbox/seccomp.bpf && \
               test -f ~/.pi/agent/settings.json && \
-              echo "OK: ${{ matrix.name }} — deps instaladas via pm nativo"'
+              cd ~/.pi/agent && PI_SANDBOX_REQUIRE_INTEGRATION=1 npm run test:pi-sandbox && \
+              echo "OK: ${{ matrix.name }} — deps e sandbox real validados"'

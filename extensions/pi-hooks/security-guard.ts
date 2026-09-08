@@ -28,11 +28,11 @@ interface SecurityConfig {
 
 const PATTERNS: { pattern: RegExp; severity: string; reason: string }[] = [
   { pattern: /\b:\(\)\{ :\|:& \}\;:/, severity: "critical", reason: "Fork bomb" },
-  { pattern: /\bcurl\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/i, severity: "critical", reason: "Download e execução direta de script" },
-  { pattern: /\bwget\b[^|;\n]*\|\s*(?:sudo\s+)?(ba)?sh\b/i, severity: "critical", reason: "Download e execução direta de script" },
+  { pattern: /\bcurl\b[^|;\n]*(?:\||\|\|)\s*(?:sudo\s+)?(ba)?sh(?:\s|$)/i, severity: "critical", reason: "Download e execução direta de script" },
+  { pattern: /\bwget\b[^|;\n]*(?:\||\|\|)\s*(?:sudo\s+)?(ba)?sh(?:\s|$)/i, severity: "critical", reason: "Download e execução direta de script" },
   { pattern: /\b(ba)?sh\s+<\(\s*(curl|wget)\b/i, severity: "critical", reason: "Bash subshell com download remoto" },
   { pattern: /\b(source|\.)\s+<\(\s*(curl|wget)\b/i, severity: "critical", reason: "Source de download remoto" },
-  { pattern: /\beval\s+['`$]/, severity: "high", reason: "eval com entrada potencialmente insegura" },
+  { pattern: /\beval\s+(?:["'`$]|\$?\()/, severity: "high", reason: "eval com entrada potencialmente insegura" },
 ];
 
 function getConfig(): SecurityConfig {
@@ -41,6 +41,10 @@ function getConfig(): SecurityConfig {
 
 function maskCommand(cmd: string): string {
   return cmd.replace(/(?<=API_KEY=|api_key=|token=|password=|secret=|key=|--password\s+|--token\s+)\S+/gi, "***");
+}
+
+export function securityReason(command: string): string | undefined {
+  return PATTERNS.find((entry) => entry.pattern.test(command))?.reason;
 }
 
 async function handleBashCommand(

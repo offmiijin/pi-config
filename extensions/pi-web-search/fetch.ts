@@ -28,6 +28,7 @@ import {
 import { getRendererMode } from "./config";
 import { isRendererInstallationInProgress } from "./renderer-install";
 import { getSharedRendererClient } from "./renderer-client";
+import { assertPublicUrl, fetchWithSafeRedirects } from "./url-safety";
 
 // Types
 export interface FetchItemResult {
@@ -251,6 +252,15 @@ export async function fetchPages(
 		// Honour external abort (Esc)
 		if (signal?.aborted) return;
 
+		// web_fetch roda fora do namespace do sandbox; valide antes de qualquer
+		// requisição para evitar SSRF contra serviços locais ou endpoints internos.
+		try {
+			assertPublicUrl(url);
+		} catch (error) {
+			results.push({ url, error: `URL bloqueada: ${error instanceof Error ? error.message : 'URL inválida'}` });
+			return;
+		}
+
 		// ── Throttle ────────────────────────────────────────────────
 		await randomDelay();
 
@@ -270,7 +280,7 @@ export async function fetchPages(
 		);
 
 		try {
-			const response = await fetch(url, {
+			const response = await fetchWithSafeRedirects(url, {
 				signal: controller.signal,
 				headers: {
 					"User-Agent": ua,

@@ -11,7 +11,7 @@
  *   O prefixo `00-` garante que carrega primeiro (ordem alfabética).
  *
  * Verificações:
- *   - Node >= 22.19 (exigência do pi-coding-agent)
+ *   - Node >= 24 (exigência do pi-coding-agent)
  *   - npm CLI
  *   - Pacotes npm das extensões (hoisted em <root>/node_modules)
  *   - Binários externos: bubblewrap, ripgrep (obrigatórios do sandbox),
@@ -83,7 +83,7 @@ interface Pi {
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const EXTENSIONS_DIR = resolve(EXT_DIR, "..");
 const AGENT_ROOT = resolve(EXTENSIONS_DIR, "..");
-const MIN_NODE = "22.19.0";
+const MIN_NODE = "24.0.0"
 
 const RUNTIME_PACKAGES = [
 	{ name: "@earendil-works/pi-coding-agent", usedBy: "API de todas as extensões" },
@@ -125,7 +125,7 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		ripgrep: "sudo zypper install ripgrep",
 		gh: "sudo zypper install gh",
 		git: "sudo zypper install git",
-		node: "sudo zypper install nodejs20 npm",
+		node: "sudo zypper install nodejs24 npm",
 		docker: "sudo zypper install docker",
 		poppler: "sudo zypper install poppler-tools",
 	},
@@ -281,7 +281,7 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		status: nodeTooOld(nodeVersion, MIN_NODE) ? "error" : "ok",
 		detail: nodeVersion,
 		fix: nodeTooOld(nodeVersion, MIN_NODE)
-			? `pi requer Node >= ${MIN_NODE} (ex: mise install node@22)`
+			? `pi requer Node >= ${MIN_NODE} (ex: mise install node@24)`
 			: undefined,
 	});
 
