@@ -11,6 +11,7 @@ import { registerAutoError } from "./errors.ts";
 import { reconstructState } from "./reconstruct.ts";
 import { createTodoState, type TodoToolState } from "./state.ts";
 import { registerTodoTool } from "./tools.ts";
+import { updateTodoWidget } from "./widget.ts";
 
 export default function (pi: ExtensionAPI) {
 	// Estado em memória compartilhado entre composição (reconstrução) e tool.
@@ -25,9 +26,11 @@ export default function (pi: ExtensionAPI) {
 	// - /fork e navegação de árvore → estado reflete o ponto da história.
 	pi.on("session_start", async (_event, ctx) => {
 		rebuildState(ctx);
+		updateTodoWidget(ctx, holder);
 	});
 	pi.on("session_tree", async (_event, ctx) => {
 		rebuildState(ctx);
+		updateTodoWidget(ctx, holder);
 	});
 
 	registerTodoTool(pi, holder);
