@@ -79,8 +79,9 @@ jobs:
       - name: Doctor smoke — sem pendências
         run: cd ~/.pi/agent && npm run doctor:check
       - name: Instala pi (mise) e valida binário
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
         with:
+          version: 2026.9.2
           install: true
       - name: pi --version
         run: mise install pi@0.84.0 && mise exec pi@0.84.0 -- pi --version
