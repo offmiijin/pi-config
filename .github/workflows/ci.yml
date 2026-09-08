@@ -61,7 +61,7 @@ jobs:
           bun-version: latest
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - name: Rust estável (p/ landlock-exec)
         uses: dtolnay/rust-toolchain@stable
       - name: Roda install.sh --yes (copia config → ~/.pi/agent, deps, landlock)
@@ -97,7 +97,7 @@ jobs:
           - name: Ubuntu 24.04
             image: ubuntu:24.04
             update: apt-get update && apt-get install -y curl
-            node_setup: curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs
+            node_setup: curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs
           - name: Fedora 41
             image: fedora:41
             update: dnf makecache
