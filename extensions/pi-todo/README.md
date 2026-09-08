@@ -4,8 +4,7 @@ Tool para organizar tarefas extensas durante uma sessão do pi.
 
 ## Uso
 
-- a tool `todo` gerencia tarefas com `list`, `add`, `update` e `clear`;
-- a tool `todo` gerencia tarefas em ordem estrita;
+- a tool `todo` gerencia tarefas com `list`, `add`, `update` e `clear`, sempre em ordem estrita;
 - falhas de ferramentas podem marcar automaticamente a etapa ativa como `error`;
 - a lista exibida no histórico mostra uma janela deslizante de até cinco tarefas;
 - confirmações de atualização exibem o título da tarefa, por exemplo `Tarefa #5 → Título da Tarefa`.
