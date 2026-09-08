@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- CI: atualiza `jdx/mise-action` para a v4 e fixa o mise em `2026.9.2` para evitar falhas 404 durante a instalação.
+
 ## [1.4.0] - 2026-09-04
 
 ### Added
