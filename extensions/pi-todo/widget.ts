@@ -59,5 +59,9 @@ export function updateTodoWidget(ctx: ExtensionContext, holder: { value: TodoSta
 		ctx.ui.setWidget(WIDGET_ID, undefined);
 		return;
 	}
-	ctx.ui.setWidget(WIDGET_ID, (_tui, theme) => createTodoWidget(holder, theme));
+	ctx.ui.setWidget(
+		WIDGET_ID,
+		(_tui, theme) => createTodoWidget(holder, theme),
+		{ placement: "aboveEditor" },
+	);
 }

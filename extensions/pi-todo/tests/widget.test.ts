@@ -55,12 +55,12 @@ describe("widget — renderWidgetLines", () => {
 
 describe("widget — updateTodoWidget (atualização central)", () => {
 	function fakeCtx() {
-		const calls: { id: string; content: unknown }[] = [];
+		const calls: { id: string; content: unknown; options?: unknown }[] = [];
 		return {
 			calls,
 			ctx: {
 				hasUI: true,
-				ui: { setWidget: (id: string, content: unknown) => calls.push({ id, content }) },
+				ui: { setWidget: (id: string, content: unknown, options?: unknown) => calls.push({ id, content, options }) },
 			} as any,
 		};
 	}
@@ -68,7 +68,7 @@ describe("widget — updateTodoWidget (atualização central)", () => {
 	it("lista vazia → remove o widget (content undefined)", () => {
 		const { calls, ctx } = fakeCtx();
 		updateTodoWidget(ctx, { value: createTodoState() });
-		expect(calls.at(-1)).toEqual({ id: WIDGET_ID, content: undefined });
+		expect(calls.at(-1)).toMatchObject({ id: WIDGET_ID, content: undefined });
 	});
 
 	it("com tarefas → re-registra projeção viva", () => {
@@ -77,6 +77,7 @@ describe("widget — updateTodoWidget (atualização central)", () => {
 		updateTodoWidget(ctx, holder);
 		expect(calls.at(-1)!.id).toBe(WIDGET_ID);
 		expect(calls.at(-1)!.content).not.toBeUndefined();
+		expect(calls.at(-1)!.options).toEqual({ placement: "aboveEditor" });
 		const factory = calls.at(-1)!.content as (t: unknown, theme: any) => { render: (w: number) => string[] };
 		expect(factory(null, fakeTheme()).render(80)).toHaveLength(2);
 	});
