@@ -85,7 +85,7 @@ No evento `agent_settled`, o pi-memory:
 | `code-change` | tool calls `edit`, `write` (com diff) |
 | `command` | tool call `bash` (com exit code) |
 | `research` | `read`, `grep`, `find`, `ls` |
-| `memory-op` | `memory_save`, `memory_search`, `memory_decay`, `memory_extract`, `memory_retention` |
+| `memory-op` | `memory_save`, `memory_search`, `memory_read`, `memory_decay`, `memory_extract`, `memory_retention` |
 | `tool` / `context` | outras tool calls e contexto |
 
 Toda evidência passa por `sanitizeEvidenceText` (segredos viram
@@ -197,6 +197,7 @@ repositório `memories/`.
 ### 6. Busca e tools (Fase 6)
 
 - `memory_search` → FTS5/BM25 (fallback ripgrep), escopos `global`/`project`/`all`.
+- `memory_read` → lê o markdown completo da memória ativa, fonte da verdade no disco; use após `memory_search` quando o trecho não for suficiente.
 - `memory_status` → métricas do pipeline (episódios por status, evidências,
   jobs, candidatos pending, última extração com tokens).
 - `memory_extract` → normaliza pendings + enfileira job forçado (assíncrono,
@@ -214,7 +215,7 @@ nada é movido para `.supersedes/` automaticamente. O desuso apenas rebaixa a
 prioridade da memória na ordenação da busca (critério secundário, depois de BM25
 e confidence).
 
-- Cada `memory_search` com resultados registra uso em `.retention.sqlite`
+- Cada `memory_search` com resultados e cada `memory_read` registra uso em `.retention.sqlite`
   (`last_used_at`, `use_count`) e reseta o score para 1.0.
 - O `RetentionScheduler` (independente do worker de extração) faz sweep diário:
   reconcile (espelhar arquivos ativos) → recompute (fórmula de meia-vida com

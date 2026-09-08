@@ -23,7 +23,7 @@ function snapshot(): ChangesSnapshot {
 					status: "M",
 					additions: 12,
 					deletions: 4,
-					diff: "@@ -19,3 +19,4 @@",
+					diff: "@@ -19,3 +19,4 @@\n line-19\n-line-20\n+line-20 updated\n line-21",
 					content: Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join("\n"),
 					changedLineRanges: [{ start: 20, end: 20 }],
 				}],
@@ -37,7 +37,7 @@ function snapshot(): ChangesSnapshot {
 					status: "A",
 					additions: 3,
 					deletions: 0,
-					diff: "@@ -0,0 +1,3 @@",
+					diff: "@@ -1 +1 @@\n-old value\n+const created = true;",
 					content: "const created = true;",
 					changedLineRanges: [{ start: 1, end: 3 }],
 				}],
@@ -75,6 +75,29 @@ describe("painel — truncamento e layout", () => {
 		expect(body).toContain("Não commitadas");
 	});
 
+	it("mostra o commit selecionado à esquerda e os totais coloridos à direita", () => {
+		const { panel } = setup();
+		let header = panel.render(240)[1]!;
+
+		expect(header).toContain("abc123 feat: altera app");
+		expect(header).toContain("Tot. Commit:");
+		expect(header).toContain("success:+12 error:-4 (success:+0 error:-0)");
+		expect(header).toContain("Tot. Branch: success:+12 error:-4");
+		expect(header.indexOf("Tot. Commit:")).toBeGreaterThan(header.indexOf("abc123 feat: altera app"));
+
+		panel.handleInput("\r");
+		panel.handleInput("\x1b[B");
+		header = panel.render(240)[1]!;
+		expect(header).toContain("abc123 feat: altera app");
+		expect(header).toContain("success:+12 error:-4 (success:+12 error:-4)");
+
+		panel.handleInput("\x1b[B");
+		header = panel.render(240)[1]!;
+		expect(header).toContain("Não commitadas");
+		expect(header).toContain("success:+0 error:-0 (success:+3 error:-0)");
+		expect(header).toContain("Tot. Branch: success:+12 error:-4");
+	});
+
 	it("expande o commit selecionado e permite selecionar seus arquivos", () => {
 		const { panel } = setup();
 		panel.handleInput("\r");
@@ -84,7 +107,9 @@ describe("painel — truncamento e layout", () => {
 
 		panel.handleInput("\x1b[B");
 		body = panel.render(100).join("\n");
-		expect(body).toContain("line-20");
+		expect(body).toContain("dim:20 │ toolDiffRemoved:line-20");
+		expect(body).toContain("dim:20 │ toolDiffAdded:line-20 updated");
+		expect(body).not.toContain("@@ -19,3 +19,4 @@");
 		for (const line of panel.render(100)) expect(visibleWidth(line)).toBe(100);
 	});
 
@@ -102,6 +127,23 @@ describe("painel — truncamento e layout", () => {
 		expect(lines.at(-1)!.endsWith("╯")).toBe(true);
 		for (const line of lines) expect(visibleWidth(line)).toBe(160);
 	});
+
+	it("exibe apenas Git indisponível no título quando a consulta falha", () => {
+		const tui = { terminal: { rows: 20 }, requestRender: () => {} } as any;
+		const panel = new ChangesPanel(tui, fakeTheme(), {
+			groups: [],
+			totalAdditions: 0,
+			totalDeletions: 0,
+			error: "fatal: not a git repository\nStopping at filesystem boundary",
+		}, () => {});
+		const lines = panel.render(100);
+		const body = lines.join("\n");
+
+		expect(body).toContain("error:Git indisponível");
+		expect(body).not.toContain("fatal: not a git repository");
+		expect(body).not.toContain("Stopping at filesystem boundary");
+		for (const line of lines) expect(visibleWidth(line)).toBe(100);
+	});
 });
 
 describe("painel — seleção", () => {
@@ -109,7 +151,9 @@ describe("painel — seleção", () => {
 		const { panel, calls } = setup();
 		panel.handleInput("\x1b[B");
 		const selected = panel.render(100).join("\n");
-		expect(selected).toContain("const created = true;");
+		expect(selected).toContain("dim:1 │ toolDiffRemoved:old value");
+		expect(selected).toContain("dim:1 │ toolDiffAdded:const created = true;");
+		expect(selected).not.toContain("@@ -1 +1 @@");
 		expect(selected).not.toContain("line-20");
 		expect(calls.length).toBeGreaterThan(0);
 
@@ -136,7 +180,10 @@ describe("painel — seleção", () => {
 		panel.handleInput("F");
 		const fullFile = panel.render(100).join("\n");
 		expect(fullFile).toContain("line-1");
-		expect(fullFile).toContain("F contexto");
+		expect(fullFile).toContain("F diff");
+
+		for (let index = 0; index < 19; index++) panel.handleInput("J");
+		expect(panel.render(100).join("\n")).toContain("toolDiffRemoved:line-20");
 
 		panel.handleInput("f");
 		expect(panel.render(100).join("\n")).not.toContain("│dim: 1 │ toolDiffContext:line-1");

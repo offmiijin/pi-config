@@ -31,9 +31,11 @@ function result(overrides: Partial<IndexSearchResult> = {}): IndexSearchResult {
 }
 
 describe("formatIndexResults", () => {
-	it("formata contagem, path, metadados, título e snippet", () => {
-		const text = formatIndexResults([result()]);
+	it("formata contagem, query, path, metadados, título e snippet", () => {
+		const query = ["cache", "invalidação"];
+		const text = formatIndexResults([result()], query);
 		expect(text).toContain("Found 1 result(s):");
+		expect(text).toContain(`Search query: ${JSON.stringify(query)}`);
 		expect(text).toContain("memories/_global/gotchas/cache.md (0.8, 2026-08-01)");
 		expect(text).toContain("tipo: gotchas · contexto: cache · escopo: global");
 		expect(text).toContain("título: Cache invalidação");
@@ -70,7 +72,9 @@ import {
 	dispatchSearch,
 	formatRgResults,
 	hasMeaningfulTerm,
+	registerMemorySearch,
 } from "../tools/search.ts";
+import type { ToolState } from "../tools/state.ts";
 import type { SearchResult } from "../memory/memory-search.ts";
 
 function rgResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -94,9 +98,11 @@ describe("hasMeaningfulTerm", () => {
 });
 
 describe("formatRgResults", () => {
-	it("formata contagem, path relativo e linhas", () => {
-		const text = formatRgResults([rgResult()]);
+	it("formata contagem, query, path relativo e linhas", () => {
+		const query = ["cache", "invalidação"];
+		const text = formatRgResults([rgResult()], query);
 		expect(text).toContain("Found 1 result(s):");
+		expect(text).toContain(`Search query: ${JSON.stringify(query)}`);
 		expect(text).toContain("memories/_global/gotchas/cache.md");
 		expect(text).toContain("L7: O bug era no cache");
 	});
@@ -110,13 +116,49 @@ describe("formatRgResults", () => {
 	});
 });
 
+describe("memory_search sem resultados", () => {
+	it("exibe os termos usados na mensagem", async () => {
+		type SearchTool = { execute: (...args: unknown[]) => Promise<{ content: { text: string }[] }> };
+		let capturedTool: SearchTool | undefined;
+		const fakePi = {
+			registerTool: (definition: SearchTool) => {
+				capturedTool = definition;
+			},
+		};
+		const state: ToolState = {
+			projectId: `__test_search_terms_${Date.now()}`,
+			currentSessionHash: "session",
+			consecutiveEmptySearches: 0,
+			cachedIndexText: null,
+			index: null,
+			pipeline: null,
+			worker: null,
+			retention: null,
+			retentionScheduler: null,
+		};
+		registerMemorySearch(fakePi as never, state);
+		if (!capturedTool) throw new Error("registerTool não capturou a definição");
+
+		const terms = ["termo-inexistente", "palavra-improvável", "inlocalizável", "desconhecida", "incombinável"];
+		const response = await capturedTool.execute("id", { query: terms, scope: "project" });
+		expect(response.content[0].text).toContain(JSON.stringify(terms));
+		expect(response.content[0].text).toContain("Attempts remaining before abandoning memory search: 4");
+
+		const tooFew = await capturedTool.execute("id", { query: ["busca", "memória", "projeto", "contexto"] });
+		expect(tooFew.content[0].text).toContain("at least 5 terms");
+	});
+});
+
 describe("dispatchSearch", () => {
 	it("SQLite ok → engine sqlite, sem primaryError", () => {
+		const query = ["cache", "invalidação"];
 		const d = dispatchSearch(
 			() => [{ path: "a.md" } as IndexSearchResult],
 			() => [rgResult()],
+			query,
 		);
 		expect(d.engine).toBe("sqlite");
+		expect(d.text).toContain(`Search query: ${JSON.stringify(query)}`);
 		expect(d.count).toBe(1);
 		expect(d.text).toContain("memories/a.md");
 		expect(d.primaryError).toBeUndefined();

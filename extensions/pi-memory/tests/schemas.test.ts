@@ -9,6 +9,7 @@ import {
 	DecaySchema,
 	ExtractSchema,
 	MemoryTypeEnum,
+	MemoryReadSchema,
 	SaveSchema,
 	SearchSchema,
 	StatusSchema
@@ -108,6 +109,14 @@ describe("memory_search schema", () => {
 		const q = props.query as Record<string, unknown>;
 		const items = q.items as Record<string, unknown>;
 		expect(items.type).toBe("string");
+	});
+});
+
+describe("memory_read schema", () => {
+	it("is an object schema with required path", () => {
+		expect(schemaIsObject(MemoryReadSchema)).toBeTrue();
+		expect(propIsRequired(MemoryReadSchema, "path")).toBeTrue();
+		expect(propHasType(MemoryReadSchema, "path", "string")).toBeTrue();
 	});
 });
 
