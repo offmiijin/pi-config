@@ -180,4 +180,16 @@ describe("reconstrução — reconstructState a partir do branch", () => {
 		const s = reconstructState(entries);
 		expect(s.items[0]!.status).toBe("in-progress");
 	});
+
+	it("restaura dez tarefas com as sete primeiras concluídas", () => {
+		const items = Array.from({ length: 10 }, (_, index) => ({
+			id: index + 1,
+			text: `tarefa ${index + 1}`,
+			status: index < 7 ? "done" : "pending",
+		}));
+		const state = reconstructState([toolEntry({ items, nextId: 11 })]);
+		expect(state.items).toHaveLength(10);
+		expect(state.items.slice(0, 7).every((item) => item.status === "done")).toBe(true);
+		expect(state.items.slice(7).every((item) => item.status === "pending")).toBe(true);
+	});
 });
