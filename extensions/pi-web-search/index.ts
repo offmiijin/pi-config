@@ -20,6 +20,7 @@ import {
 	validateRendererInstallation,
 } from "./renderer-install";
 import { closeSharedRendererClient } from "./renderer-client";
+import { WEB_SEARCH_AGENT_GUIDANCE } from "./guidance";
 import {
 	getConfigSummary,
 	setKey,
@@ -44,6 +45,12 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		closeSharedRendererClient();
 	});
+
+	// Orientações operacionais no system prompt, como o pi-memory faz com o
+	// índice de memórias. Isso elimina a dependência de uma SKILL separada.
+	pi.on("before_agent_start", async (event) => ({
+		systemPrompt: `${event.systemPrompt}\n\n${WEB_SEARCH_AGENT_GUIDANCE}`,
+	}));
 
 	// Aviso de startup — 1x por processo, só quando nada está funcionando
 	let startupNotified = false;
