@@ -64,6 +64,26 @@ describe("web_fetch — workspace efetivo", () => {
     );
   });
 
+  it("injeta orientações no system prompt do agente", async () => {
+    const handlers = new Map<string, (event: { systemPrompt: string }) => Promise<{ systemPrompt: string }>>();
+    const pi = {
+      events: { on: vi.fn() },
+      on: (name: string, handler: (event: { systemPrompt: string }) => Promise<{ systemPrompt: string }>) => {
+        handlers.set(name, handler);
+      },
+      registerCommand: vi.fn(),
+      registerTool: vi.fn(),
+    };
+
+    const { default: extension } = await import("../index");
+    extension(pi as never);
+    const result = await handlers.get("before_agent_start")?.({ systemPrompt: "base" });
+
+    expect(result?.systemPrompt).toContain("Pesquisa web integrada");
+    expect(result?.systemPrompt).toContain("web_search");
+    expect(result?.systemPrompt).toContain("web_fetch");
+  });
+
   it("encerra o renderer no session_shutdown", async () => {
     const handlers = new Map<string, () => Promise<void>>();
     const pi = {

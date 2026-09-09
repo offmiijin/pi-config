@@ -13,6 +13,9 @@
 - Padroniza Node.js 24 no instalador, doctor, workspace raiz e CI.
 - `pi-todo`: exige execução sequencial das tarefas, exibe o título nas confirmações e usa amarelo para estados de erro em vez de vermelho.
 - CI: executa validações reais do sandbox na matriz Ubuntu, Fedora e Arch.
+- `pi-web-search`: integra as orientações de pesquisa ao fluxo do agente via `before_agent_start`.
+- `pi-custom-theme`: renomeia a extensão para `pi-status-bar`, separando-a dos arquivos JSON de tema.
+- `pi-panel` e `pi-token-monitor`: unifica os painéis na extensão `pi-panels`, preservando seus atalhos e comandos.
 
 ### Fixed
 
@@ -23,6 +26,8 @@
 ### Removed
 
 - `pi-todo`: remove o comando `/todos` e o atalho `Alt+T`; a visualização permanece disponível no widget persistente.
+- Remove as skills separadas `memory` e `web-search`, agora cobertas pelo fluxo integrado do agente.
+- Remove a extensão `pi-caveman`, sem uso no fluxo atual.
 
 ## [1.4.0] - 2026-09-04
 
@@ -33,7 +38,7 @@
 ### Changed
 
 - `pi-memory`: exige pelo menos cinco termos específicos em português nas buscas, orienta o uso de palavras-chave e frases curtas e exibe o query nos resultados e erros.
-- `pi-panel`: melhora a visualização Git com fallback para Git indisponível, diffs como código numerado com linhas removidas e totais do commit, arquivo e branch.
+- `pi-panels`: melhora a visualização Git com fallback para Git indisponível, diffs como código numerado com linhas removidas e totais do commit, arquivo e branch.
 
 ### Fixed
 
