@@ -56,7 +56,7 @@ describe("monitor de tokens — leitura de sessões", () => {
   });
 
   it("agrega sessões, aplica período/modelo/router e mantém cache por arquivo", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pi-token-monitor-"));
+    const root = await mkdtemp(join(tmpdir(), "pi-panels-token-monitor-"));
     files.push(root);
     const session = join(root, "session.jsonl");
     await writeFile(session, [

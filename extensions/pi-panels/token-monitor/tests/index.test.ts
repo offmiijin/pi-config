@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import registerTokenMonitor, { requestCustomPeriod, shouldToggleTokenMonitor } from "../index.ts";
 
-describe("extensão pi-token-monitor", () => {
+describe("monitor de tokens do pi-panels", () => {
   it("registra o comando /token-monitor", () => {
     const commands: Record<string, unknown> = {};
     const pi = {

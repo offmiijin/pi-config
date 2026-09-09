@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import registerChanges, { shouldTogglePanel } from "../index.ts";
 import { PANEL_SESSION_ENTRY } from "../session.ts";
 
-describe("extensão pi-panel", () => {
+describe("painel de alterações do pi-panels", () => {
 	it("ignora repetições do Alt+D enquanto a tecla permanece pressionada", () => {
 		expect(shouldTogglePanel("\x1bd", 1000, 0)).toBe(true);
 		expect(shouldTogglePanel("\x1bd", 1100, 1000)).toBe(false);

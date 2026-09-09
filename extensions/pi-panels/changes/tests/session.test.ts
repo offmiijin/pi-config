@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PANEL_SESSION_ENTRY, reconstructPanelSession } from "../session.ts";
 
-describe("sessão — âncora do pi-panel", () => {
+describe("sessão — âncora do painel de alterações", () => {
 	it("usa o último snapshot válido da sessão", () => {
 		expect(reconstructPanelSession([
 			{ type: "custom", customType: PANEL_SESSION_ENTRY, data: { version: 1, baseCommit: "base-antiga" } },

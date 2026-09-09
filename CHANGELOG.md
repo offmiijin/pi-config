@@ -33,7 +33,7 @@
 ### Changed
 
 - `pi-memory`: exige pelo menos cinco termos específicos em português nas buscas, orienta o uso de palavras-chave e frases curtas e exibe o query nos resultados e erros.
-- `pi-panel`: melhora a visualização Git com fallback para Git indisponível, diffs como código numerado com linhas removidas e totais do commit, arquivo e branch.
+- `pi-panels`: melhora a visualização Git com fallback para Git indisponível, diffs como código numerado com linhas removidas e totais do commit, arquivo e branch.
 
 ### Fixed
 

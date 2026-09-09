@@ -113,7 +113,7 @@ describe("git — coleta", () => {
 	});
 
 	it("separa cada commit da sessão e alterações não commitadas", async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "pi-panel-repo-"));
+		const cwd = mkdtempSync(join(tmpdir(), "pi-panels-repo-"));
 		try {
 			git(cwd, ["init", "-q"]);
 			git(cwd, ["config", "user.email", "panel@test.invalid"]);

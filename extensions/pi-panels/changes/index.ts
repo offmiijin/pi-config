@@ -49,7 +49,7 @@ export default function (pi: ExtensionAPI): void {
 				...(workspaceCwd ? { workspaceCwd } : {}),
 			});
 		} catch (error) {
-			console.warn("[pi-panel] Não foi possível persistir a âncora da sessão:", error);
+			console.warn("[pi-panels/changes] Não foi possível persistir a âncora da sessão:", error);
 		}
 	};
 
