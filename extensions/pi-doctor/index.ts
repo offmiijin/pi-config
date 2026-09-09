@@ -87,7 +87,7 @@ const MIN_NODE = "24.0.0"
 
 const RUNTIME_PACKAGES = [
 	{ name: "@earendil-works/pi-coding-agent", usedBy: "API de todas as extensões" },
-	{ name: "@earendil-works/pi-tui", usedBy: "pi-custom-theme" },
+	{ name: "@earendil-works/pi-tui", usedBy: "pi-status-bar" },
 	{ name: "typebox", usedBy: "pi-github · pi-memory · pi-web-search" },
 	{ name: "cheerio", usedBy: "pi-web-search" },
 ] as const;

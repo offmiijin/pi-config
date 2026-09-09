@@ -1,7 +1,7 @@
 /**
  * Status bar — editor customizado com info do modelo + footer com branch git.
  *
- * Refatorado de extensions/status-bar.ts para export nomeado.
+ * Componente visual principal da extensão pi-status-bar.
  */
 
 import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";

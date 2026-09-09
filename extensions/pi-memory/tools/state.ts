@@ -88,7 +88,7 @@ export function syncIndex(
 
 /**
  * Emite o evento custom:memory-stats com a contagem atual de memórias
- * (global + project). Consumido pelo status-bar do pi-custom-theme — a
+ * (global + project). Consumido pelo pi-status-bar — a
  * apresentação fica desacoplada do storage. No-op sem projectId ativo.
  */
 export function emitMemoryStats(pi: ExtensionAPI, state: ToolState): void {
