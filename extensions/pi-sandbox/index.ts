@@ -103,6 +103,7 @@ import { createLsOps } from "./tools/ls-ops";
 import { createGrepTool } from "./tools/grep";
 import { compactBashToolResult, compactBashToolError } from "./tools/bash-output";
 import { createVerifyTool } from "./tools/verify";
+import { buildPhpUnitPlan, dockerMountDirectory, type PhpUnitInput } from "./tools/phpunit";
 
 /** Diretório desta extensão — usado para resolver seccomp.bpf. */
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -495,6 +496,61 @@ export default function (pi: ExtensionAPI) {
       return { exitCode: result.exitCode, output: Buffer.concat(chunks).toString("utf8") };
     };
   }, () => session?.workspaceCwd ?? localCwd));
+
+  // ── Testes PHP/PHPUnit em container efêmero ─────
+  pi.registerTool({
+    name: "sandbox_test",
+    label: "Sandbox Test",
+    description:
+      "Detects PHPUnit from composer.json and runs selected PHP tests in an ephemeral Docker container. " +
+      "Requires an exact PHP version and PI_SANDBOX_DOCKER_SOCKET for a dedicated Docker daemon. " +
+      "Does not accept arbitrary commands; the container is removed after execution.",
+    parameters: Type.Object({
+      scope: Type.Optional(Type.Union([
+        Type.Literal("all"), Type.Literal("file"), Type.Literal("test"), Type.Literal("suite"),
+      ])),
+      path: Type.Optional(Type.String()),
+      test: Type.Optional(Type.String()),
+      suite: Type.Optional(Type.String()),
+      timeoutSeconds: Type.Optional(Type.Number({ minimum: 1, maximum: 3600 })),
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      if (!enabled || !config) throw sandboxBlockedError("sandbox_test");
+      const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
+      const input = params as PhpUnitInput;
+      const plan = buildPhpUnitPlan(cwd, input);
+      const result = await execInSandbox(config, {
+        command: plan.command,
+        cwd,
+        workspaceRoot: session?.worktreePath ?? cwd,
+        additionalWritable: [plan.socket],
+        timeout: input.timeoutSeconds ?? 900,
+        signal,
+      }, "normal");
+      const stdout = result.stdout.toString("utf8");
+      const output = [stdout, result.stderr].filter(Boolean).join("\n");
+      return {
+        content: [{ type: "text", text: [
+          `PHPUnit (${plan.version}) — ${plan.detail}`,
+          `Imagem: ${plan.image}`,
+          `Exit code: ${result.exitCode ?? "unknown"}`,
+          `Container removido: ${result.timedOut || result.aborted ? "solicitado" : "sim"}`,
+          output || "(sem saída)",
+        ].join("\n") }],
+        details: {
+          framework: "phpunit",
+          version: plan.version,
+          image: plan.image,
+          scope: plan.scope,
+          command: plan.command,
+          exitCode: result.exitCode,
+          timedOut: result.timedOut,
+          aborted: result.aborted,
+          dockerMountDirectory: dockerMountDirectory(plan.socket),
+        },
+      };
+    },
+  });
 
   // ── Instalação segura de dependências ─────────
   pi.registerTool({

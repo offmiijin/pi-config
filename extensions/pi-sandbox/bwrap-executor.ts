@@ -998,7 +998,7 @@ function buildLandlockArgs(
     const roPaths = [...resolveSystemPaths().roDirs, "/etc", "/proc"];
     for (const p of roPaths) args.push("--allow-ro", p);
 
-    const rwPaths = ["/tmp", "/run", "/dev", ...additionalWritable];
+    const rwPaths = ["/tmp", "/run", "/dev", ...additionalWritable.map((path) => dirname(path))];
     const dirs = resolveQuarantineDirs(config, cwd);
     rwPaths.push(profile === "fetch" ? dirs.fetch : dirs.runs);
     if (profile === "quarantine") {
@@ -1061,7 +1061,7 @@ function buildLandlockArgs(
   for (const p of config.filesystem.extraWritable) {
     if (existsSync(p)) rwPaths.push(p);
   }
-  rwPaths.push(...additionalWritable);
+  rwPaths.push(...additionalWritable.map((path) => dirname(path)));
 
   // SSH agent socket dir (precisa de rw para comunicação bidirecional)
   if (normalSshMode(config) === "agent") {
@@ -1141,7 +1141,7 @@ export function execInSandbox(
     // um daemon Docker dedicado). Não entram no cache nem na configuração.
     for (const path of opts.additionalWritable ?? []) {
       if (!existsSync(path)) throw new Error(`[pi-sandbox] Mount adicional inexistente: ${path}`);
-      args.push("--bind", path, path);
+      args.push("--dir", dirname(path), "--bind", path, path);
     }
 
     // ── Seccomp BPF ──────────────────────────
