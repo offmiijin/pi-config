@@ -986,6 +986,7 @@ function buildLandlockArgs(
   cwd: string,
   profile: SandboxProfileName = "normal",
   workspaceRoot = cwd,
+  additionalWritable: string[] = [],
 ): string[] {
   // ── Perfis de quarentena (fetch/quarantine) ─────────────
   // Sistema RO + diretórios explícitos RW. NUNCA o workspace.
@@ -997,7 +998,7 @@ function buildLandlockArgs(
     const roPaths = [...resolveSystemPaths().roDirs, "/etc", "/proc"];
     for (const p of roPaths) args.push("--allow-ro", p);
 
-    const rwPaths = ["/tmp", "/run", "/dev"];
+    const rwPaths = ["/tmp", "/run", "/dev", ...additionalWritable];
     const dirs = resolveQuarantineDirs(config, cwd);
     rwPaths.push(profile === "fetch" ? dirs.fetch : dirs.runs);
     if (profile === "quarantine") {
@@ -1060,6 +1061,7 @@ function buildLandlockArgs(
   for (const p of config.filesystem.extraWritable) {
     if (existsSync(p)) rwPaths.push(p);
   }
+  rwPaths.push(...additionalWritable);
 
   // SSH agent socket dir (precisa de rw para comunicação bidirecional)
   if (normalSshMode(config) === "agent") {
@@ -1094,11 +1096,12 @@ export function wrapWithLandlock(
   cwd: string,
   profile: SandboxProfileName = "normal",
   workspaceRoot = cwd,
+  additionalWritable: string[] = [],
 ): string[] {
   if (!config.landlock.enabled) {
     return [...bwrapArgs, ...command];
   }
-  const landlockArgs = buildLandlockArgs(config, cwd, profile, workspaceRoot);
+  const landlockArgs = buildLandlockArgs(config, cwd, profile, workspaceRoot, additionalWritable);
   return [...bwrapArgs, ...landlockArgs, ...command];
 }
 
@@ -1134,6 +1137,13 @@ export function execInSandbox(
     const baseArgs = buildBwrapArgs(config, baseCwd, profile, workspaceRoot);
     let args = [...baseArgs];
 
+    // Mounts temporários pertencem somente a esta execução (ex: socket de
+    // um daemon Docker dedicado). Não entram no cache nem na configuração.
+    for (const path of opts.additionalWritable ?? []) {
+      if (!existsSync(path)) throw new Error(`[pi-sandbox] Mount adicional inexistente: ${path}`);
+      args.push("--bind", path, path);
+    }
+
     // ── Seccomp BPF ──────────────────────────
     let bpfFd: number | undefined;
     const seccompCfg = config.seccomp;
@@ -1151,7 +1161,15 @@ export function execInSandbox(
 
     // ── Landlock + comando ───────────────────
     // Landlock é aplicado dentro do bwrap, após mounts e seccomp.
-    args = wrapWithLandlock(args, opts.command, config, baseCwd, profile, workspaceRoot);
+    args = wrapWithLandlock(
+      args,
+      opts.command,
+      config,
+      baseCwd,
+      profile,
+      workspaceRoot,
+      opts.additionalWritable ?? [],
+    );
 
     // stdio: stdin, stdout, stderr, + opcionalmente FD 3 (BPF)
     const stdio: any[] = ["pipe", "pipe", "pipe"];

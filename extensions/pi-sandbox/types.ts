@@ -204,6 +204,8 @@ export interface BwrapCall {
   stdin?: string;
   /** Sinal de aborto. */
   signal?: AbortSignal;
+  /** Mounts adicionais read-write para esta chamada, sem alterar a configuração persistida. */
+  additionalWritable?: string[];
   /** Timeout em segundos. */
   timeout?: number;
 }
