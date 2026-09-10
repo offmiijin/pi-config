@@ -106,8 +106,9 @@ export function buildPhpUnitPlan(cwd: string, input: PhpUnitInput = {}): PhpUnit
   const image = process.env.PI_SANDBOX_PHP_IMAGE?.trim() || `php:${version}-cli`;
   if (!IMAGE.test(image)) throw new Error(`imagem PHP não é exata ou não é permitida: ${image}`);
 
-  const command = ["docker", "run", "--rm", "--init", "--network", "none", "--read-only", "--tmpfs", "/tmp",
-    "--volume", `${cwd}:${cwd}:ro`, "--workdir", cwd, image, "phpunit"];
+  const socket = socketPath();
+  const command = ["docker", "--host", `unix://${socket}`, "run", "--rm", "--init", "--pull", "never", "--network", "none", "--read-only", "--tmpfs", "/tmp",
+    "--volume", `${cwd}:${cwd}:ro`, "--workdir", cwd, image, executable];
   let detail = "todos os testes";
   if (scope === "file") {
     if (!input.path) throw new Error("scope=file exige path");
@@ -120,7 +121,7 @@ export function buildPhpUnitPlan(cwd: string, input: PhpUnitInput = {}): PhpUnit
     if (!input.suite?.trim()) throw new Error("scope=suite exige suite");
     command.push("--testsuite", input.suite); detail = `suíte ${input.suite}`;
   }
-  return { version, image, executable, command, socket: socketPath(), scope, detail };
+  return { version, image, executable, command, socket, scope, detail };
 }
 
 export function dockerMountDirectory(socket: string): string {

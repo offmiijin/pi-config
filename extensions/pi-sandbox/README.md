@@ -143,6 +143,28 @@ Os caches de npm e pip permanecem no projeto original para sobreviver à remoç�
 do worktree. Clones são criados no cache da sessão dentro do worktree. O projeto
 original não é exposto como um todo.
 
+## Execução de testes PHP
+
+A tool `sandbox_test` detecta PHPUnit pelo `composer.json` e executa os testes em um
+container Docker efêmero. O escopo pode ser `all`, `file`, `test` ou `suite`; a tool
+não aceita comandos shell ou argumentos arbitrários.
+
+A versão PHP deve ser exata e pode ser informada por `config.platform.php` no
+`composer.json`, `.php-version`, `.tool-versions` ou `mise.toml`. Conflitos ou
+versões apenas aproximadas bloqueiam a execução. A imagem padrão é
+`php:<versão>-cli`; `PI_SANDBOX_PHP_IMAGE` pode fornecer a mesma imagem com digest.
+
+O socket precisa apontar para um daemon Docker dedicado, nunca para o daemon que
+administra os containers pessoais:
+
+```bash
+export PI_SANDBOX_DOCKER_SOCKET=/run/user/1000/docker-agent/docker.sock
+export PI_SANDBOX_PHP_IMAGE=php:8.3.12-cli
+```
+
+O socket é montado somente durante a execução, o container usa `--pull never`,
+`--network none`, filesystem read-only e é removido ao final.
+
 ## Verificação do projeto
 
 A tool `verify` executa, dentro do sandbox, os scripts disponíveis no `package.json`:
