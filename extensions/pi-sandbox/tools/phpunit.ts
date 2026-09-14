@@ -32,17 +32,28 @@ function exactVersion(value: unknown): string | undefined {
   return typeof value === "string" && VERSION.test(value.trim()) ? value.trim() : undefined;
 }
 
+function dockerfilesInProject(cwd: string): string[] {
+  const files: string[] = [];
+  const ignored = new Set([".git", "node_modules", "vendor", ".sandbox-cache"]);
+  const visit = (directory: string, depth: number): void => {
+    if (depth > 3) return;
+    let entries;
+    try { entries = readdirSync(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (ignored.has(entry.name)) continue;
+      const path = join(directory, entry.name);
+      if (entry.isFile() && /^Dockerfile(?:\..+)?$/.test(entry.name)) files.push(path);
+      else if (entry.isDirectory()) visit(path, depth + 1);
+    }
+  };
+  visit(cwd, 0);
+  return files;
+}
+
 function versionsInDockerfiles(cwd: string): string[] {
   const versions: string[] = [];
-  let files: string[];
-  try {
-    files = readdirSync(cwd).filter((name) => /^Dockerfile(?:\..+)?$/.test(name));
-  } catch {
-    return versions;
-  }
-
-  for (const file of files) {
-    const text = readText(join(cwd, file));
+  for (const file of dockerfilesInProject(cwd)) {
+    const text = readText(file);
     if (!text) continue;
     for (const line of text.split(/\r?\n/)) {
       const from = line.match(/^\s*FROM\s+(?:--platform=\S+\s+)?php:(\d+\.\d+\.\d+)(?:[-@]\S+)?(?:\s+AS\s+\S+)?\s*$/i);
@@ -121,7 +132,7 @@ export function detectPhpUnit(cwd: string): { executable: string; version: strin
   if (versions.length !== 1) {
     throw new Error(versions.length > 1
       ? `versões PHP conflitantes: ${versions.join(", ")}`
-      : "versão PHP exata não encontrada");
+      : "versão PHP exata não encontrada em composer.json, arquivos de versão ou Dockerfile");
   }
   return { executable, version: versions[0] };
 }

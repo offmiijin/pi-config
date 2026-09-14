@@ -64,6 +64,14 @@ describe("adapter PHPUnit", () => {
     expect(detectPhpUnit(cwd).version).toBe("7.3.27");
   });
 
+  it("encontra Dockerfile em subdiretório do projeto", () => {
+    const cwd = project(JSON.stringify({ "require-dev": { "phpunit/phpunit": "^11" } }));
+    rmSync(join(cwd, ".php-version"));
+    mkdirSync(join(cwd, "docker", "php"), { recursive: true });
+    writeFileSync(join(cwd, "docker", "php", "Dockerfile"), "FROM php:7.3.27-fpm-alpine3.12\n");
+    expect(detectPhpUnit(cwd).version).toBe("7.3.27");
+  });
+
   it("gera operação para arquivo e monta apenas imagem exata", async () => {
     const cwd = project(JSON.stringify({ "config": { "platform": { "php": "8.3.12" } }, "require-dev": { "phpunit/phpunit": "^11" } }));
     rmSync(join(cwd, ".php-version"));
