@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type PhpTestScope = "all" | "file" | "test" | "suite";
@@ -32,6 +32,31 @@ function exactVersion(value: unknown): string | undefined {
   return typeof value === "string" && VERSION.test(value.trim()) ? value.trim() : undefined;
 }
 
+function versionsInDockerfiles(cwd: string): string[] {
+  const versions: string[] = [];
+  let files: string[];
+  try {
+    files = readdirSync(cwd).filter((name) => /^Dockerfile(?:\..+)?$/.test(name));
+  } catch {
+    return versions;
+  }
+
+  for (const file of files) {
+    const text = readText(join(cwd, file));
+    if (!text) continue;
+    for (const line of text.split(/\r?\n/)) {
+      const from = line.match(/^\s*FROM\s+(?:--platform=\S+\s+)?php:(\d+\.\d+\.\d+)(?:[-@]\S+)?(?:\s+AS\s+\S+)?\s*$/i);
+      const arg = line.match(/^\s*ARG\s+PHP_VERSION\s*=\s*(\d+\.\d+\.\d+)\s*$/i);
+      const env = line.match(/^\s*ENV\s+PHP_VERSION[=\s]+(\d+\.\d+\.\d+)\s*$/i);
+      for (const candidate of [from?.[1], arg?.[1], env?.[1]]) {
+        const version = exactVersion(candidate);
+        if (version) versions.push(version);
+      }
+    }
+  }
+  return versions;
+}
+
 function versionsInProject(cwd: string): string[] {
   const versions: string[] = [];
   const composerPath = join(cwd, "composer.json");
@@ -62,6 +87,7 @@ function versionsInProject(cwd: string): string[] {
   const miseVersion = mise?.match(/^\s*php\s*=\s*["'](\d+\.\d+\.\d+)["']\s*$/m);
   const version = exactVersion(miseVersion?.[1]);
   if (version) versions.push(version);
+  versions.push(...versionsInDockerfiles(cwd));
   return [...new Set(versions)];
 }
 

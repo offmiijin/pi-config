@@ -46,7 +46,22 @@ describe("adapter PHPUnit", () => {
   it("recusa projeto sem versão PHP exata", () => {
     const cwd = project(JSON.stringify({ "require-dev": { "phpunit/phpunit": "^11" } }));
     rmSync(join(cwd, ".php-version"));
+    writeFileSync(join(cwd, "Dockerfile"), "FROM php:7.3-cli\n");
     expect(() => detectPhpUnit(cwd)).toThrow("versão PHP exata");
+  });
+
+  it("obtém a versão exata de FROM no Dockerfile", () => {
+    const cwd = project(JSON.stringify({ "require-dev": { "phpunit/phpunit": "^11" } }));
+    rmSync(join(cwd, ".php-version"));
+    writeFileSync(join(cwd, "Dockerfile"), "FROM php:7.3.27-cli AS app\n");
+    expect(detectPhpUnit(cwd).version).toBe("7.3.27");
+  });
+
+  it("obtém a versão exata de ARG PHP_VERSION no Dockerfile", () => {
+    const cwd = project(JSON.stringify({ "require-dev": { "phpunit/phpunit": "^11" } }));
+    rmSync(join(cwd, ".php-version"));
+    writeFileSync(join(cwd, "Dockerfile.test"), "ARG PHP_VERSION=7.3.27\nFROM php:${PHP_VERSION}-cli\n");
+    expect(detectPhpUnit(cwd).version).toBe("7.3.27");
   });
 
   it("gera operação para arquivo e monta apenas imagem exata", async () => {
