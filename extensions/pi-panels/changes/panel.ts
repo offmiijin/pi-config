@@ -321,7 +321,9 @@ export class ChangesPanel implements Component {
 		for (let row = 0; row < bodyRows; row++) {
 			const codeLine = sliceByColumn(codeLines[codeStart + row] ?? "", this.codeHorizontalOffset, codeWidth, true);
 			const metadataLine = metadata.lines[this.metadataOffset + row] ?? "";
-			lines.push(`│${padToWidth(codeLine, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
+			// A fatia pode terminar antes do reset ANSI original; restaure o estado antes da divisória.
+			const codeCell = `${codeLine}\x1b[0m`;
+			lines.push(`│${padToWidth(codeCell, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
 		}
 
 		const toggleLabel = this.showFullFile ? "diff" : "arquivo completo";
