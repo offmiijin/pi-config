@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `pi-panels/changes`: adiciona rolagem horizontal com setas e atalhos `H`/`L`, além de navegação para o início (`gg`) e o final (`G`) do arquivo.
+
+### Changed
+
+- `pi-panels/changes`: exibe os sinais `+` e `-` nas linhas adicionadas e removidas e aproxima a numeração da barra de divisão.
+
+### Fixed
+
+- `pi-panels/changes`: evita vazamento de estilos ANSI entre as colunas durante a rolagem.
+
 ## [1.5.0] - 2026-09-10
 
 ### Added
