@@ -160,6 +160,7 @@ export class ChangesPanel implements Component {
 	private metadataOffset = 0;
 	private codeOffset = 0;
 	private codeHorizontalOffset = 0;
+	private pendingG = false;
 	private showFullFile = false;
 	private readonly expandedCommits = new Set<string>();
 	private focus: PanelFocus = "files";
@@ -214,6 +215,24 @@ export class ChangesPanel implements Component {
 		) {
 			this.close();
 			return;
+		}
+
+		if (data !== "g") this.pendingG = false;
+		if (this.focus === "code") {
+			if (data === "g") {
+				if (this.pendingG) {
+					this.pendingG = false;
+					this.goToCodeStart();
+				} else {
+					this.pendingG = true;
+				}
+				return;
+			}
+			this.pendingG = false;
+			if (data === "G") {
+				this.goToCodeEnd();
+				return;
+			}
 		}
 
 		const moveUp = matchesKey(data, Key.up) || matchesKey(data, "k") || data === "K";
@@ -351,6 +370,7 @@ export class ChangesPanel implements Component {
 		this.metadataOffset = 0;
 		this.codeOffset = 0;
 		this.codeHorizontalOffset = 0;
+		this.pendingG = false;
 		this.tui.requestRender();
 	}
 
@@ -375,6 +395,17 @@ export class ChangesPanel implements Component {
 
 	private scrollCodeHorizontal(delta: number): void {
 		this.codeHorizontalOffset = Math.max(0, this.codeHorizontalOffset + delta);
+		this.tui.requestRender();
+	}
+
+	private goToCodeStart(): void {
+		this.codeOffset = 0;
+		this.tui.requestRender();
+	}
+
+	private goToCodeEnd(): void {
+		// O render calcula o limite real conforme a altura atual do viewport.
+		this.codeOffset = Number.MAX_SAFE_INTEGER;
 		this.tui.requestRender();
 	}
 

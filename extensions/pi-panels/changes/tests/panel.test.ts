@@ -218,6 +218,24 @@ describe("painel — seleção", () => {
 		expect(panel.render(100).join("\n")).toBe(initial);
 	});
 
+	it("gg e G navegam para o começo e o final do arquivo", () => {
+		const { panel } = setup();
+		panel.handleInput("\r");
+		panel.handleInput("\x1b[B");
+		panel.handleInput("\r");
+		panel.handleInput("F");
+		panel.handleInput("J");
+		panel.handleInput("J");
+		expect(panel.render(100).join("\n")).not.toMatch(/toolDiffContext:  line-1\s+│/);
+
+		panel.handleInput("g");
+		panel.handleInput("g");
+		expect(panel.render(100).join("\n")).toContain("line-1");
+
+		panel.handleInput("G");
+		expect(panel.render(100).join("\n")).toContain("line-40");
+	});
+
 	it("rola a lista da coluna direita até o item selecionado", () => {
 		const files = Array.from({ length: 10 }, (_, index) => ({
 			path: `src/file-${String(index + 1).padStart(2, "0")}.ts`,
