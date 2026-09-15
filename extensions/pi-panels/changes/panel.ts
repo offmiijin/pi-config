@@ -399,7 +399,8 @@ export class ChangesPanel implements Component {
 		const lines: string[] = [];
 		const renderSourceLine = (lineNumber: number, color: "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext", content: string): void => {
 			const number = String(lineNumber).padStart(lineNumberWidth, " ");
-			lines.push(`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, content)}`);
+			const marker = color === "toolDiffAdded" ? "+ " : color === "toolDiffRemoved" ? "- " : "  ";
+			lines.push(`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, `${marker}${content}`)}`);
 		};
 
 		for (let lineNumber = 1; lineNumber <= totalLines; lineNumber++) {
@@ -477,9 +478,10 @@ export class ChangesPanel implements Component {
 			return [this.theme.fg("dim", "Nenhum conteúdo textual disponível.")];
 		}
 		const lineNumberWidth = String(Math.max(...codeLines.map((line) => line.lineNumber))).length;
-		return codeLines.map((line) =>
-			`${this.theme.fg("dim", String(line.lineNumber).padStart(lineNumberWidth, " "))} │ ${this.theme.fg(line.color, line.content)}`,
-		);
+		return codeLines.map((line) => {
+			const marker = line.color === "toolDiffAdded" ? "+ " : line.color === "toolDiffRemoved" ? "- " : "  ";
+			return `${this.theme.fg("dim", String(line.lineNumber).padStart(lineNumberWidth, " "))} │ ${this.theme.fg(line.color, `${marker}${line.content}`)}`;
+		});
 	}
 
 	private emptyCodeLines(): string[] {
