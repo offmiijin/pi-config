@@ -35,7 +35,7 @@ import {
 	installHint,
 	resolvePackage,
 	defaultPkgRoots,
-} from "../pi-doctor";
+} from "../index.ts";
 
 describe("resolvePackage", () => {
 	it("encontra pacote em uma raiz node_modules", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blockedReason } from "./index";
-import { agentConfig as planner } from "./planner";
+import { blockedReason } from "../index.ts";
+import { agentConfig as planner } from "../planner.ts";
 
 describe("restrições dos tipos de agente", () => {
   it("permite Markdown no planner", () => {

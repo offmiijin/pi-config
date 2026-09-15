@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runChecks, buildReportText, readOsRelease, detectPackageManager } from "../pi-doctor";
+import { runChecks, buildReportText, readOsRelease, detectPackageManager } from "../index.ts";
 
 describe("doctor smoke (ambiente real)", () => {
 	// runChecks consulta binários reais; spawnSync permite até 8s por probe.
