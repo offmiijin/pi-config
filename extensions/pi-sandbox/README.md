@@ -143,6 +143,20 @@ Os caches de npm e pip permanecem no projeto original para sobreviver à remoç�
 do worktree. Clones são criados no cache da sessão dentro do worktree. O projeto
 original não é exposto como um todo.
 
+## Verificação do projeto
+
+A tool `verify` executa, dentro do sandbox, os scripts disponíveis no `package.json`:
+
+- `test`
+- `typecheck`
+- `lint`
+- `build`
+
+A seleção é opcional (`checks`) e o package manager é detectado pelo lockfile.
+Falhas individuais não interrompem as verificações seguintes; o resultado inclui
+status, exit code e saída limitada de cada etapa. A tool não aceita comandos
+arbitrários.
+
 ## Configuração
 
 ### Modos SSH

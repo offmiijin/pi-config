@@ -75,22 +75,22 @@ function applyTools(pi: ExtensionAPI, config: AgentConfig): void {
 	pi.setActiveTools(merged);
 }
 
-function blockedReason(config: AgentConfig, toolName: string, input: Record<string, unknown>): string | null {
+export function blockedReason(config: AgentConfig, toolName: string, input: Record<string, unknown>): string | null {
 	const restrictions = config.allowedExtensions;
 	if (!restrictions) return null;
 
 	const allowed = restrictions[toolName];
 	if (!allowed) return null;
 
-	// Só checa argumentos que são caminhos de arquivo com "/"
+	// Todo caminho informado para uma operação de arquivo deve respeitar a
+	// política, inclusive nomes simples como `README` ou `package.json`.
 	for (const key of ["path", "filePath", "file", "oldPath", "newPath"]) {
 		const val = input[key];
-		if (typeof val !== "string") continue;
-		if (!val.includes("/")) continue;
-		const ext = val.slice(val.lastIndexOf("."));
-		if (ext.length < 2 || ext.length > 6) continue;
-		if (/\s/.test(ext)) continue;
-		if (!allowed.includes(ext)) {
+		if (typeof val !== "string" || !val.trim()) continue;
+		const basename = val.split(/[\\/]/).pop() ?? val;
+		const dot = basename.lastIndexOf(".");
+		const ext = dot > 0 ? basename.slice(dot).toLowerCase() : "";
+		if (!allowed.map((item) => item.toLowerCase()).includes(ext)) {
 			return `"${toolName}" restrito a arquivos ${allowed.join(", ")} no modo ${config.label}. Alvo: ${val}`;
 		}
 	}

@@ -10,9 +10,9 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { renderTodoLine } from "./render.ts";
-import { addTodos, clearTodos, isTodoStatus, snapshot, updateTodo, type TodoToolState } from "./state.ts";
+import { renderTodoLine, visibleTodoItems } from "./render.ts";
 import { updateTodoWidget } from "./widget.ts";
+import { addTodos, clearTodos, isTodoStatus, snapshot, updateTodo, type TodoToolState } from "./state.ts";
 import type { TodoAction, TodoDetails, TodoState, TodoStatus } from "./types.ts";
 
 /**
@@ -81,7 +81,7 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 		promptSnippet: "Gerencia a lista de tarefas (to-do) da sessão: list, add, update, clear",
 		promptGuidelines: [
 			"Antes de executar uma tarefa extensa (muitas etapas, múltiplos arquivos ou diretórios), use a tool todo para dividir o trabalho em etapas concretas e rastreáveis.",
-			"Marque a etapa em execução como in-progress via todo (update com id e status in-progress) antes de começar; apenas uma etapa pode ficar em execução por vez.",
+			"Marque a primeira tarefa pendente via todo como in-progress; não pule tarefas e não atualize uma tarefa posterior antes de concluir as anteriores.",
 			"Marque a etapa como done via todo (update com id e status done) somente após verificar que o resultado foi alcançado.",
 			"Se não conseguir prosseguir em uma etapa, marque-a como error via todo (update com id, status error e o motivo) e explique o bloqueio ao usuário.",
 			"Se uma ferramenta falhar durante a execução, a tool todo marca a etapa ativa como error automaticamente — retome usando todo update para in-progress ou pending quando corrigir o problema.",
@@ -116,9 +116,7 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 					if (!r.ok) return fail("update", state, r.error!);
 					holder.value = r.state;
 					updateTodoWidget(ctx, holder);
-					const label =
-						r.updated!.status === "error" ? `error: ${r.updated!.error}` : r.updated!.status;
-					return ok("update", r.state, `Tarefa #${params.id} → ${label}`);
+					return ok("update", r.state, `Tarefa #${params.id} → ${r.updated!.text}`);
 				}
 
 				case "clear": {
@@ -149,11 +147,11 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 				const text = result.content[0];
 				return new Text(text?.type === "text" ? text.text : "", 0, 0);
 			}
-			if (details.error) return new Text(theme.fg("error", `Erro: ${details.error}`), 0, 0);
+			if (details.error) return new Text(theme.fg("warning", `Erro: ${details.error}`), 0, 0);
 
 			if (details.action === "list") {
 				if (details.items.length === 0) return new Text(theme.fg("dim", "Lista vazia"), 0, 0);
-				const shown = expanded ? details.items : details.items.slice(0, 5);
+				const shown = expanded ? details.items : visibleTodoItems(details.items);
 				const lines = [
 					theme.fg("muted", `${details.items.length} tarefa(s):`),
 					...shown.map((t) => renderTodoLine(t, theme)),

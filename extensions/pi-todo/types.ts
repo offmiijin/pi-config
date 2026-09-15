@@ -15,7 +15,7 @@ export const TODO_STATUSES = ["pending", "in-progress", "done", "error"] as cons
  * - `pending`     — não iniciado (bolinha cinza)
  * - `in-progress` — em execução (bolinha amarela)
  * - `done`        — concluído (bolinha verde)
- * - `error`       — modelo não conseguiu prosseguir (bolinha vermelha)
+ * - `error`       — modelo não conseguiu prosseguir (cor neutra/amarela)
  */
 export type TodoStatus = (typeof TODO_STATUSES)[number];
 
@@ -47,10 +47,11 @@ export interface TodoItem {
  * Invariantes:
  * - `nextId` é sempre maior que o maior `id` existente em `items`.
  * - `items` preserva a ordem de criação; nunca é reordenado.
- * - No máximo UMA tarefa `in-progress` por vez. Iniciar um novo
- *   `in-progress` devolve o anterior para `pending`.
- * - Tarefa com `error` permanece na lista até ser atualizada ou a lista ser
- *   limpa.
+ * - As tarefas são executadas estritamente na ordem de criação.
+ * - Somente a primeira tarefa que não está `done` pode ser atualizada.
+ * - Tarefas posteriores permanecem `pending` até as anteriores terminarem.
+ * - Tarefa com `error` permanece na lista e bloqueia as seguintes até ser
+ *   corrigida ou a lista ser limpa.
  */
 export interface TodoState {
 	items: TodoItem[];
@@ -75,11 +76,11 @@ export interface TodoDetails {
 /**
  * Transições permitidas de `status` (validadas em state.ts):
  *
- * - `pending`     → `in-progress` | `done` | `error`
- * - `in-progress` → `done` | `error` | `pending` (retrabalho)
- * - `done`        → `pending` | `in-progress` (reabrir)
- * - `error`       → `pending` | `in-progress` | `done` (tentar de novo)
- * - qualquer      → mesmo status (no-op)
+ * - a primeira tarefa pendente/erro → `in-progress` | `done` | `error`
+ * - a tarefa em `in-progress` → `done` | `error` | `pending`
+ * - a tarefa em `error` → `pending` | `in-progress` | `done`
+ * - `done` → somente `done` (no-op; tarefas concluídas não reabrem)
+ * - qualquer → mesmo status (no-op), respeitando a ordem
  *
  * Regras de operação:
  * - `update` exige um `id` existente; id inexistente → erro de operação

@@ -50,8 +50,7 @@ export function registerAutoError(pi: ExtensionAPI, holder: TodoToolState): void
 		if (!r.ok) return;
 		holder.value = r.state;
 
-		// Persiste o novo snapshot (sobrevive a /resume e à navegação de árvore)
-		// e reflete no widget acima do editor.
+		// Persiste o novo snapshot (sobrevive a /resume e à navegação de árvore).
 		pi.appendEntry(TODO_STATE_ENTRY, snapshot(r.state));
 		updateTodoWidget(ctx, holder);
 	});
