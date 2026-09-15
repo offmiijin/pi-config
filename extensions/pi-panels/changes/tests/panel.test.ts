@@ -107,8 +107,8 @@ describe("painel — truncamento e layout", () => {
 
 		panel.handleInput("\x1b[B");
 		body = panel.render(100).join("\n");
-		expect(body).toContain("dim:20 │ toolDiffRemoved:- line-20");
-		expect(body).toContain("dim:20 │ toolDiffAdded:+ line-20 updated");
+		expect(body).toContain("dim:20│toolDiffRemoved:- line-20");
+		expect(body).toContain("dim:20│toolDiffAdded:+ line-20 updated");
 		expect(body).not.toContain("@@ -19,3 +19,4 @@");
 		for (const line of panel.render(100)) expect(visibleWidth(line)).toBe(100);
 	});
@@ -151,8 +151,8 @@ describe("painel — seleção", () => {
 		const { panel, calls } = setup();
 		panel.handleInput("\x1b[B");
 		const selected = panel.render(100).join("\n");
-		expect(selected).toContain("dim:1 │ toolDiffRemoved:- old value");
-		expect(selected).toContain("dim:1 │ toolDiffAdded:+ const created = true;");
+		expect(selected).toContain("dim:1│toolDiffRemoved:- old value");
+		expect(selected).toContain("dim:1│toolDiffAdded:+ const created = true;");
 		expect(selected).not.toContain("@@ -1 +1 @@");
 		expect(selected).not.toContain("line-20");
 		expect(calls.length).toBeGreaterThan(0);
