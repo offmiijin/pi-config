@@ -169,7 +169,7 @@ describe("painel — seleção", () => {
 		panel.handleInput("\r");
 		panel.handleInput("J");
 		panel.handleInput("\r");
-		expect(panel.render(100).join("\n")).toContain("rolar arquivo");
+		expect(panel.render(100).join("\n")).toContain("rolar");
 
 		panel.handleInput("J");
 		panel.handleInput("J");
@@ -189,7 +189,33 @@ describe("painel — seleção", () => {
 		expect(panel.render(100).join("\n")).not.toContain("│dim: 1 │ toolDiffContext:line-1");
 
 		panel.handleInput("\x1b[D");
-		expect(panel.render(100).join("\n")).toContain("Enter arquivo");
+		expect(panel.render(100).join("\n")).toContain("Enter arquivos");
+	});
+
+	it("setas direita/esquerda e H/L rolam o conteúdo horizontalmente", () => {
+		const longLine = "const valor = " + "x".repeat(120) + ";";
+		const current = snapshot();
+		current.groups[0]!.files[0]!.content = longLine;
+		const tui = { terminal: { rows: 20 }, requestRender: () => {} } as any;
+		const panel = new ChangesPanel(tui, fakeTheme(), current, () => {});
+
+		panel.handleInput("\r");
+		panel.handleInput("\x1b[B");
+		panel.handleInput("\r");
+		panel.handleInput("F");
+		const initial = panel.render(100).join("\n");
+
+		panel.handleInput("\x1b[C");
+		const afterRight = panel.render(100).join("\n");
+		expect(afterRight).not.toBe(initial);
+
+		panel.handleInput("L");
+		const afterL = panel.render(100).join("\n");
+		expect(afterL).not.toBe(afterRight);
+		panel.handleInput("H");
+		expect(panel.render(100).join("\n")).toBe(afterRight);
+		panel.handleInput("\x1b[D");
+		expect(panel.render(100).join("\n")).toBe(initial);
 	});
 
 	it("rola a lista da coluna direita até o item selecionado", () => {
