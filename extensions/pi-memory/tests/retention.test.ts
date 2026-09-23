@@ -2,7 +2,7 @@
  * pi-memory — Tests: algoritmo de retenção (funções puras).
  */
 
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { computeRetentionScore, DAY_MS, idleDays } from "../memory/retention.ts";
 

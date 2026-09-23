@@ -7,7 +7,7 @@
  * remoção ao índice FTS5 na MESMA transação.
  */
 
-import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";

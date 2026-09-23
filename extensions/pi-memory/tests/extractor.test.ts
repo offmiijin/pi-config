@@ -2,7 +2,7 @@
  * pi-memory — Tests: prompt de extração e parsing (módulo puro).
  */
 
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 
 import {

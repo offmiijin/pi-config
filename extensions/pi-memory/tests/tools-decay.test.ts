@@ -8,7 +8,7 @@
  * operam sobre o root real — tudo é removido no afterAll.
  */
 
-import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
