@@ -5,7 +5,7 @@
  * mínimo de ExtensionAPI + store/scheduler reais em diretório temporário.
  */
 
-import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

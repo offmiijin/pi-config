@@ -1,6 +1,6 @@
 /** Testes do repositório Git aninhado de memórias. */
 
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

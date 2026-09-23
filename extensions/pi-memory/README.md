@@ -283,7 +283,7 @@ seleção alvo 12K / cap 18K tokens.
 
 ```bash
 cd ~/.pi/agent/extensions/pi-memory
-bun test            # 410 testes (Bun)
+npm test            # testes unitários e de integração (Vitest)
 npm run typecheck   # tsc strict
 ```
 

@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { getMemoryArgumentCompletions } from "../command-completions.ts";
 

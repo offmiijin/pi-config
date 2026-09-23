@@ -38,7 +38,7 @@ jobs:
         run: npm run test:pi-panels
       - name: Typecheck pi-panels
         run: npm run typecheck:pi-panels
-      - name: pi-memory (node --test)
+      - name: pi-memory (vitest)
         run: npm run test:memory
       - name: doctor (vitest)
         run: npm run test:pi-doctor

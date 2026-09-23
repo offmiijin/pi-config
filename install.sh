@@ -109,6 +109,7 @@ detect_pkg_mgr() {
   esac
 }
 PKG_MGR="$(detect_pkg_mgr)"
+APT_UPDATED=0
 
 # Fallback: sem /etc/os-release (ex: rodando dentro do sandbox do pi ou
 # imagem mínima) → detecta pelo comando instalado.
@@ -187,6 +188,11 @@ install_system_pkgs() { # install_system_pkgs 0|1 tool1 tool2... (0=obrigatório
   if [ "$ask" -eq 0 ]; then confirm_req "Instalar via $PKG_MGR: ${missing[*]}?" && ok=1
   else confirm_opt "Instalar via $PKG_MGR: ${missing[*]}?" && ok=1; fi
   if [ "$ok" -eq 1 ]; then
+    if [ "$PKG_MGR" = "apt" ] && [ "$APT_UPDATED" -eq 0 ]; then
+      log "▶ sudo apt-get update"
+      sudo_run apt-get update
+      APT_UPDATED=1
+    fi
     if [ "$DRY_RUN" -eq 1 ]; then
       echo "[dry-run] (sudo) $cmd"
     else

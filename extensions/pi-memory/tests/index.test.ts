@@ -19,58 +19,27 @@
  * Só executa sob Node (registerHooks é API Node 22+; Bun não suporta).
  */
 
-import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { afterAll, beforeAll, describe, it, vi } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+vi.mock("@earendil-works/pi-ai", () => ({
+	uuidv7: () => "00000000-0000-0000-0000-000000000000",
+	contentText: (content: unknown, fallback = "") =>
+		Array.isArray(content)
+			? content.filter((part) => typeof part === "object" && part !== null && (part as { type?: string }).type === "text").map((part) => (part as { text?: string }).text ?? "").join("") || fallback
+			: fallback,
+}));
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+	DynamicBorder: class DynamicBorder {},
+	CONFIG_DIR_NAME: ".pi",
+	getAgentDir: () => process.env.PI_CODING_AGENT_DIR || join(tmpdir(), ".pi", "agent"),
+}));
+
 const isNode = typeof ((globalThis as Record<string, unknown>).Bun) === "undefined";
-
-// registerHooks só existe em Node 22+ — skip em Bun (import condicional
-// no top-level via top-level await). Em Bun os stubs são desnecessários
-// porque o runtime resolve os imports reais.
-if (isNode) {
-	const { registerHooks } = await import("node:module");
-
-	const dataUrl = (body: string) => "data:text/javascript," + encodeURIComponent(body);
-
-	registerHooks({
-		resolve(specifier, _context, nextResolve) {
-			if (specifier === "@earendil-works/pi-ai") {
-				return {
-					url: dataUrl(`export const uuidv7 = () => "00000000-0000-0000-0000-000000000000";`),
-					shortCircuit: true,
-				};
-			}
-			if (specifier === "@earendil-works/pi-ai/compat") {
-				return {
-					url: dataUrl(
-						`export const complete = async () => ({ content: [{ type: "text", text: "" }] });`,
-					),
-					shortCircuit: true,
-				};
-			}
-			if (specifier === "@earendil-works/pi-coding-agent") {
-				return {
-					url: dataUrl(
-						`export class DynamicBorder { constructor() {} }
-						import { homedir } from "node:os";
-						import { join } from "node:path";
-						export const CONFIG_DIR_NAME = ".pi";
-						export function getAgentDir() {
-							const envDir = process.env.PI_CODING_AGENT_DIR;
-							return envDir || join(homedir(), CONFIG_DIR_NAME, "agent");
-						}
-						export const ExtensionAPI = {};`,
-					),
-					shortCircuit: true,
-				};
-			}
-			return nextResolve(specifier, _context);
-		},
-	});
-}
 
 interface MockPi {
 	pi: {
@@ -137,13 +106,12 @@ beforeAll(async () => {
 	cwdB = mkdtempSync(join(tmpdir(), "pi-memory-projB-"));
 
 	// Env ANTES do import dinâmico — MEMORIES_ROOT/INDEX_DB_PATH resolvem no load.
-	process.env.PI_CODING_AGENT_DIR = agentDir;
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 
 	const mod = await import("../index.ts");
 	const constants = await import("../constants.ts");
 	projA = constants.identifyProject(cwdA);
 	projB = constants.identifyProject(cwdB);
-
 	mock = createMockPi();
 	mod.default(mock.pi as never);
 
@@ -163,20 +131,20 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-	delete process.env.PI_CODING_AGENT_DIR;
+	vi.unstubAllEnvs();
 	rmSync(agentDir, { recursive: true, force: true });
 	rmSync(cwdA, { recursive: true, force: true });
 	rmSync(cwdB, { recursive: true, force: true });
 });
 
-const ctxA = { cwd: cwdA, sessionManager: { getSessionFile: () => null } };
-const ctxB = { cwd: cwdB, sessionManager: { getSessionFile: () => null } };
+const ctxA = () => ({ cwd: cwdA, sessionManager: { getSessionFile: () => null } });
+const ctxB = () => ({ cwd: cwdB, sessionManager: { getSessionFile: () => null } });
 const cacheTerms = ["cache", "invalidação", "configuração", "armazenamento", "retenção"];
 const nextTerms = ["nextjs", "roteador", "aplicação", "estrutura", "navegação"];
 
 // Os testes abaixo são ORDENADOS (estado da extensão é compartilhado entre eles).
 // Só executa em Node (registerHooks é Node 22+; Bun não suporta).
-if (isNode) describe("index.ts lifecycle", () => {
+if (isNode) describe.sequential("index.ts lifecycle", () => {
 	it("registra os handlers, as tools e o comando de configuração", () => {
 		for (const ev of [
 			"session_start",
@@ -199,7 +167,7 @@ if (isNode) describe("index.ts lifecycle", () => {
 	});
 
 	it("session_start abre o índice e sincroniza o projeto (engine sqlite)", async () => {
-		await mock.fire("session_start", {}, ctxA);
+		await mock.fire("session_start", {}, ctxA());
 
 		const res = await search.execute("t1", { query: cacheTerms }, undefined, undefined, {});
 		expect(res.details.engine).toBe("sqlite");
@@ -208,7 +176,7 @@ if (isNode) describe("index.ts lifecycle", () => {
 	});
 
 	it("session_tree troca de projeto e sincroniza o novo (isolamento)", async () => {
-		await mock.fire("session_tree", {}, ctxB);
+		await mock.fire("session_tree", {}, ctxB());
 
 		const proj = await search.execute("t2", { query: nextTerms, scope: "project" }, undefined, undefined, {});
 		expect(proj.details.engine).toBe("sqlite");
