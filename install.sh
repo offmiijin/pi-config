@@ -20,6 +20,7 @@
 # Uso:
 #   git clone <repo> && cd pi-config && ./install.sh
 #   ./install.sh --yes           # não-interativo (instala só o obrigatório)
+#   ./install.sh --all-optional  # instala também gh, Docker/SearXNG, Poppler, renderer e Rust
 #   ./install.sh --force         # reinstala deps npm mesmo já presentes
 #   PI_AGENT_DIR=/path ./install.sh   # diretório do agente (destino)
 #
@@ -31,17 +32,21 @@ set -euo pipefail
 ASSUME_YES=0
 DRY_RUN="${DRY_RUN:-0}"
 DO_FORCE=0
+ALL_OPTIONAL=0
+NO_OPTIONAL=0
 AGENT_DIR="${PI_AGENT_DIR:-}"
 
 usage() {
   sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   echo
-  echo "Flags: --yes | --force | --dir PATH | --dry-run | --help"
+  echo "Flags: --yes | --all-optional | --no-optional | --force | --dir PATH | --dry-run | --help"
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) ASSUME_YES=1 ;;
+    --all-optional) ALL_OPTIONAL=1 ;;
+    --no-optional) NO_OPTIONAL=1 ;;
     --force|-f) DO_FORCE=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --dir|-d) AGENT_DIR="$2"; shift ;;
@@ -129,30 +134,35 @@ pkg_name() {
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo gh;; node) echo nodejs;; npm) echo npm;;
         docker) echo docker.io;; docker-compose) echo docker-compose-v2;; rust) echo cargo;;
+        python) echo python3;; python-venv) echo python3-venv;; poppler) echo poppler-utils;;
       esac ;;
     dnf)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo gh;; node) echo nodejs;; npm) echo npm;;
         docker) echo docker;; docker-compose) echo docker-compose-plugin;; rust) echo cargo;;
+        python) echo python3;; python-venv) echo python3-venv;; poppler) echo poppler-utils;;
       esac ;;
     pacman)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo github-cli;; node) echo nodejs;; npm) echo npm;;
         docker) echo docker;; docker-compose) echo docker-compose;; rust) echo rust;;
+        python) echo python;; python-venv) echo python-virtualenv;; poppler) echo poppler;;
       esac ;;
     zypper)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo gh;; node) echo nodejs24;; npm) echo npm;;
         docker) echo docker;; docker-compose) echo docker-compose-plugin;; rust) echo rust;;
+        python) echo python311;; python-venv) echo python311-venv;; poppler) echo poppler-tools;;
       esac ;;
     apk)
       case "$tool" in
         bubblewrap) echo bubblewrap;; ripgrep) echo ripgrep;; git) echo git;;
         gh) echo github-cli;; node) echo nodejs;; npm) echo npm;;
         docker) echo docker;; docker-compose) echo docker-cli-compose;; rust) echo cargo;;
+        python) echo python3;; python-venv) echo py3-virtualenv;; poppler) echo poppler-utils;;
       esac ;;
     *) echo "$tool" ;;
   esac
@@ -185,8 +195,13 @@ install_system_pkgs() { # install_system_pkgs 0|1 tool1 tool2... (0=obrigatório
   local cmd
   cmd="$(install_cmd "${missing[@]}")"
   local ok=0
-  if [ "$ask" -eq 0 ]; then confirm_req "Instalar via $PKG_MGR: ${missing[*]}?" && ok=1
-  else confirm_opt "Instalar via $PKG_MGR: ${missing[*]}?" && ok=1; fi
+  if [ "$ask" -eq 0 ]; then
+    confirm_req "Instalar via $PKG_MGR: ${missing[*]}?" && ok=1
+  elif [ "$NO_OPTIONAL" -eq 0 ] && [ "$ALL_OPTIONAL" -eq 1 ]; then
+    ok=1
+  else
+    confirm_opt "Instalar via $PKG_MGR: ${missing[*]}?" && ok=1
+  fi
   if [ "$ok" -eq 1 ]; then
     if [ "$PKG_MGR" = "apt" ] && [ "$APT_UPDATED" -eq 0 ]; then
       log "▶ sudo apt-get update"
@@ -322,6 +337,11 @@ ensure_npm_deps() {
     return
   fi
 
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] npm ci em $AGENT_DIR"
+    return 0
+  fi
+
   [ -f "$AGENT_DIR/package.json" ] || die "package.json não encontrado em $AGENT_DIR (config incompleta?)"
 
   if confirm_req "Instalar dependências npm das extensões (npm ci em $AGENT_DIR)?"; then
@@ -335,6 +355,81 @@ ensure_npm_deps() {
   fi
 }
 
+# ── Dependências opcionais ──────────────────────────────────────────────
+optional_selected() {
+  local name="$1"
+  [ "$NO_OPTIONAL" -eq 1 ] && return 1
+  [ "$ALL_OPTIONAL" -eq 1 ] && return 0
+  confirm_opt "$2"
+}
+
+ensure_optional_system() {
+  local tool="$1" label="$2"
+  if has_cmd "$tool"; then
+    log "✓ $label já disponível"
+    return 0
+  fi
+  install_system_pkgs 1 "$tool"
+}
+
+ensure_poppler() {
+  optional_selected poppler "Instalar Poppler (pdftotext para PDFs)?" || { warn "Poppler não instalado — PDFs não terão extração de texto."; return; }
+  ensure_optional_system pdftotext "pdftotext"
+}
+
+ensure_github_cli() {
+  has_cmd gh && return 0
+  optional_selected gh "Instalar GitHub CLI (gh, usado pelo pi-github)?" || { warn "gh não instalado — pi-github ficará inativo."; return; }
+  install_system_pkgs 1 gh
+}
+
+ensure_renderer() {
+  optional_selected renderer "Instalar renderer Python/Playwright/Chromium (pi-web-search)?" || { warn "Renderer não instalado — páginas SPA usarão fallback HTML."; return; }
+  ensure_optional_system python3 "Python 3"
+  if ! has_cmd python3; then
+    warn "Python 3 não disponível — renderer não foi instalado."
+    return
+  fi
+  if ! python3 -m venv --help >/dev/null 2>&1; then
+    install_system_pkgs 1 python-venv
+  fi
+  if ! python3 -m venv --help >/dev/null 2>&1; then
+    warn "Módulo venv do Python não disponível — renderer não foi instalado."
+    return
+  fi
+  local script="$AGENT_DIR/extensions/pi-web-search/renderer/install.sh"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] bash $script"
+  elif [ ! -x "$script" ]; then
+    die "Instalador do renderer não encontrado: $script"
+  else
+    bash "$script"
+  fi
+}
+
+ensure_searxng() {
+  optional_selected docker "Instalar Docker e iniciar SearXNG local (pi-web-search)?" || { warn "SearXNG não instalado/iniciado — web search usará APIs configuradas."; return; }
+  install_system_pkgs 1 docker docker-compose
+  if ! has_cmd docker || ! docker compose version >/dev/null 2>&1; then
+    warn "Docker/Compose não disponível — SearXNG não foi iniciado. Rode /doctor para instruções."
+    return
+  fi
+  local dir="$AGENT_DIR/extensions/pi-web-search"
+  if [ ! -f "$dir/.env" ] && [ "$DRY_RUN" -eq 0 ]; then
+    umask 077
+    printf 'SEARXNG_KEY=%s\\n' "$(openssl rand -hex 32 2>/dev/null || date +%s%N)" > "$dir/.env"
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] cd $dir && docker compose up -d"
+  else
+    if (cd "$dir" && docker compose up -d); then
+      log "✓ SearXNG iniciado em http://localhost:4000"
+    else
+      warn "Docker está instalado, mas o serviço SearXNG não iniciou — verifique o daemon Docker e rode /doctor."
+    fi
+  fi
+}
+
 # ── landlock-exec (Rust opcional) ────────────────────────────────────────
 ensure_landlock() {
   local arch
@@ -345,9 +440,15 @@ ensure_landlock() {
   local bin="$AGENT_DIR/extensions/pi-sandbox/landlock-exec-$arch"
   [ -x "$bin" ] && log "✓ landlock-exec-$arch presente" && return
 
+  if ! has_cmd cargo && optional_selected rust "Instalar Rust/Cargo para compilar Landlock?"; then
+    install_system_pkgs 1 rust
+  fi
   if has_cmd cargo; then
-    if confirm_opt "Compilar landlock-exec-$arch (Rust encontrado)?"; then
+    if optional_selected landlock "Compilar landlock-exec-$arch (Rust encontrado)?"; then
       run bash -c "cd '$AGENT_DIR/extensions/pi-sandbox/gen-seccomp' && ./build.sh"
+      if [ "$DRY_RUN" -eq 1 ]; then
+        return
+      fi
       [ -x "$bin" ] && log "✓ landlock-exec-$arch compilado" || warn "build.sh não gerou $bin"
       return
     fi
@@ -477,9 +578,12 @@ main() {
 
   ensure_node
   install_system_pkgs 0 bubblewrap ripgrep git
-  has_cmd gh || install_system_pkgs 1 gh
+  ensure_github_cli
+  ensure_poppler
   install_config
+  ensure_searxng
   ensure_npm_deps
+  ensure_renderer
   ensure_landlock
   check_kernel
   check_seccomp

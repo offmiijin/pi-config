@@ -8,7 +8,8 @@ Diagnóstico inicial das dependências e artefatos das extensões do pi.
 - pacotes npm usados pelas extensões;
 - binários como bubblewrap, ripgrep, git, gh e pdftotext;
 - artefatos e capacidades necessários ao `pi-sandbox`;
-- Docker/SearXNG quando aplicável.
+- Docker/SearXNG quando aplicável, incluindo o serviço inativo e o comando para ativá-lo;
+- renderer Playwright opcional e extração de PDF via Poppler, indicando os recursos inativos.
 
 A extensão não depende de pacotes npm externos, para continuar carregando mesmo quando outras extensões estão incompletas.
 
