@@ -15,7 +15,6 @@
 import { htmlToMarkdown } from "./html-to-markdown";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
 import {
 	randomUserAgent,
 	randomDelay,
@@ -29,6 +28,11 @@ import { getRendererMode } from "./config";
 import { isRendererInstallationInProgress } from "./renderer-install";
 import { getSharedRendererClient } from "./renderer-client";
 import { assertPublicUrl, fetchWithSafeRedirects } from "./url-safety";
+import {
+	extractPdfText,
+	isPdftotextAvailable,
+	resetPdftotextAvailability,
+} from "../pi-document";
 
 // Types
 export interface FetchItemResult {
@@ -136,58 +140,12 @@ function uniqueFilename(filename: string, used: Set<string>): string {
 }
 
 
-// PDF text extraction (pdftotext / poppler-utils)
-
-const PDF_TEXT_TIMEOUT_MS = 30_000;
-
-let pdftotextAvailable: boolean | null = null;
-
-/** pdftotext presente no PATH? (cache por processo) */
-function isPdftotextAvailable(): boolean {
-	if (pdftotextAvailable === null) {
-		try {
-			pdftotextAvailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error === undefined;
-		} catch {
-			pdftotextAvailable = false;
-		}
-	}
-	return pdftotextAvailable;
-}
+// PDF text extraction is provided by @pi/document. The web-search extension
+// only decides when to invoke it and persists the resulting text file.
 
 /** @visibleForTesting */
 export function __resetPdfTextCache(): void {
-	pdftotextAvailable = null;
-}
-
-/**
- * Extrai texto do PDF via `pdftotext -layout` (poppler-utils).
- * Escreve o texto em `txtPath` e o retorna; null em falha/timeout/escaneado.
- */
-async function extractPdfText(pdfPath: string, txtPath: string): Promise<string | null> {
-	return new Promise((resolve) => {
-		const child = spawn(
-			"pdftotext",
-			["-layout", "-enc", "UTF-8", pdfPath, txtPath],
-			{ stdio: "ignore" },
-		);
-		const timer = setTimeout(() => child.kill("SIGKILL"), PDF_TEXT_TIMEOUT_MS);
-		child.on("error", () => {
-			clearTimeout(timer);
-			resolve(null);
-		});
-		child.on("close", async (code) => {
-			clearTimeout(timer);
-			if (code !== 0) {
-				resolve(null);
-				return;
-			}
-			try {
-				resolve(await fs.readFile(txtPath, "utf-8"));
-			} catch {
-				resolve(null);
-			}
-		});
-	});
+	resetPdftotextAvailability();
 }
 
 /** true quando o buffer começa com magic bytes de PDF. */
