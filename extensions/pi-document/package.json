@@ -6,6 +6,9 @@
   "scripts": {
     "test": "vitest run"
   },
+  "dependencies": {
+    "tesseract.js": "^6.0.0"
+  },
   "devDependencies": {
     "vitest": "^4.1.9"
   }
