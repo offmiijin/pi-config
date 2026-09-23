@@ -29,6 +29,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 // ── Tipos estruturais locais (sem import de pi-coding-agent) ─────────────
@@ -101,6 +102,8 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		node: "sudo apt install nodejs npm",
 		docker: "sudo apt install docker.io",
 		poppler: "sudo apt install poppler-utils",
+		rust: "sudo apt install cargo",
+		python: "sudo apt install python3 python3-venv",
 	},
 	dnf: {
 		bubblewrap: "sudo dnf install bubblewrap",
@@ -110,6 +113,8 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		node: "sudo dnf install nodejs npm",
 		docker: "sudo dnf install docker",
 		poppler: "sudo dnf install poppler-utils",
+		rust: "sudo dnf install cargo",
+		python: "sudo dnf install python3 python3-virtualenv",
 	},
 	pacman: {
 		bubblewrap: "sudo pacman -S bubblewrap",
@@ -119,6 +124,8 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		node: "sudo pacman -S nodejs npm",
 		docker: "sudo pacman -S docker",
 		poppler: "sudo pacman -S poppler",
+		rust: "sudo pacman -S rust",
+		python: "sudo pacman -S python python-virtualenv",
 	},
 	zypper: {
 		bubblewrap: "sudo zypper install bubblewrap",
@@ -128,6 +135,8 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		node: "sudo zypper install nodejs24 npm",
 		docker: "sudo zypper install docker",
 		poppler: "sudo zypper install poppler-tools",
+		rust: "sudo zypper install rust",
+		python: "sudo zypper install python311 python311-venv",
 	},
 	apk: {
 		bubblewrap: "sudo apk add bubblewrap",
@@ -137,6 +146,8 @@ const INSTALL_HINTS: Record<string, Record<string, string>> = {
 		node: "sudo apk add nodejs npm",
 		docker: "sudo apk add docker",
 		poppler: "sudo apk add poppler-utils",
+		rust: "sudo apk add cargo",
+		python: "sudo apk add python3 py3-virtualenv",
 	},
 };
 
@@ -354,10 +365,24 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		id: "pdftotext",
 		label: "pdftotext (pi-web-search PDF)",
 		status: pdftotext.ok ? "ok" : "warn",
-		detail: pdftotext.ok ? pdftotext.version : "não encontrado",
+		detail: pdftotext.ok ? pdftotext.version : "não encontrado — recurso PDF inativo",
 		fix: pdftotext.ok
 			? undefined
-			: `${installHint(pm, "poppler")} — web_fetch baixa PDFs sem extrair o texto (modo degradado)`,
+			: `${installHint(pm, "poppler")} — depois reinicie o pi; web_fetch baixa PDFs sem extrair o texto`,
+	});
+
+	// Renderer opcional de JavaScript para páginas SPA
+	const rendererCommand = process.env.PI_WEB_RENDERER_COMMAND?.trim() ||
+		join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "pi-web-search", "renderer", "pi-web-renderer");
+	const rendererInstalled = existsSync(rendererCommand);
+	checks.push({
+		id: "web-renderer",
+		label: "Renderer Playwright (pi-web-search)",
+		status: rendererInstalled ? "ok" : "info",
+		detail: rendererInstalled ? `presente em ${rendererCommand}` : "não instalado — renderização JavaScript inativa",
+		fix: rendererInstalled
+			? undefined
+			: `${AGENT_ROOT}/extensions/pi-web-search/renderer/install.sh ou /web_search config renderer install (requer Python + venv)`,
 	});
 
 	// Artefatos do sandbox
@@ -405,7 +430,7 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		detail: landlockDetail,
 		fix: landlockOk
 			? undefined
-			: "sandbox opera sem a camada Landlock; rode gen-seccomp/build.sh para compilar (pi-sandbox/README)",
+			: `sandbox opera sem a camada Landlock; ${installHint(pm, "rust")} e depois rode gen-seccomp/build.sh`,
 	});
 
 	// User namespaces (bwrap depende)
@@ -454,11 +479,11 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		checks.push({
 			id: "searxng",
 			label: "SearXNG local (pi-web-search)",
-			status: "info",
-			detail: searxngOk ? "respondendo em localhost:4000" : "não respondeu em localhost:4000",
+			status: searxngOk ? "ok" : "info",
+			detail: searxngOk ? "ativo e respondendo em localhost:4000" : "inativo — não responde em localhost:4000",
 			fix: searxngOk
 				? undefined
-				: "suba o container (docker compose up -d em extensions/pi-web-search) ou configure APIs externas",
+				: `Instale Docker e execute: cd ${AGENT_ROOT}/extensions/pi-web-search && docker compose up -d; ou configure /web_search config <tavily|exa|serper> <key>`,
 		});
 	}
 

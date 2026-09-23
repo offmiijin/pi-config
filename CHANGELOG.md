@@ -4,10 +4,14 @@
 
 ### Added
 
+- `install.sh`: adiciona seleção interativa e flags `--all-optional`/`--no-optional` para instalar dependências opcionais, incluindo Docker/SearXNG, Poppler, renderer Playwright e Rust/Landlock.
+- `pi-doctor`: informa recursos opcionais inativos e apresenta os comandos necessários para ativá-los.
 - `pi-panels/changes`: adiciona rolagem horizontal com setas e atalhos `H`/`L`, além de navegação para o início (`gg`) e o final (`G`) do arquivo.
 
 ### Changed
 
+- `pi-web-search`: documenta SearXNG como opcional e permite instalar o renderer pelo instalador principal.
+- `install.sh`: corrige o modo `DRY_RUN` para simular a instalação sem exigir arquivos copiados no destino.
 - `pi-panels/changes`: exibe os sinais `+` e `-` nas linhas adicionadas e removidas e aproxima a numeração da barra de divisão.
 
 ### Fixed
