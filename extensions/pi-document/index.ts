@@ -1,3 +1,6 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerDocumentTool } from "./tool";
+
 export {
 	DEFAULT_PDF_TEXT_TIMEOUT_MS,
 	extractPdfText,
@@ -17,3 +20,7 @@ export {
 	recognizeImage,
 } from "./ocr";
 export type { OcrOptions } from "./ocr";
+
+export default function (pi: ExtensionAPI): void {
+	registerDocumentTool(pi);
+}
