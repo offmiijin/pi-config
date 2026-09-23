@@ -137,8 +137,8 @@ afterAll(() => {
 	rmSync(cwdB, { recursive: true, force: true });
 });
 
-const ctxA = { cwd: cwdA, sessionManager: { getSessionFile: () => null } };
-const ctxB = { cwd: cwdB, sessionManager: { getSessionFile: () => null } };
+const ctxA = () => ({ cwd: cwdA, sessionManager: { getSessionFile: () => null } });
+const ctxB = () => ({ cwd: cwdB, sessionManager: { getSessionFile: () => null } });
 const cacheTerms = ["cache", "invalidação", "configuração", "armazenamento", "retenção"];
 const nextTerms = ["nextjs", "roteador", "aplicação", "estrutura", "navegação"];
 
@@ -167,7 +167,7 @@ if (isNode) describe.sequential("index.ts lifecycle", () => {
 	});
 
 	it("session_start abre o índice e sincroniza o projeto (engine sqlite)", async () => {
-		await mock.fire("session_start", {}, ctxA);
+		await mock.fire("session_start", {}, ctxA());
 
 		const res = await search.execute("t1", { query: cacheTerms }, undefined, undefined, {});
 		expect(res.details.engine).toBe("sqlite");
@@ -176,7 +176,7 @@ if (isNode) describe.sequential("index.ts lifecycle", () => {
 	});
 
 	it("session_tree troca de projeto e sincroniza o novo (isolamento)", async () => {
-		await mock.fire("session_tree", {}, ctxB);
+		await mock.fire("session_tree", {}, ctxB());
 
 		const proj = await search.execute("t2", { query: nextTerms, scope: "project" }, undefined, undefined, {});
 		expect(proj.details.engine).toBe("sqlite");
