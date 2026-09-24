@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerDocumentTool } from "./tool";
+import { registerClipboardPathBridge } from "./clipboard-bridge";
 
 export {
 	DEFAULT_PDF_TEXT_TIMEOUT_MS,
@@ -23,4 +24,5 @@ export type { OcrOptions } from "./ocr";
 
 export default function (pi: ExtensionAPI): void {
 	registerDocumentTool(pi);
+	registerClipboardPathBridge(pi);
 }
