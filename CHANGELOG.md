@@ -7,16 +7,20 @@
 - `install.sh`: adiciona seleção interativa e flags `--all-optional`/`--no-optional` para instalar dependências opcionais, incluindo Docker/SearXNG, Poppler, renderer Playwright e Rust/Landlock.
 - `pi-doctor`: informa recursos opcionais inativos e apresenta os comandos necessários para ativá-los.
 - `pi-panels/changes`: adiciona rolagem horizontal com setas e atalhos `H`/`L`, além de navegação para o início (`gg`) e o final (`G`) do arquivo.
+- `pi-document`: adiciona a tool `document_extract` para ler imagens e PDFs, usando OCR como fallback.
+- `pi-document`: adiciona a biblioteca compartilhada de extração PDF e suporte ao Tesseract.js.
 
 ### Changed
 
 - `pi-web-search`: documenta SearXNG como opcional e permite instalar o renderer pelo instalador principal.
 - `install.sh`: corrige o modo `DRY_RUN` para simular a instalação sem exigir arquivos copiados no destino.
 - `pi-panels/changes`: exibe os sinais `+` e `-` nas linhas adicionadas e removidas e aproxima a numeração da barra de divisão.
+- `pi-web-search`: reutiliza a biblioteca `pi-document` para extração de texto de PDFs e OCR de documentos escaneados.
 
 ### Fixed
 
 - `pi-panels/changes`: evita vazamento de estilos ANSI entre as colunas durante a rolagem.
+- `pi-document`: materializa imagens temporárias do clipboard no workspace para permitir acesso pelo sandbox e declara explicitamente `wasm-feature-detect`.
 
 ## [1.5.0] - 2026-09-10
 

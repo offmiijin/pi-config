@@ -15,7 +15,6 @@
 import { htmlToMarkdown } from "./html-to-markdown";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
 import {
 	randomUserAgent,
 	randomDelay,
@@ -29,6 +28,15 @@ import { getRendererMode } from "./config";
 import { isRendererInstallationInProgress } from "./renderer-install";
 import { getSharedRendererClient } from "./renderer-client";
 import { assertPublicUrl, fetchWithSafeRedirects } from "./url-safety";
+import {
+	extractPdfText,
+	isPdftotextAvailable,
+	resetPdftotextAvailability,
+	hasSufficientText,
+	isImageFile,
+	ocrPdf,
+	recognizeImage,
+} from "../pi-document";
 
 // Types
 export interface FetchItemResult {
@@ -39,8 +47,10 @@ export interface FetchItemResult {
 	error?: string;
 	/** true quando o conteúdo foi baixado como arquivo binário (não texto) */
 	binary?: boolean;
-	/** texto extraído do binário (PDF → pdftotext) salvo ao lado do arquivo */
+	/** texto extraído do binário salvo ao lado do arquivo */
 	textFile?: string;
+	/** origem do texto extraído */
+	textSource?: "pdftotext" | "ocr";
 	/** aviso não-fatal (ex.: extração indisponível) */
 	note?: string;
 	/** true quando o HTML foi obtido após executar JavaScript */
@@ -136,58 +146,12 @@ function uniqueFilename(filename: string, used: Set<string>): string {
 }
 
 
-// PDF text extraction (pdftotext / poppler-utils)
-
-const PDF_TEXT_TIMEOUT_MS = 30_000;
-
-let pdftotextAvailable: boolean | null = null;
-
-/** pdftotext presente no PATH? (cache por processo) */
-function isPdftotextAvailable(): boolean {
-	if (pdftotextAvailable === null) {
-		try {
-			pdftotextAvailable = spawnSync("pdftotext", ["-v"], { stdio: "ignore" }).error === undefined;
-		} catch {
-			pdftotextAvailable = false;
-		}
-	}
-	return pdftotextAvailable;
-}
+// PDF text extraction is provided by @pi/document. The web-search extension
+// only decides when to invoke it and persists the resulting text file.
 
 /** @visibleForTesting */
 export function __resetPdfTextCache(): void {
-	pdftotextAvailable = null;
-}
-
-/**
- * Extrai texto do PDF via `pdftotext -layout` (poppler-utils).
- * Escreve o texto em `txtPath` e o retorna; null em falha/timeout/escaneado.
- */
-async function extractPdfText(pdfPath: string, txtPath: string): Promise<string | null> {
-	return new Promise((resolve) => {
-		const child = spawn(
-			"pdftotext",
-			["-layout", "-enc", "UTF-8", pdfPath, txtPath],
-			{ stdio: "ignore" },
-		);
-		const timer = setTimeout(() => child.kill("SIGKILL"), PDF_TEXT_TIMEOUT_MS);
-		child.on("error", () => {
-			clearTimeout(timer);
-			resolve(null);
-		});
-		child.on("close", async (code) => {
-			clearTimeout(timer);
-			if (code !== 0) {
-				resolve(null);
-				return;
-			}
-			try {
-				resolve(await fs.readFile(txtPath, "utf-8"));
-			} catch {
-				resolve(null);
-			}
-		});
-	});
+	resetPdftotextAvailability();
 }
 
 /** true quando o buffer começa com magic bytes de PDF. */
@@ -393,21 +357,54 @@ export async function fetchPages(
 					binary: true,
 				};
 
-				// PDF → extrai texto via pdftotext para o agente poder ler
-				if (isPdf && isPdftotextAvailable()) {
-					const textFile = uniqueFilename(`${urlToBaseName(url)}.txt`, usedFilenames);
-					usedFilenames.add(textFile);
-					const textPath = path.join(binaryDir, textFile);
-					const text = await extractPdfText(filePath, textPath);
-					if (text !== null && text.trim().length > 0) {
-						await fs.writeFile(textPath, text, "utf-8");
+				const textFile = uniqueFilename(`${urlToBaseName(url)}.txt`, usedFilenames);
+				const textPath = path.join(binaryDir, textFile);
+
+				if (isPdf) {
+					const nativeText = isPdftotextAvailable()
+						? await extractPdfText(filePath, textPath)
+						: null;
+					if (nativeText !== null && hasSufficientText(nativeText)) {
+						await fs.writeFile(textPath, nativeText, "utf-8");
+						usedFilenames.add(textFile);
 						item.textFile = textFile;
+						item.textSource = "pdftotext";
 					} else {
-						// Escaneado/falha — remove arquivo de texto vazio, se criado
-						await fs.rm(textPath, { force: true }).catch(() => undefined);
+						try {
+							const ocrText = await ocrPdf(filePath);
+							if (hasSufficientText(ocrText, 1)) {
+								await fs.writeFile(textPath, ocrText, "utf-8");
+								usedFilenames.add(textFile);
+								item.textFile = textFile;
+								item.textSource = "ocr";
+							} else if (nativeText !== null && nativeText.trim().length > 0) {
+								await fs.writeFile(textPath, nativeText, "utf-8");
+								usedFilenames.add(textFile);
+								item.textFile = textFile;
+								item.textSource = "pdftotext";
+							} else {
+								await fs.rm(textPath, { force: true }).catch(() => undefined);
+							}
+						} catch (error) {
+							await fs.rm(textPath, { force: true }).catch(() => undefined);
+							item.note = `pdftotext indisponível; OCR indisponível: ${error instanceof Error ? error.message : String(error)}`;
+						}
 					}
-				} else if (isPdf) {
-					item.note = "pdftotext indisponível — texto do PDF não extraído (instale poppler-utils)";
+					if (!item.textFile && !item.note && !isPdftotextAvailable()) {
+						item.note = "pdftotext e OCR indisponíveis — texto do PDF não extraído";
+					}
+				} else if (isImageFile(filePath)) {
+					try {
+						const ocrText = await recognizeImage(filePath);
+						if (hasSufficientText(ocrText, 1)) {
+							await fs.writeFile(textPath, ocrText, "utf-8");
+							usedFilenames.add(textFile);
+							item.textFile = textFile;
+							item.textSource = "ocr";
+						}
+					} catch (error) {
+						item.note = `OCR indisponível: ${error instanceof Error ? error.message : String(error)}`;
+					}
 				}
 
 				results.push(item);
