@@ -85,8 +85,7 @@ export function matchPathPattern(relPath: string, pattern: string): boolean {
  *
  * Exportado para testes (security scan).
  */
-// Paths já alertados — evita spam no TUI a cada tool call.
-const symlinkWarned = new Set<string>();
+// Diretórios já alertados — evita spam no TUI a cada tool call.
 const eaccesWarned = new Set<string>();
 
 export function findDangerousFiles(cwd: string, patterns: string[], denyPaths: string[]): string[] {
@@ -681,20 +680,14 @@ function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd
     // Se o path for symlink (ex: /usr/sbin -> bin no Arch), bwrap --tmpfs
     // segue o symlink (mount(2) resolve o alvo) e mascara o DIRETÓRIO
     // DESTINO — ex: /usr/bin inteiro vira tmpfs vazio, quebrando shebangs
-    // como #!/usr/bin/env (npm, npx, etc). Pula com aviso.
+    // como #!/usr/bin/env (npm, npx, etc). Pula silenciosamente.
     let isSymlink = false;
     try {
       isSymlink = lstatSync(deny).isSymbolicLink();
     } catch {
       // Não existe → --tmpfs cria o diretório normalmente
     }
-    if (isSymlink) {
-      if (!symlinkWarned.has(deny)) {
-        symlinkWarned.add(deny);
-        console.warn(`[pi-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
-      }
-      continue;
-    }
+    if (isSymlink) continue;
     args.push("--tmpfs", deny);
   }
 
@@ -837,13 +830,7 @@ function buildIsolationArgs(
     } catch {
       // Não existe → --tmpfs cria o diretório normalmente
     }
-    if (isSymlink) {
-      if (!symlinkWarned.has(deny)) {
-        symlinkWarned.add(deny);
-        console.warn(`[pi-sandbox] denyPath '${deny}' é symlink — ignorado (mascararia o destino).`);
-      }
-      continue;
-    }
+    if (isSymlink) continue;
     args.push("--tmpfs", deny);
   }
 
