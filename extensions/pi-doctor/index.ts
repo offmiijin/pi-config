@@ -84,7 +84,8 @@ interface Pi {
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const EXTENSIONS_DIR = resolve(EXT_DIR, "..");
 const AGENT_ROOT = resolve(EXTENSIONS_DIR, "..");
-const MIN_NODE = "24.0.0"
+const MIN_NODE = "24.0.0";
+const WEB_SEARCH_CONFIG_PATH = join(homedir(), ".config", "pi-web-search", "config.json");
 
 const RUNTIME_PACKAGES = [
 	{ name: "@earendil-works/pi-coding-agent", usedBy: "API de todas as extensões" },
@@ -278,6 +279,29 @@ async function searxngReachable(): Promise<boolean> {
 
 // ── Checagens ─────────────────────────────────────────────────────────────
 
+/** Resolve o renderer com a mesma precedência usada pelo pi-web-search. */
+export function getRendererCommand(configPath: string = WEB_SEARCH_CONFIG_PATH): string {
+	const env = process.env.PI_WEB_RENDERER_COMMAND?.trim();
+	if (env) return env;
+
+	try {
+		const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+			renderer?: { command?: unknown };
+		};
+		if (typeof config.renderer?.command === "string" && config.renderer.command.trim()) {
+			return config.renderer.command.trim();
+		}
+	} catch {
+		// Configuração ausente ou inválida: usa o caminho padrão.
+	}
+
+	return join(
+		process.env.PI_WEB_RENDERER_DIR?.trim() ||
+			join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "pi-web-search", "renderer"),
+		"pi-web-renderer",
+	);
+}
+
 export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorCheck[]> {
 	const pkgRoots = opts.pkgRoots ?? defaultPkgRoots();
 	const skipNetwork = opts.skipNetwork ?? true;
@@ -372,8 +396,7 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 	});
 
 	// Renderer opcional de JavaScript para páginas SPA
-	const rendererCommand = process.env.PI_WEB_RENDERER_COMMAND?.trim() ||
-		join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "pi-web-search", "renderer", "pi-web-renderer");
+	const rendererCommand = getRendererCommand();
 	const rendererInstalled = existsSync(rendererCommand);
 	checks.push({
 		id: "web-renderer",
@@ -566,8 +589,7 @@ export default async function (pi: Pi): Promise<void> {
 	});
 
 	// ── Tool doctor_check (para o LLM) ───────────────
-	// Registrada em session_start para manter a factory síncrona e simples;
-	// schema: typebox quando disponível, JSON-schema simples como fallback.
+	// Registro tolerante: usa typebox quando disponível e JSON Schema simples como fallback.
 	try {
 		let Type: { Object: (schema: Record<string, unknown>) => unknown } | null = null;
 		try {

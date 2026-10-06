@@ -6,7 +6,10 @@
  * installHint por gerenciador, formato do relatório e skip de rede.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // ── Mock do spawnSync (binários) ─────────────────────────────────────────
 // Por padrão tudo "instalado"; testes desligam comandos específicos.
@@ -35,7 +38,12 @@ import {
 	installHint,
 	resolvePackage,
 	defaultPkgRoots,
+	getRendererCommand,
 } from "../index.ts";
+
+afterEach(() => {
+	for (const key of Object.keys(binMocks)) delete binMocks[key];
+});
 
 describe("resolvePackage", () => {
 	it("encontra pacote em uma raiz node_modules", () => {
@@ -104,6 +112,42 @@ describe("runChecks — degradação (6.3)", () => {
 	it("skipNetwork=true não inclui checagem de rede do SearXNG", async () => {
 		const checks = await runChecks({ skipNetwork: true });
 		expect(checks.find((c) => c.id === "searxng")).toBeUndefined();
+	});
+});
+
+describe("renderer", () => {
+	it("prioriza o comando configurado no ambiente", () => {
+		const previous = process.env.PI_WEB_RENDERER_COMMAND;
+		process.env.PI_WEB_RENDERER_COMMAND = "/tmp/custom-renderer";
+		expect(getRendererCommand()).toBe("/tmp/custom-renderer");
+		if (previous === undefined) delete process.env.PI_WEB_RENDERER_COMMAND;
+		else process.env.PI_WEB_RENDERER_COMMAND = previous;
+	});
+
+	it("usa PI_WEB_RENDERER_DIR no caminho padrão", () => {
+		const previousCommand = process.env.PI_WEB_RENDERER_COMMAND;
+		const previousDir = process.env.PI_WEB_RENDERER_DIR;
+		delete process.env.PI_WEB_RENDERER_COMMAND;
+		process.env.PI_WEB_RENDERER_DIR = "/tmp/renderers";
+		expect(getRendererCommand()).toBe("/tmp/renderers/pi-web-renderer");
+		if (previousCommand === undefined) delete process.env.PI_WEB_RENDERER_COMMAND;
+		else process.env.PI_WEB_RENDERER_COMMAND = previousCommand;
+		if (previousDir === undefined) delete process.env.PI_WEB_RENDERER_DIR;
+		else process.env.PI_WEB_RENDERER_DIR = previousDir;
+	});
+
+	it("respeita o comando definido no config.json", () => {
+		const dir = mkdtempSync(join(tmpdir(), "doctor-renderer-"));
+		try {
+			writeFileSync(join(dir, "config.json"), JSON.stringify({ renderer: { command: "/opt/pi-renderer" } }));
+			const previous = process.env.PI_WEB_RENDERER_COMMAND;
+			delete process.env.PI_WEB_RENDERER_COMMAND;
+			expect(getRendererCommand(join(dir, "config.json"))).toBe("/opt/pi-renderer");
+			if (previous === undefined) delete process.env.PI_WEB_RENDERER_COMMAND;
+			else process.env.PI_WEB_RENDERER_COMMAND = previous;
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 
