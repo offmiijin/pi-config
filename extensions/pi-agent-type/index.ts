@@ -79,6 +79,13 @@ export function blockedReason(config: AgentConfig, toolName: string, input: Reco
 	const restrictions = config.allowedExtensions;
 	if (!restrictions) return null;
 
+	// Bash pode criar ou alterar qualquer arquivo por meio de redirecionamentos,
+	// sed, scripts, cp etc. Como não é possível validar com segurança todos os
+	// comandos, os modos com política de escrita não permitem bash.
+	if (toolName === "bash" && restrictions.edit && restrictions.write) {
+		return `"bash" bloqueado no modo ${config.label}: use edit/write apenas para arquivos ${restrictions.edit.join(", ")}.`;
+	}
+
 	const allowed = restrictions[toolName];
 	if (!allowed) return null;
 
