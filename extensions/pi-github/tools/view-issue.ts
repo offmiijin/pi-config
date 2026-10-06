@@ -18,9 +18,10 @@ export function viewIssueTool(gh: GhApi) {
 			"de uma issue específica.",
 
 		parameters: Type.Object({
-			number: Type.Integer({ description: "Número da issue" }),
+			number: Type.Integer({ minimum: 1, description: "Número da issue" }),
 			repo: Type.Optional(
 				Type.String({
+					pattern: "^[^/\\s]+/[^/\\s]+$",
 					description: "Repositório (owner/name). Padrão: repositório atual",
 				}),
 			),

@@ -14,13 +14,14 @@ function makeExec(
 		stdout: string;
 		stderr: string;
 		code: number;
+		killed: boolean;
 	}>,
 ) {
 	return vi.fn().mockResolvedValue({
 		stdout: overrides?.stdout ?? "",
 		stderr: overrides?.stderr ?? "",
 		code: overrides?.code ?? 0,
-		killed: false,
+		killed: overrides?.killed ?? false,
 	});
 }
 
@@ -89,6 +90,12 @@ describe("createGh", () => {
 			await expect(
 				gh.prCreate({ title: "fail", body: "", head: "fail" }),
 			).rejects.toThrow("gh pr create: XPC error: connection invalid");
+		});
+
+		it("rejeita resposta sem URL válida", async () => {
+			const gh = createGh(makeExec({ stdout: "Pull request created" }));
+			await expect(gh.prCreate({ title: "feat: test", body: "", head: "feat/test" }))
+				.rejects.toThrow("resposta não contém uma URL válida");
 		});
 	});
 
@@ -324,6 +331,16 @@ describe("createGh", () => {
 			const gh = createGh(exec);
 
 			await expect(gh.issueList()).rejects.toThrow("gh issue list: some error");
+		});
+
+		it("informa timeout quando o processo é interrompido", async () => {
+			const gh = createGh(makeExec({ code: 1, killed: true }));
+			await expect(gh.prList()).rejects.toThrow("tempo limite");
+		});
+
+		it("contextualiza JSON inválido", async () => {
+			const gh = createGh(makeExec({ stdout: "não é json" }));
+			await expect(gh.issueList()).rejects.toThrow("gh issue list: resposta JSON inválida");
 		});
 	});
 });

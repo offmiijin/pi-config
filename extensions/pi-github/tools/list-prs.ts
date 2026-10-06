@@ -25,10 +25,10 @@ export function listPrsTool(gh: GhApi) {
 				),
 			),
 			limit: Type.Optional(
-				Type.Integer({ description: "Máximo de resultados", default: 10 }),
+				Type.Integer({ minimum: 1, maximum: 100, description: "Máximo de resultados", default: 10 }),
 			),
 			author: Type.Optional(
-				Type.String({ description: "Filtrar por autor (login do GitHub)" }),
+				Type.String({ minLength: 1, description: "Filtrar por autor (login do GitHub)" }),
 			),
 		}),
 

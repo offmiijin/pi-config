@@ -18,9 +18,10 @@ export function viewPrTool(gh: GhApi) {
 			"detalhadas de um PR específico.",
 
 		parameters: Type.Object({
-			number: Type.Integer({ description: "Número do pull request" }),
+			number: Type.Integer({ minimum: 1, description: "Número do pull request" }),
 			repo: Type.Optional(
 				Type.String({
+					pattern: "^[^/\\s]+/[^/\\s]+$",
 					description: "Repositório (owner/name). Padrão: repositório atual",
 				}),
 			),

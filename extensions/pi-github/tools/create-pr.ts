@@ -40,8 +40,8 @@ export function createPrTool(gh: GhApi) {
 				[...VALID_TYPES].map((t) => Type.Literal(t)),
 				{ description: "Tipo da mudança (ex: feat, fix, refactor)" },
 			),
-			scope: Type.String({ description: "Escopo/módulo da alteração (ex: auth, api/orders, docker)" }),
-			title: Type.String({ description: "Descrição curta, sem type/scope/numero" }),
+			scope: Type.String({ minLength: 1, description: "Escopo/módulo da alteração (ex: auth, api/orders, docker)" }),
+			title: Type.String({ minLength: 1, description: "Descrição curta, sem type/scope/numero" }),
 			breaking: Type.Optional(
 				Type.Boolean({ description: "Se true, adiciona '!' e deve incluir BREAKING CHANGE: no body", default: false }),
 			),
@@ -49,8 +49,8 @@ export function createPrTool(gh: GhApi) {
 				Type.Union([Type.String(), Type.Number()], { description: "Nº da tarefa (opcional, vai no título como #numero)" }),
 			),
 			body: Type.String({ description: "Descrição/corpo (markdown). Se breaking=true, incluir BREAKING CHANGE: <desc>" }),
-			head: Type.String({ description: "Branch de origem" }),
-			base: Type.Optional(Type.String({ description: "Branch de destino", default: "main" })),
+			head: Type.String({ minLength: 1, description: "Branch de origem" }),
+			base: Type.Optional(Type.String({ minLength: 1, description: "Branch de destino", default: "main" })),
 			draft: Type.Optional(Type.Boolean({ description: "Criar como draft PR", default: false })),
 		}),
 

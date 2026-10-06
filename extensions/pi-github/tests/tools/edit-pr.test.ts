@@ -84,6 +84,16 @@ describe("editPrTool", () => {
 		});
 	});
 
+	it("rejects when no fields are provided", async () => {
+		const gh = makeGh();
+		const tool = editPrTool(gh);
+		const result = await tool.execute("e5", { number: 1 }, undefined, undefined, undefined);
+
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("Nenhuma alteração");
+		expect(gh.prEdit).not.toHaveBeenCalled();
+	});
+
 	it("returns error on gh failure", async () => {
 		const gh = makeGh();
 		gh.prEdit.mockRejectedValue(new Error("edit failed"));
