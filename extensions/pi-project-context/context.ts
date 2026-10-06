@@ -1,4 +1,5 @@
-import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 export interface ProjectCommand {
@@ -15,6 +16,7 @@ export interface ProjectContext {
 }
 
 const COMMANDS = ["test", "typecheck", "lint", "build"] as const;
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 const LOCKFILES: Array<[string, string]> = [
   ["pnpm-lock.yaml", "pnpm"],
   ["yarn.lock", "yarn"],
@@ -54,9 +56,15 @@ async function readJson(path: string): Promise<Record<string, unknown> | null> {
   } catch { return null; }
 }
 
+function parsePackageManager(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const name = value.trim().split("@", 1)[0].toLowerCase();
+  return PACKAGE_MANAGERS.has(name) ? name : null;
+}
+
 async function detectPackageManager(cwd: string, packageJson: Record<string, unknown> | null): Promise<string | null> {
-  const declared = packageJson?.packageManager;
-  if (typeof declared === "string") return declared.split("@")[0] || null;
+  const declared = parsePackageManager(packageJson?.packageManager);
+  if (declared) return declared;
   for (const [file, manager] of LOCKFILES) if (await exists(join(cwd, file))) return manager;
   return packageJson ? "npm" : null;
 }
@@ -88,10 +96,17 @@ export async function detectProjectContext(cwd: string, now = new Date()): Promi
 export async function saveProjectContext(cwd: string, context: ProjectContext): Promise<void> {
   const dir = join(cwd, ".pi");
   await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
   const target = join(dir, "project-context.json");
-  const temporary = `${target}.tmp-${process.pid}`;
-  await writeFile(temporary, `${JSON.stringify(context, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, target);
+  const temporary = `${target}.tmp-${process.pid}-${randomUUID()}`;
+
+  try {
+    await writeFile(temporary, `${JSON.stringify(context, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, target);
+    await chmod(target, 0o600);
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
 }
 
 export function formatProjectContext(context: ProjectContext): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectProjectContext, formatProjectContext, saveProjectContext } from "../context.ts";
@@ -26,6 +26,16 @@ describe("contexto do projeto", () => {
     expect(context.commands.typecheck).toBeUndefined();
   });
 
+  it("rejeita package manager declarado desconhecido e usa o lockfile", async () => {
+    const cwd = await fixture();
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ packageManager: "comando-malicioso@1", scripts: { test: "vitest" } }));
+    await writeFile(join(cwd, "pnpm-lock.yaml"), "lockfileVersion: 9\n");
+    const context = await detectProjectContext(cwd);
+
+    expect(context.packageManager).toBe("pnpm");
+    expect(context.commands.test?.command).toBe("pnpm run test");
+  });
+
   it("usa lockfile e não inventa comandos ausentes", async () => {
     const cwd = await fixture();
     await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { check: "npm test" } }));
@@ -40,6 +50,16 @@ describe("contexto do projeto", () => {
     const context = await detectProjectContext(cwd);
     await saveProjectContext(cwd, context);
     const summary = formatProjectContext(context);
+    const target = join(cwd, ".pi", "project-context.json");
+    const saved = JSON.parse(await readFile(target, "utf8"));
+    const entries = await readdir(join(cwd, ".pi"));
+    const dirMode = (await stat(join(cwd, ".pi"))).mode & 0o777;
+    const fileMode = (await stat(target)).mode & 0o777;
+
+    expect(saved).toEqual(context);
+    expect(entries).toEqual(["project-context.json"]);
+    expect(dirMode).toBe(0o700);
+    expect(fileMode).toBe(0o600);
     expect(summary).toContain("Contexto operacional");
     expect(summary).toContain(".pi/project-context.json");
   });
