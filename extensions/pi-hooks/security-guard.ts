@@ -20,23 +20,29 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-type Mode = "interactive" | "strict" | "permissive" | "audit-only";
+export type Mode = "interactive" | "strict" | "permissive" | "audit-only";
 
 interface SecurityConfig {
   mode: Mode;
 }
 
+const VALID_MODES: readonly Mode[] = ["interactive", "strict", "permissive", "audit-only"];
 const PATTERNS: { pattern: RegExp; severity: string; reason: string }[] = [
-  { pattern: /\b:\(\)\{ :\|:& \}\;:/, severity: "critical", reason: "Fork bomb" },
-  { pattern: /\bcurl\b[^|;\n]*(?:\||\|\|)\s*(?:sudo\s+)?(ba)?sh(?:\s|$)/i, severity: "critical", reason: "Download e execução direta de script" },
-  { pattern: /\bwget\b[^|;\n]*(?:\||\|\|)\s*(?:sudo\s+)?(ba)?sh(?:\s|$)/i, severity: "critical", reason: "Download e execução direta de script" },
-  { pattern: /\b(ba)?sh\s+<\(\s*(curl|wget)\b/i, severity: "critical", reason: "Bash subshell com download remoto" },
+  { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*;?\s*\}\s*;?\s*:/, severity: "critical", reason: "Fork bomb" },
+  { pattern: /\bcurl\b[^|;\n]*(?:\||\|\|)\s*(?:sudo\s+)?(?:(?:ba)?sh|zsh|dash)(?:\s|$)/i, severity: "critical", reason: "Download e execução direta de script" },
+  { pattern: /\bwget\b[^|;\n]*(?:\||\|\|)\s*(?:sudo\s+)?(?:(?:ba)?sh|zsh|dash)(?:\s|$)/i, severity: "critical", reason: "Download e execução direta de script" },
+  { pattern: /\b(?:ba)?sh\s+<\(\s*(curl|wget)\b/i, severity: "critical", reason: "Bash subshell com download remoto" },
   { pattern: /\b(source|\.)\s+<\(\s*(curl|wget)\b/i, severity: "critical", reason: "Source de download remoto" },
-  { pattern: /\beval\s+(?:["'`$]|\$?\()/, severity: "high", reason: "eval com entrada potencialmente insegura" },
+  { pattern: /\beval\s+(?:["'`$]|\$?\(|\$[A-Za-z_][A-Za-z0-9_]*)/, severity: "high", reason: "eval com entrada potencialmente insegura" },
 ];
 
+export function getSecurityMode(value = process.env.PI_SECURITY_MODE): Mode {
+  const normalized = value?.trim().toLowerCase();
+  return VALID_MODES.includes(normalized as Mode) ? normalized as Mode : "interactive";
+}
+
 function getConfig(): SecurityConfig {
-  return { mode: (process.env.PI_SECURITY_MODE as Mode) ?? "interactive" };
+  return { mode: getSecurityMode() };
 }
 
 function maskCommand(cmd: string): string {
@@ -67,7 +73,7 @@ async function handleBashCommand(
         return undefined;
       }
 
-      if (!ctx.hasUI) {
+      if (!ctx?.hasUI) {
         return { block: true, reason: `[BLOQUEADO] ${entry.reason} (modo não-interativo)` };
       }
 
@@ -94,7 +100,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     if (ctx?.hasUI) {
       ctx.ui.notify(
-        `[SEGURANÇA] Guarda carregado. Modo: ${process.env.PI_SECURITY_MODE ?? "interactive"}`,
+        `[SEGURANÇA] Guarda carregado. Modo: ${getSecurityMode()}`,
         "info",
       );
     }
@@ -104,7 +110,8 @@ export default function (pi: ExtensionAPI) {
     const config = getConfig();
     if (event.toolName !== "bash") return undefined;
 
-    const command = (event.input as Record<string, unknown>).command as string;
+    const input = event.input as Record<string, unknown> | undefined;
+    const command = typeof input?.command === "string" ? input.command : undefined;
     if (!command) return undefined;
 
     return handleBashCommand(command, ctx, config);
