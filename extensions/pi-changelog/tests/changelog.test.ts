@@ -3,7 +3,7 @@
  * Roda com: vitest run
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -21,9 +21,14 @@ import {
 function makeExtDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "cl-test-"));
 	mkdirSync(dir, { recursive: true });
+	tempDirs.push(dir);
 	return dir;
 }
 function cleanup(dir: string) { rmSync(dir, { recursive: true, force: true }) }
+const tempDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) cleanup(dir);
+});
 
 interface Notify { msg: string; level: string }
 function makeUi() {
@@ -155,17 +160,21 @@ describe("resolveChangelogPath", () => {
 		expect(resolveChangelogPath(undefined)).toBe(join(process.env.HOME!, ".pi", "agent", "CHANGELOG.md"));
 		expect(resolveChangelogPath("~/a/b.md").endsWith(join("a", "b.md"))).toBe(true);
 	});
+
+	it("resolve caminho relativo a partir do diretório da extensão", () => {
+		expect(resolveChangelogPath("docs/CHANGELOG.md", "/default.md", "/ext"))
+			.toBe(join("/ext", "docs", "CHANGELOG.md"));
+	});
 });
 
 describe("readConfig", () => {
-	it("ausente → default; campo vazio → default; válida → config", () => {
+	it("ausente → default; campo inválido → erro; válida → config", () => {
 		const extDir = makeExtDir();
 		expect(readConfig(extDir).config).toBeNull();
 		writeFileSync(join(extDir, "config.json"), JSON.stringify({ changelogPath: "   " }));
-		expect(readConfig(extDir).config).toBeNull();
+		expect(readConfig(extDir).configError).toContain("inválido");
 		writeFileSync(join(extDir, "config.json"), JSON.stringify({ changelogPath: "~/c.md" }));
 		expect(readConfig(extDir).config?.changelogPath).toBe("~/c.md");
-		cleanup(extDir);
 	});
 });
 

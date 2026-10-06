@@ -23,7 +23,7 @@ export async function runChangelogCommand(
 	const { config, configError } = readConfig(extDir);
 	if (configError) ctx.ui.notify(`⚠️ ${configError} — usando caminho padrão.`, "warning");
 
-	const path = resolveChangelogPath(config?.changelogPath, defaultPath);
+	const path = resolveChangelogPath(config?.changelogPath, defaultPath, extDir);
 	const result = readChangelog(path);
 
 	if (result.kind === "missing") {
@@ -55,9 +55,14 @@ export function expandTilde(p: string): string {
 	return p;
 }
 
-export function resolveChangelogPath(configured?: string, defaultPath: string = DEFAULT_CHANGELOG_PATH): string {
+export function resolveChangelogPath(
+	configured?: string,
+	defaultPath: string = DEFAULT_CHANGELOG_PATH,
+	baseDir?: string,
+): string {
 	if (!configured?.trim()) return defaultPath;
-	return resolve(expandTilde(configured.trim()));
+	const expanded = expandTilde(configured.trim());
+	return resolve(baseDir ?? process.cwd(), expanded);
 }
 
 export function readConfig(extDir: string): { config: Config | null; configError: string | null } {
@@ -67,7 +72,9 @@ export function readConfig(extDir: string): { config: Config | null; configError
 	try {
 		const p = JSON.parse(raw) as Partial<Config>;
 		if (p && typeof p.changelogPath === "string" && p.changelogPath.trim())
-			return { config: { changelogPath: p.changelogPath }, configError: null };
+			return { config: { changelogPath: p.changelogPath.trim() }, configError: null };
+		if (p && Object.prototype.hasOwnProperty.call(p, "changelogPath"))
+			return { config: null, configError: "changelogPath inválido em config.json" };
 		return { config: null, configError: null };
 	} catch { return { config: null, configError: "config.json inválido" } }
 }
