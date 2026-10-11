@@ -22,6 +22,7 @@ function parseDateInput(value: string): number | null {
   const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?$/);
   if (!match) return null;
   const [, day, month, year, hour = "00", minute = "00"] = match;
+  if (Number(hour) > 23 || Number(minute) > 59) return null;
   const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
   if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) return null;
   return date.getTime();
@@ -152,8 +153,8 @@ export default function (pi: ExtensionAPI): void {
   };
 
   const openPanel = async (ctx: ExtensionContext): Promise<void> => {
-    if (ctx.mode !== "tui") {
-      ctx.ui.notify("O monitor de tokens requer o modo interativo (TUI).", "error");
+    if (ctx.mode !== "tui" || !ctx.hasUI) {
+      ctx.ui?.notify?.("O monitor de tokens requer o modo interativo (TUI).", "error");
       return;
     }
     if (activePanel) {

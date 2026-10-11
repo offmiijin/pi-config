@@ -340,20 +340,24 @@ async function collectWorkingTreeGroup(
 /**
  * Coleta commits da sessão (quando há commit-base) e alterações ainda não
  * commitadas. Cada commit vira um grupo independente no painel.
+ *
+ * Força `core.quotepath=off` para que caminhos com acentos venham literais
+ * (com quotepath ligado, o porcelain cita e o caminho não bate no disco).
  */
 export async function collectChanges(
 	cwd: string,
 	runGit: GitRunner,
 	options: CollectChangesOptions = {},
 ): Promise<ChangesSnapshot> {
+	const git: GitRunner = (args) => runGit(["-c", "core.quotepath=off", ...args]);
 	const groups: ChangeGroup[] = [];
 	if (options.baseCommit) {
-		const committed = await collectCommitGroups(cwd, runGit, options.baseCommit);
+		const committed = await collectCommitGroups(cwd, git, options.baseCommit);
 		if (committed.error) return emptySnapshot(committed.error);
 		groups.push(...committed.groups);
 	}
 
-	const workingTree = await collectWorkingTreeGroup(cwd, runGit);
+	const workingTree = await collectWorkingTreeGroup(cwd, git);
 	if (workingTree.error) return emptySnapshot(workingTree.error);
 	if (workingTree.group) groups.push(workingTree.group);
 
