@@ -10,7 +10,11 @@ import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-function formatTokenCount(n: number): string {
+function toFiniteNumber(value: unknown, fallback = 0): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+export function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
 	if (n >= 1_000) return Math.floor(n / 1_000) + "K";
 	return String(n);
@@ -54,21 +58,21 @@ class ModelInfoEditor extends CustomEditor {
 	}
 
 	setContextInfo(usage: number, window?: number) {
-		this.contextUsage = usage;
-		if (window !== undefined) this.contextWindow = window;
+		this.contextUsage = toFiniteNumber(usage);
+		if (window !== undefined) this.contextWindow = toFiniteNumber(window);
 		this.invalidate();
 	}
 
 	setTokenInfo(input: number, output: number, total: number, cost: number) {
-		this.lastInput = input;
-		this.lastOutput = output;
-		this.sessionTokens = total;
-		this.sessionCost = cost;
+		this.lastInput = toFiniteNumber(input);
+		this.lastOutput = toFiniteNumber(output);
+		this.sessionTokens = toFiniteNumber(total);
+		this.sessionCost = toFiniteNumber(cost);
 		this.invalidate();
 	}
 
 	setMemoryInfo(total: number) {
-		this.memoryTotal = total;
+		this.memoryTotal = Math.max(0, Math.floor(toFiniteNumber(total)));
 		this.invalidate();
 	}
 
@@ -146,7 +150,7 @@ class ModelInfoEditor extends CustomEditor {
 		const rightPart = tokenInfo;
 		const rightW = visibleWidth(rightPart);
 
-		// Calculates available space for modelId inside innerW
+		// Espaço disponível para o modelId dentro de innerW
 		// Reserva: gap mínimo (1) + rightW + provider + thinking + badge
 		const providerStr = this.provider ? " " + this.uiTheme.fg("muted", this.provider) : "";
 		const thinkingStr = " " + this.uiTheme.fg("dim", this.thinking);
@@ -178,7 +182,7 @@ class ModelInfoEditor extends CustomEditor {
  * 1) package.json ao lado do binário (instalações mise)
  * 2) fallback: `pi --version`
  */
-async function resolvePiVersion(pi: ExtensionAPI): Promise<string> {
+export async function resolvePiVersion(pi: ExtensionAPI): Promise<string> {
 	try {
 		const pkgPath = path.join(path.dirname(process.execPath), "package.json");
 		if (existsSync(pkgPath)) {
@@ -197,6 +201,28 @@ async function resolvePiVersion(pi: ExtensionAPI): Promise<string> {
 	return "unknown";
 }
 
+/** Record guard — payloads de eventos custom não são confiáveis. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+/** Tipos de agente com badge próprio; demais caem no estilo padrão (coder). */
+const KNOWN_AGENT_TYPES = ["coder", "writer", "planner"] as const;
+
+/** Lê o tipo de agente persistido na sessão (agent-switcher via appendEntry). */
+export function readAgentTypeFromSession(ctx: { sessionManager?: { getEntries?: () => unknown[] } }): string {
+	try {
+		const entries = ctx.sessionManager?.getEntries?.() ?? [];
+		if (!Array.isArray(entries)) return "coder";
+		const stateEntry = entries
+			.filter((e) => isRecord(e) && e.type === "custom" && e.customType === "agent-switcher")
+			.pop() as { data?: { agent?: unknown } } | undefined;
+		const type = stateEntry?.data?.agent;
+		if (typeof type === "string" && (KNOWN_AGENT_TYPES as readonly string[]).includes(type)) return type;
+	} catch {}
+	return "coder";
+}
+
 export function registerStatusBar(pi: ExtensionAPI) {
 	let currentThinking: string = "off";
 	let editorRef: ModelInfoEditor | null = null;
@@ -209,11 +235,14 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	resolvePiVersion(pi).then((v) => {
 		piVersion = v;
 		editorRef?.setPiVersion(v);
+	}).catch(() => {
+		// resolvePiVersion é total (nunca rejeita); guarda contra regressões.
 	});
 
 	// ── escuta agente-switcher ─────────────────────────────────
-	pi.events?.on("custom:agent-switch", ({ type }: { type: string }) => {
-		if (["coder", "writer", "planner"].includes(type)) {
+	pi.events?.on("custom:agent-switch", (event: unknown) => {
+		const type = isRecord(event) ? event.type : undefined;
+		if (typeof type === "string" && (KNOWN_AGENT_TYPES as readonly string[]).includes(type)) {
 			editorRef?.setAgentType(type);
 		}
 	});
@@ -222,42 +251,45 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	// Guarda o último valor: o editor só existe após session_start — se o
 	// evento chegar antes, aplica quando o editor for criado.
 	let lastMemoryTotal = 0;
-	let sandboxSession: { originalCwd?: string; branchName?: string; originalBranchName?: string; inPlace?: boolean } = {};
+	let sandboxSession: Record<string, unknown> = {};
 	let footerTui: TUI | null = null;
-	pi.events?.on("custom:dev-sandbox-session", (session: typeof sandboxSession) => {
-		sandboxSession = session;
+	pi.events?.on("custom:dev-sandbox-session", (event: unknown) => {
+		sandboxSession = isRecord(event) ? event : {};
 		footerTui?.requestRender(true);
 	});
-	pi.events?.on("custom:memory-stats", ({ total }: { total: number }) => {
-		lastMemoryTotal = total;
-		editorRef?.setMemoryInfo(total);
+	pi.events?.on("custom:memory-stats", (event: unknown) => {
+		const total = isRecord(event) ? event.total : undefined;
+		lastMemoryTotal = Math.max(0, Math.floor(toFiniteNumber(total)));
+		editorRef?.setMemoryInfo(lastMemoryTotal);
 	});
 
-	// ── helper: read agent type from session ──
-	function readAgentTypeFromSession(ctx: any): string {
-		try {
-			const entries = ctx.sessionManager?.getEntries() ?? [];
-			const stateEntry = entries
-				.filter((e: { type: string; customType?: string }) => e.type === "custom" && e.customType === "agent-switcher")
-				.pop() as { data?: { agent?: string } } | undefined;
-			const type = stateEntry?.data?.agent;
-			if (type && ["coder", "writer", "planner"].includes(type)) return type;
-		} catch {}
-		return "coder";
-	}
-
 	pi.on("session_start", async (_event, ctx) => {
+		if (!ctx.hasUI) return;
 		footerTui = null;
-		currentThinking = pi.getThinkingLevel() || "off";
+		try {
+			currentThinking = pi.getThinkingLevel() || "off";
+		} catch (error) {
+			console.warn("[pi-status-bar] Não foi possível ler o nível de thinking:", error);
+			currentThinking = "off";
+		}
 
-		const entries = ctx.sessionManager.getEntries();
+		let entries: unknown[] = [];
+		try {
+			const raw = ctx.sessionManager?.getEntries() ?? [];
+			entries = Array.isArray(raw) ? raw : [];
+		} catch (error) {
+			console.warn("[pi-status-bar] Não foi possível ler as entradas da sessão:", error);
+		}
 		sessionTokens = 0;
 		sessionCost = 0;
 		for (const entry of entries) {
-			if (entry.type === "message" && entry.message.role === "assistant" && entry.message.usage) {
-				sessionTokens += entry.message.usage.totalTokens;
-				sessionCost += entry.message.usage.cost.total;
-			}
+			if (!isRecord(entry) || entry.type !== "message") continue;
+			const message = isRecord(entry.message) ? entry.message : null;
+			if (message?.role !== "assistant") continue;
+			const usage = isRecord(message.usage) ? message.usage : null;
+			const cost = isRecord(usage?.cost) ? usage.cost : null;
+			sessionTokens += toFiniteNumber(usage?.totalTokens);
+			sessionCost += toFiniteNumber(cost?.total);
 		}
 
 		const modelId = ctx.model?.id || "unknown";
@@ -284,8 +316,8 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			editor.setModelInfo(modelId, provider, currentThinking);
 			editor.setAgentType(currentAgent);
 			editor.setPiVersion(piVersion);
-			const ctxW = ctx.model?.contextWindow || 0;
-			const ctxU = ctx.getContextUsage?.()?.tokens || 0;
+			const ctxW = toFiniteNumber(ctx.model?.contextWindow);
+			const ctxU = toFiniteNumber(ctx.getContextUsage?.()?.tokens);
 			editor.setContextInfo(ctxU, ctxW);
 			editor.setTokenInfo(0, 0, sessionTokens, sessionCost);
 			// Último stats recebido do pi-memory (pode ter chegado antes do editor existir)
@@ -298,14 +330,23 @@ export function registerStatusBar(pi: ExtensionAPI) {
 			footerTui = tui;
 
 			const renderLine = (width: number): string[] => {
-				const folderName = path.basename(sandboxSession.originalCwd || ctx.cwd);
-				const sandboxBranch = sandboxSession.branchName || "";
-				const originalBranch = sandboxSession.originalBranchName || "";
+				const cwd = typeof sandboxSession.originalCwd === "string" && sandboxSession.originalCwd
+					? sandboxSession.originalCwd
+					: typeof ctx.cwd === "string" && ctx.cwd ? ctx.cwd : ".";
+				const folderName = path.basename(cwd) || "?";
+				const sandboxBranch = typeof sandboxSession.branchName === "string" ? sandboxSession.branchName : "";
+				const originalBranch = typeof sandboxSession.originalBranchName === "string" ? sandboxSession.originalBranchName : "";
+				let gitBranch = "no-branch";
+				try {
+					gitBranch = footerData.getGitBranch() || "no-branch";
+				} catch (error) {
+					console.warn("[pi-status-bar] Não foi possível ler o branch git:", error);
+				}
 				const branch = sandboxBranch
 					? sandboxBranch.startsWith("sandbox/")
-						? `sandbox/${sandboxBranch.slice("sandbox/".length).split("-")[0]}`
+						? `sandbox/${sandboxBranch.slice("sandbox/".length).split("-")[0] || "?"}`
 						: sandboxBranch
-					: footerData.getGitBranch() || "no-branch";
+					: gitBranch;
 
 				const leftPart = [
 					theme.fg("accent", "\u{f07c}"),
@@ -333,7 +374,8 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	});
 
 	pi.on("thinking_level_select", async (event, ctx) => {
-		currentThinking = event.level;
+		const level = isRecord(event) && typeof event.level === "string" && event.level ? event.level : "off";
+		currentThinking = level;
 		editorRef?.setModelInfo(
 			ctx.model?.id || "unknown",
 			ctx.model?.provider || "",
@@ -342,27 +384,33 @@ export function registerStatusBar(pi: ExtensionAPI) {
 	});
 
 	pi.on("model_select", async (event, ctx) => {
-		editorRef?.setModelInfo(
-			event.model.id,
-			event.model.provider || "",
-			currentThinking,
-		);
-		const ctxW = event.model.contextWindow || 0;
-		const ctxU = ctx.getContextUsage?.()?.tokens || 0;
-		editorRef?.setContextInfo(ctxU, ctxW);
+		const model = isRecord(event) ? event.model : undefined;
+		const id = isRecord(model) && typeof model.id === "string" && model.id ? model.id : "unknown";
+		const provider = isRecord(model) && typeof model.provider === "string" ? model.provider : "";
+		const contextWindow = isRecord(model) ? toFiniteNumber(model.contextWindow) : 0;
+		editorRef?.setModelInfo(id, provider, currentThinking);
+		const ctxU = toFiniteNumber(ctx.getContextUsage?.()?.tokens);
+		editorRef?.setContextInfo(ctxU, contextWindow);
 	});
 
 	pi.on("message_end", async (event, ctx) => {
-		if (event.message.role === "assistant" && event.message.usage) {
-			const u = event.message.usage;
-			sessionTokens += u.totalTokens;
-			sessionCost += u.cost.total;
-			editorRef?.setTokenInfo(u.input, u.output, sessionTokens, sessionCost);
-			const ctxU = ctx.getContextUsage?.()?.tokens || 0;
+		const message = isRecord(event) ? event.message : undefined;
+		const usage = isRecord(message) && isRecord(message.usage) ? message.usage : null;
+		if (isRecord(message) && message.role === "assistant" && usage) {
+			const cost = isRecord(usage.cost) ? usage.cost : null;
+			sessionTokens += toFiniteNumber(usage.totalTokens);
+			sessionCost += toFiniteNumber(cost?.total);
+			editorRef?.setTokenInfo(
+				toFiniteNumber(usage.input),
+				toFiniteNumber(usage.output),
+				sessionTokens,
+				sessionCost,
+			);
+			const ctxU = toFiniteNumber(ctx.getContextUsage?.()?.tokens);
 			editorRef?.setContextInfo(ctxU);
 		}
 		// Refresh agent type badge (agent-switcher persists via appendEntry)
-		if (event.message.role === "assistant") {
+		if (isRecord(message) && message.role === "assistant") {
 			editorRef?.setAgentType(readAgentTypeFromSession(ctx));
 			// Force branch refresh after the model responds
 			setTimeout(() => footerDataRef?.refreshGitBranchAsync?.(), 100);
