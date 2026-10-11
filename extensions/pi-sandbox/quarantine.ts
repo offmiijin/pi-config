@@ -18,6 +18,8 @@ import { ensureQuarantineDir, execInProfile, resolveQuarantineDirs } from "./bwr
 /** Timeout padrão (segundos) das operações fetch e quarantine. */
 export const FETCH_TIMEOUT_S = 150;
 export const QUARANTINE_TIMEOUT_S = 300;
+/** Teto do download (bytes) — sem ele um alvo gigante enche o disco. */
+export const FETCH_MAX_FILE_SIZE = 512 * 1024 * 1024;
 
 /**
  * Valida que `subPath` resolve DENTRO de `baseDir` (anti path-traversal).
@@ -50,10 +52,55 @@ function assertRealPathInside(baseDir: string, target: string, label: string): v
   }
 }
 
+/** Rede efetiva do perfil fetch (kill-switch global + flag do perfil). */
+export function isFetchNetworkEnabled(config: SandboxConfig): boolean {
+  return config.internet.enabled && (config.profiles?.fetch?.network ?? true);
+}
+
+/** Preflight: garante que o curl existe DENTRO do sandbox (PATH mínimo). */
+async function checkCurlAvailable(config: SandboxConfig, cwd: string): Promise<void> {
+  const dirs = resolveQuarantineDirs(config, cwd);
+  const probe = await execInProfile(
+    config,
+    { command: ["curl", "--version"], cwd: dirs.fetch, baseCwd: cwd, timeout: 30 },
+    "fetch",
+  );
+  if (probe.exitCode !== 0) {
+    throw new Error("[pi-sandbox] curl indisponível no sandbox — instale o curl no host para usar o sandbox_fetch.");
+  }
+}
+
+/** Causa provável a partir do exit code do curl + última linha do stderr. */
+export function classifyFetchError(exitCode: number | null, stderr: string, url: string): string {
+  const lastLine = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).at(-1) ?? "";
+  const detail = lastLine ? ` (${lastLine.slice(0, 200)})` : "";
+  switch (exitCode) {
+    case 6:
+      return `[pi-sandbox] sandbox_fetch falhou: DNS não resolveu ${url}${detail}. Verifique a rede e o /etc/resolv.conf do host.`;
+    case 7:
+      return `[pi-sandbox] sandbox_fetch falhou: conexão recusada/falhou em ${url}${detail}. O servidor pode estar fora do ar.`;
+    case 28:
+      return `[pi-sandbox] sandbox_fetch falhou: tempo esgotado em ${url}${detail}. Tente novamente ou use URL menor.`;
+    case 60:
+    case 77:
+      return `[pi-sandbox] sandbox_fetch falhou: certificado TLS rejeitado em ${url}${detail}. Verifique o CA store do host (/etc/ssl, /etc/pki).`;
+    case 22:
+      return `[pi-sandbox] sandbox_fetch falhou: HTTP recusou ${url}${detail}. Verifique se a URL existe.`;
+    case 63:
+      return `[pi-sandbox] sandbox_fetch falhou: ${url} excede o limite de ${Math.round(FETCH_MAX_FILE_SIZE / 1024 / 1024)}MB${detail}.`;
+    case 127:
+      return `[pi-sandbox] sandbox_fetch falhou: curl não encontrado no sandbox${detail}. Instale o curl no host.`;
+    default:
+      return `[pi-sandbox] sandbox_fetch falhou (exit ${exitCode ?? "desconhecido"}) em ${url}${detail}.`;
+  }
+}
+
 /**
  * Baixa `url` (http/https) para o diretório de fetch usando o perfil "fetch":
- * rede ligada, SEM acesso ao workspace. Retorna o path absoluto do arquivo
- * e o BwrapResult da execução do curl.
+ * rede ligada, SEM acesso ao workspace. Recusa cedo sem rede efetiva, faz
+ * preflight do curl, tenta com retry e classifica falhas em mensagens
+ * acionáveis. Remove download parcial em falha. Retorna o path absoluto do
+ * arquivo e o BwrapResult da execução do curl.
  */
 export async function fetchUrl(
   config: SandboxConfig,
@@ -65,6 +112,12 @@ export async function fetchUrl(
   if (!/^https?:\/\//i.test(url)) {
     throw new Error(`[pi-sandbox] sandbox_fetch aceita apenas URLs http/https: ${url}`);
   }
+  if (!isFetchNetworkEnabled(config)) {
+    throw new Error(
+      "[pi-sandbox] sandbox_fetch exige rede: habilite internet.enabled e profiles.fetch.network na configuração."
+    );
+  }
+  await checkCurlAvailable(config, cwd);
 
   const dirs = resolveQuarantineDirs(config, cwd);
   let output = outputName;
@@ -84,7 +137,14 @@ export async function fetchUrl(
   const result = await execInProfile(
     config,
     {
-      command: ["curl", "-fsSL", "--max-time", String(FETCH_TIMEOUT_S - 30), "-o", file, url],
+      command: [
+        "curl", "-fsSL",
+        "--proto", "=http,https", "--proto-redir", "=http,https",
+        "--retry", "2", "--retry-delay", "2",
+        "--max-time", String(FETCH_TIMEOUT_S - 30),
+        "--max-filesize", String(FETCH_MAX_FILE_SIZE),
+        "-o", file, url,
+      ],
       cwd: dirs.fetch,
       baseCwd: cwd,
       timeout: FETCH_TIMEOUT_S,
@@ -92,6 +152,15 @@ export async function fetchUrl(
     },
     "fetch",
   );
+  if (result.exitCode !== 0) {
+    try {
+      const { rmSync } = await import("node:fs");
+      rmSync(file, { force: true });
+    } catch {
+      // Melhor esforço — parcial restante é sobrescrito na próxima tentativa.
+    }
+    throw new Error(classifyFetchError(result.exitCode, result.stderr, url));
+  }
   return { file, result };
 }
 

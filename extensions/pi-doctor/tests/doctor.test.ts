@@ -100,6 +100,15 @@ describe("runChecks — degradação (6.3)", () => {
 		delete binMocks["pdftotext"];
 	});
 
+	it("curl ausente → warn (sandbox_fetch inoperante)", async () => {
+		binMocks["curl"] = { status: 1, errno: "ENOENT" };
+		const checks = await runChecks({ skipNetwork: true });
+		const curl = checks.find((c) => c.id === "curl")!;
+		expect(curl.status).toBe("warn");
+		expect(curl.fix).toContain("curl");
+		delete binMocks["curl"];
+	});
+
 	it("ambiente completo → deps e sandbox sem pendências", async () => {
 		// (node version é dependente do ambiente — não asserta aqui)
 		const checks = await runChecks({ skipNetwork: true });

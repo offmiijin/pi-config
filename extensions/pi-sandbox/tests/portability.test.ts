@@ -31,6 +31,12 @@ describe("computeSystemPaths", () => {
 		expect(paths.roDirs).toContain("/etc/ssl");
 		expect(paths.roDirs).not.toContain("/lib32");
 		expect(paths.roDirs).not.toContain("/etc/ca-certificates");
+		expect(paths.roDirs).not.toContain("/etc/pki");
+	});
+
+	it("inclui /etc/pki quando existe (CA do Fedora/RHEL)", () => {
+		const paths = computeSystemPaths((p) => p === "/etc/pki");
+		expect(paths.roDirs).toContain("/etc/pki");
 	});
 
 	it("arquivos /etc básicos sempre (resolv, hosts, passwd, group, nsswitch)", () => {

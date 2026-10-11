@@ -90,7 +90,7 @@ import {
 } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs, execInSandbox } from "./bwrap-executor";
-import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
+import { classifyFetchError, execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
 import { dependencyBootstrapHint } from "./dependency-bootstrap";
 import { createDependencyInstallPlan } from "./dependency-install";
 import { Type } from "typebox";
@@ -550,7 +550,8 @@ export default function (pi: ExtensionAPI) {
     label: "Sandbox Fetch",
     description:
       "Downloads external content (http/https) into an isolated quarantine directory " +
-      "with NO access to the project workspace. Use before executing downloaded code. " +
+      "with NO access to the project workspace. Retries transient failures, 512MB size limit. " +
+      "Use before executing downloaded code. " +
       "Returns the absolute path of the downloaded file.",
     parameters: Type.Object({
       url: Type.String({ description: "http/https URL to download" }),
@@ -563,9 +564,7 @@ export default function (pi: ExtensionAPI) {
       const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
       const { file, result } = await fetchUrl(config, cwd, params.url, params.output, signal);
       if (result.exitCode !== 0) {
-        throw new Error(
-          `[pi-sandbox] sandbox_fetch falhou (exit ${result.exitCode}).\n${result.stderr || "sem stderr"}`,
-        );
+        throw new Error(classifyFetchError(result.exitCode, result.stderr, params.url));
       }
       return {
         content: [{ type: "text", text: `Downloaded: ${file}` }],

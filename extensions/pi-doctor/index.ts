@@ -15,7 +15,7 @@
  *   - npm CLI
  *   - Pacotes npm das extensões (hoisted em <root>/node_modules)
  *   - Binários externos: bubblewrap, ripgrep (obrigatórios do sandbox),
- *     git, gh, pdftotext (opcionais)
+ *     git, gh, pdftotext, curl (opcionais)
  *   - Artefatos do sandbox: seccomp.bpf, landlock-exec
  *   - User namespaces e ABI Landlock do kernel
  *   - Docker / SearXNG (opcionais, pi-web-search)
@@ -382,6 +382,15 @@ export async function runChecks(opts: RunChecksOptions = {}): Promise<DoctorChec
 		status: gh.ok ? "ok" : "warn",
 		detail: gh.ok ? gh.version : "não encontrado",
 		fix: gh.ok ? undefined : `${installHint(pm, "gh")} — pi-github fica desativada (opcional)`,
+	});
+
+	const curl = runBin("curl", ["--version"]);
+	checks.push({
+		id: "curl",
+		label: "curl (sandbox_fetch)",
+		status: curl.ok ? "ok" : "warn",
+		detail: curl.ok ? (curl.version ?? "presente") : "não encontrado",
+		fix: curl.ok ? undefined : "Instale o curl no host — sandbox_fetch fica inoperante sem ele",
 	});
 
 	const pdftotext = runBin("pdftotext", ["-v"]);
