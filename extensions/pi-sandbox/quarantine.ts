@@ -177,10 +177,14 @@ export async function execQuarantine(
   workSubDir = "default",
   artifactPaths: string[] = [],
   signal?: AbortSignal,
-): Promise<BwrapResult> {
+  timeoutSeconds: number = QUARANTINE_TIMEOUT_S,
+): Promise<BwrapResult & { workDir: string }> {
   if (!command || command.trim() === "") {
     throw new Error("[pi-sandbox] sandbox_quarantine_exec requer um comando.");
   }
+  const timeout = Number.isFinite(timeoutSeconds) && timeoutSeconds >= 1
+    ? Math.min(Math.round(timeoutSeconds), 900)
+    : QUARANTINE_TIMEOUT_S;
 
   const dirs = resolveQuarantineDirs(config, cwd);
   const workDir = validateQuarantinePath(dirs.runs, workSubDir);
@@ -191,25 +195,38 @@ export async function execQuarantine(
     if (!existsSync(src)) {
       throw new Error(`[pi-sandbox] Artefato não encontrado no fetch: ${art}`);
     }
+    // Anti-symlink (paridade com promoteArtifact): origem real segue no fetch.
+    let realSrc: string;
+    try {
+      realSrc = realpathSync(src);
+    } catch {
+      throw new Error(`[pi-sandbox] Artefato inacessível: ${art}`);
+    }
+    if (realSrc !== dirs.fetch && !realSrc.startsWith(dirs.fetch + sep)) {
+      throw new Error(`[pi-sandbox] Artefato escapa da área de fetch: ${art}`);
+    }
     const dest = validateQuarantinePath(workDir, art);
     const destParent = dirname(dest);
     if (destParent !== workDir) {
       mkdirSync(destParent, { recursive: true });
+      // mkdir -p através de symlink plantado escapa: revalida após criar.
+      assertRealPathInside(workDir, destParent, "Destino de artefato");
     }
-    cpSync(src, dest, { recursive: true });
+    cpSync(realSrc, dest, { recursive: true });
   }
 
-  return execInProfile(
+  const result = await execInProfile(
     config,
     {
       command: ["bash", "-lc", command],
       cwd: workDir,
       baseCwd: cwd,
-      timeout: QUARANTINE_TIMEOUT_S,
+      timeout,
       signal,
     },
     "quarantine",
   );
+  return { ...result, workDir };
 }
 
 /**

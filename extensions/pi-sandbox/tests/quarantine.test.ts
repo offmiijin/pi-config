@@ -398,6 +398,28 @@ describe("execQuarantine", () => {
     await expect(execQuarantine(makeConfig(), cwd, "ls", "run", ["nao-existe"])).rejects.toThrow(/não encontrado/);
     await expect(execQuarantine(makeConfig(), cwd, "ls", "../escape")).rejects.toThrow(/fora/);
   });
+
+  it("retorna workDir e repassa timeout configurado", async () => {
+    const cwd = fixture();
+    const res = await execQuarantine(makeConfig(), cwd, "echo 1", "run1", [], undefined, 60);
+    expect(res.workDir).toBe(join(cwd, ".sandbox-cache", "runs", "run1"));
+    expect(vi.mocked(execInProfile).mock.calls[0][1].timeout).toBe(60);
+  });
+
+  it("timeout inválido cai para o padrão sem desabilitar", async () => {
+    const cwd = fixture();
+    await execQuarantine(makeConfig(), cwd, "echo 1", "run1", [], undefined, 0);
+    expect(vi.mocked(execInProfile).mock.calls[0][1].timeout).toBe(300);
+  });
+
+  it("rejeita artefato symlink que escapa do fetch", async () => {
+    const cwd = fixture();
+    const fetchDir = join(cwd, ".sandbox-cache", "fetch");
+    mkdirSync(fetchDir, { recursive: true });
+    symlinkSync("/etc/hostname", join(fetchDir, "evil"));
+    await expect(execQuarantine(makeConfig(), cwd, "ls", "run1", ["evil"])).rejects.toThrow(/escapa/);
+    expect(vi.mocked(execInProfile)).not.toHaveBeenCalled();
+  });
 });
 
 // ─── promoteArtifact ──────────────────────────────────────────

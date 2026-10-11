@@ -591,24 +591,37 @@ export default function (pi: ExtensionAPI) {
       artifacts: Type.Optional(Type.Array(Type.String({
         description: "Relative paths in the fetch directory to copy into the work dir before executing",
       }))),
+      timeoutSeconds: Type.Optional(Type.Number({
+        description: "Timeout in seconds (default: 300, max: 900)",
+        minimum: 1,
+        maximum: 900,
+      })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!enabled || !config) throw quarantineBlockedError("sandbox_quarantine_exec");
       const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
+      const timeoutSeconds = params.timeoutSeconds ?? 300;
       const result = await execQuarantine(
-        config, cwd, params.command, params.workDir ?? "default", params.artifacts ?? [], signal,
+        config, cwd, params.command, params.workDir ?? "default", params.artifacts ?? [], signal, timeoutSeconds,
       );
       const out = result.stdout.toString();
       const err = result.stderr;
-      const output = [out, err].filter(Boolean).join("\n");
+      const fullOutput = [out, err].filter(Boolean).join("\n");
+      const truncated = fullOutput.length > 12_000;
+      const output = truncated ? fullOutput.slice(-12_000) : fullOutput;
       const bootstrapHint = dependencyBootstrapHint(params.command, output);
-      const text = [output, bootstrapHint, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
+      const statusLine = result.timedOut
+        ? `⏱ tempo esgotado (limite de ${timeoutSeconds}s)`
+        : result.aborted ? "cancelado pelo usuário" : undefined;
+      const text = [output, bootstrapHint, statusLine, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: text || "(no output)" }],
         details: {
           exitCode: result.exitCode,
           timedOut: result.timedOut,
           aborted: result.aborted,
+          truncated,
+          workDir: result.workDir,
           bootstrapHint: Boolean(bootstrapHint),
         },
       };
