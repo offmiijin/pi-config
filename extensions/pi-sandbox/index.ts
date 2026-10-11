@@ -92,7 +92,7 @@ import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs, execInSandbox } from "./bwrap-executor";
 import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
 import { dependencyBootstrapHint } from "./dependency-bootstrap";
-import { createNpmInstallPlan } from "./dependency-install";
+import { createDependencyInstallPlan } from "./dependency-install";
 import { Type } from "typebox";
 import { Container, SettingsList, Text, type SettingItem } from "@earendil-works/pi-tui";
 import { createReadOps } from "./tools/read-ops";
@@ -501,9 +501,9 @@ export default function (pi: ExtensionAPI) {
     name: "sandbox_install_dependencies",
     label: "Sandbox Install Dependencies",
     description:
-      "Installs npm dependencies in the current trusted sandbox workspace. " +
-      "Uses npm ci/install with --ignore-scripts and persistent npm cache. " +
-      "Does not accept arbitrary commands or run lifecycle scripts.",
+      "Installs project dependencies in the current trusted sandbox workspace (npm, Go, Cargo ou pip, pelo manifesto encontrado). " +
+      "Uses closed commands (npm ci/install with --ignore-scripts, go mod download, cargo fetch, pip install) and persistent caches. " +
+      "Does not accept arbitrary commands or run npm lifecycle scripts.",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
       if (!enabled || !config) throw sandboxBlockedError("sandbox_install_dependencies");
@@ -512,7 +512,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
-      const plan = createNpmInstallPlan(cwd);
+      const plan = createDependencyInstallPlan(cwd);
       const result = await execInSandbox(
         config,
         { command: plan.command, cwd, workspaceRoot: session?.worktreePath, timeout: 900, signal },
@@ -525,9 +525,11 @@ export default function (pi: ExtensionAPI) {
         details: {
           exitCode: result.exitCode,
           cwd,
+          kind: plan.kind,
+          manifest: plan.manifest,
           command: plan.command,
           lockfile: plan.lockfile,
-          cache: resolveCacheDirs(config, originalCwd).npm,
+          cache: resolveCacheDirs(config, originalCwd)[plan.kind === "pip" ? "pip" : "npm"],
         },
       };
     },
