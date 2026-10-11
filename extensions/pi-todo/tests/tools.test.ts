@@ -94,9 +94,60 @@ describe("tool — execute e snapshot em details", () => {
 		const { holder, tool } = setup();
 		await tool.execute("1", { action: "add", texts: ["a"] }, undefined, undefined, noUiCtx);
 		const r = await tool.execute("2", { action: "update", id: 1, status: "error", error: "x" }, undefined, undefined, noUiCtx);
-		expect(r.content[0]!.text).toBe("Tarefa #1 → a");
+		expect(r.content[0]!.text).toBe("Tarefa #1 [error] → a");
 		expect(r.details.items[0]).toEqual({ id: 1, text: "a", status: "error", error: "x" });
 		expect(holder.value.items[0]!.status).toBe("error");
+	});
+
+	it("update: confirmação inclui o [status]", async () => {
+		const { tool } = setup();
+		await tool.execute("1", { action: "add", texts: ["a", "b"] }, undefined, undefined, noUiCtx);
+		const r = await tool.execute("2", { action: "update", id: 1, status: "in-progress" }, undefined, undefined, noUiCtx);
+		expect(r.content[0]!.text).toBe("Tarefa #1 [in-progress] → a");
+	});
+
+	it("update para done parcial não limpa a lista", async () => {
+		const { holder, tool } = setup();
+		await tool.execute("1", { action: "add", texts: ["a", "b"] }, undefined, undefined, noUiCtx);
+		const r = await tool.execute("2", { action: "update", id: 1, status: "done" }, undefined, undefined, noUiCtx);
+		expect(r.content[0]!.text).toBe("Tarefa #1 [done] → a");
+		expect(holder.value.items).toHaveLength(2);
+		expect(r.details.items).toHaveLength(2);
+	});
+
+	it("último done: exibe resumo final e limpa automaticamente", async () => {
+		const sent: { customType: string; content: string; display?: boolean }[] = [];
+		const holder: TodoToolState = { value: createTodoState() };
+		const defs: CapturedTool[] = [];
+		const fakePi = {
+			registerTool: (d: CapturedTool) => defs.push(d),
+			sendMessage: (m: { customType: string; content: string; display?: boolean }) => sent.push(m),
+		};
+		registerTodoTool(fakePi as any, holder);
+		const tool = defs[0]!;
+		await tool.execute("1", { action: "add", texts: ["a", "b"] }, undefined, undefined, noUiCtx);
+		await tool.execute("2", { action: "update", id: 1, status: "done" }, undefined, undefined, noUiCtx);
+		const r = await tool.execute("3", { action: "update", id: 2, status: "done" }, undefined, undefined, noUiCtx);
+		// Resumo final no conteúdo + limpeza automática.
+		expect(r.content[0]!.text).toContain("todas as 2 tarefa(s) concluídas");
+		expect(r.content[0]!.text).toContain("Lista limpa automaticamente.");
+		expect(holder.value.items).toHaveLength(0);
+		expect(holder.value.nextId).toBe(1);
+		expect(r.details.items).toHaveLength(0);
+		// Mesmo estilo do /doctor: mensagem exibida no histórico.
+		expect(sent).toHaveLength(1);
+		expect(sent[0]!.customType).toBe("todo_report");
+		expect(sent[0]!.display).toBe(true);
+		expect(sent[0]!.content).toContain("#1 a");
+		expect(sent[0]!.content).toContain("#2 b");
+	});
+
+	it("auto-clear funciona sem sendMessage (pi mínimo)", async () => {
+		const { holder, tool } = setup();
+		await tool.execute("1", { action: "add", texts: ["solo"] }, undefined, undefined, noUiCtx);
+		const r = await tool.execute("2", { action: "update", id: 1, status: "done" }, undefined, undefined, noUiCtx);
+		expect(r.content[0]!.text).toContain("Lista limpa automaticamente.");
+		expect(holder.value.items).toHaveLength(0);
 	});
 
 	it("erro de operação mantém snapshot do estado ATUAL (não perde estado)", async () => {
