@@ -45,6 +45,58 @@ describe("contexto do projeto", () => {
     expect(context.commands).toEqual({});
   });
 
+  it("detecta Deno, C#, Swift, Dart e C/C++ por marcadores", async () => {
+    const cwd = await fixture();
+    await writeFile(join(cwd, "deno.json"), "{}");
+    await writeFile(join(cwd, "app.csproj"), "<Project/>");
+    await writeFile(join(cwd, "Package.swift"), "// swift-tools-version: 5.9");
+    await writeFile(join(cwd, "pubspec.yaml"), "name: app\n");
+    await writeFile(join(cwd, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.28)\n");
+    const context = await detectProjectContext(cwd);
+    expect(context.stack).toEqual(["C#", "C/C++", "Dart/Flutter", "Deno", "Swift"]);
+    expect(context.packageManager).toBeNull();
+  });
+
+  it("detecta frameworks Python via requirements e pyproject", async () => {
+    const cwd = await fixture();
+    await writeFile(join(cwd, "requirements-dev.txt"), "django==5.0\npytest>=8\nrequests\n");
+    await writeFile(join(cwd, "pyproject.toml"), '[project]\ndependencies = ["fastapi>=0.110"]\n');
+    await writeFile(join(cwd, ".python-version"), "3.12.1\n");
+    const context = await detectProjectContext(cwd);
+    expect(context.stack).toEqual(["Django", "FastAPI", "Pytest", "Python 3.12"]);
+  });
+
+  it("detecta frameworks Rust, Go, PHP, Ruby e Elixir pelo conteúdo", async () => {
+    const cwd = await fixture();
+    await writeFile(join(cwd, "Cargo.toml"), '[package]\nname = "app"\n[dependencies]\ntokio = "1"\nserde = "1"\n');
+    await writeFile(join(cwd, "go.mod"), "module example.com/app\n\ngo 1.22\n\nrequire github.com/gin-gonic/gin v1.9\n");
+    await writeFile(join(cwd, "composer.json"), JSON.stringify({ require: { "laravel/framework": "^11" } }));
+    await writeFile(join(cwd, "Gemfile"), 'source "https://rubygems.org"\ngem "rails", "~> 7"\n');
+    await writeFile(join(cwd, "mix.exs"), 'defmodule App.MixProject do\n  {:phoenix, "~> 1.7"}\nend\n');
+    const context = await detectProjectContext(cwd);
+    expect(context.stack).toEqual([
+      "Elixir", "Gin", "Go 1.22", "Laravel", "PHP", "Phoenix", "Rails", "Ruby", "Rust", "Serde", "Tokio",
+    ]);
+  });
+
+  it("versiona Node.js via engines sem quebrar o rótulo base", async () => {
+    const cwd = await fixture();
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ engines: { node: ">=20" } }));
+    const context = await detectProjectContext(cwd);
+    expect(context.stack).toEqual(["Node.js 20"]);
+    expect(context.packageManager).toBe("npm");
+  });
+
+  it("ignora manifests corrompidos sem lançar", async () => {
+    const cwd = await fixture();
+    await writeFile(join(cwd, "Cargo.toml"), "[dependencies\nTHIS IS NOT VALID");
+    await writeFile(join(cwd, "composer.json"), "{invalid");
+    await writeFile(join(cwd, "requirements.txt"), "django==5.0\n");
+    const context = await detectProjectContext(cwd);
+    // Marcador por arquivo vale mesmo com conteúdo inválido; framework exige parse.
+    expect(context.stack).toEqual(["Django", "PHP", "Python", "Rust"]);
+  });
+
   it("persiste atomicamente e formata resumo curto", async () => {
     const cwd = await fixture();
     const context = await detectProjectContext(cwd);
