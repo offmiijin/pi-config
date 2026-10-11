@@ -24,6 +24,22 @@ describe("dependencyBootstrapHint", () => {
     expect(hint).toContain("python -m pip install ./pacote.whl");
   });
 
+  it("orienta bootstrap Go/Rust offline (vendor + fetch)", () => {
+    const goHint = dependencyBootstrapHint(
+      "go mod download",
+      "go: golang.org/x/mod: module lookup disabled by GOPROXY=off",
+    );
+    expect(goHint).toContain("go mod vendor");
+    expect(goHint).toContain("artifacts");
+
+    const cargoHint = dependencyBootstrapHint(
+      "cargo fetch",
+      "error: failed to download `serde`: network is off",
+    );
+    expect(cargoHint).toContain("cargo vendor");
+    expect(cargoHint).toContain("sandbox_fetch");
+  });
+
   it("não adiciona orientação para comandos comuns ou falhas não relacionadas", () => {
     expect(dependencyBootstrapHint("npm test", "test failed")).toBeUndefined();
     expect(dependencyBootstrapHint("npm install", "permission denied")).toBeUndefined();

@@ -37,7 +37,7 @@ import {
   setLandlockExecPath,
   wrapWithLandlock,
 } from "../bwrap-executor";
-import { fetchUrl, execQuarantine, promoteArtifact, validateQuarantinePath } from "../quarantine";
+import { fetchUrl, classifyFetchError, execQuarantine, isFetchNetworkEnabled, promoteArtifact, validateQuarantinePath } from "../quarantine";
 import { DEFAULT_CONFIG, type SandboxConfig, type SandboxFilesystemConfig, type SandboxProfilesConfig } from "../types";
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -263,13 +263,20 @@ describe("validateQuarantinePath", () => {
 // ─── fetchUrl ─────────────────────────────────────────────────
 
 describe("fetchUrl", () => {
+  function downloadCmd(): string[] {
+    const calls = vi.mocked(execInProfile).mock.calls;
+    const download = calls.find((call) => (call[1].command as string[]).includes("-o"));
+    if (!download) throw new Error("comando de download não executado");
+    return download[1].command as string[];
+  }
+
   it("monta curl com -o no dir fetch", async () => {
     const cwd = fixture();
     const { file, result } = await fetchUrl(
       makeConfig(), cwd, "https://ex.com/a.tar.gz", "pkg/a.tar.gz",
     );
     expect(file).toBe(join(cwd, ".sandbox-cache", "fetch", "pkg", "a.tar.gz"));
-    const cmd = vi.mocked(execInProfile).mock.calls[0][1].command;
+    const cmd = downloadCmd();
     expect(cmd[0]).toBe("curl");
     expect(cmd).toContain(file);
     expect(cmd).toContain(urlOf(cmd) ?? "");
@@ -277,6 +284,66 @@ describe("fetchUrl", () => {
     // nunca do próprio dir de fetch (senão vira path aninhado).
     expect(vi.mocked(execInProfile).mock.calls[0][1].baseCwd).toBe(cwd);
     expect(result.exitCode).toBe(0);
+  });
+
+  it("faz preflight do curl antes do download", async () => {
+    const cwd = fixture();
+    await fetchUrl(makeConfig(), cwd, "https://ex.com/a.tar.gz");
+    const first = vi.mocked(execInProfile).mock.calls[0][1].command as string[];
+    expect(first.slice(0, 2)).toEqual(["curl", "--version"]);
+    expect(vi.mocked(execInProfile)).toHaveBeenCalledTimes(2);
+  });
+
+  it("preflight falhando aborta com mensagem acionável", async () => {
+    const cwd = fixture();
+    vi.mocked(execInProfile).mockResolvedValueOnce({
+      stdout: Buffer.from(""), stderr: "bwrap: command not found", exitCode: 127, timedOut: false, aborted: false,
+    });
+    await expect(fetchUrl(makeConfig(), cwd, "https://ex.com/a.tar.gz")).rejects.toThrow(/curl indisponível/);
+    expect(vi.mocked(execInProfile)).toHaveBeenCalledTimes(1);
+  });
+
+  it("recusa cedo sem rede efetiva", async () => {
+    const cwd = fixture();
+    const offline = makeConfig({ internet: { enabled: false } });
+    expect(isFetchNetworkEnabled(offline)).toBe(false);
+    await expect(fetchUrl(offline, cwd, "https://ex.com/a.tar.gz")).rejects.toThrow(/exige rede/);
+    expect(vi.mocked(execInProfile)).not.toHaveBeenCalled();
+  });
+
+  it("curl com retry, proto restrito e teto de tamanho", async () => {
+    const cwd = fixture();
+    await fetchUrl(makeConfig(), cwd, "https://ex.com/a.tar.gz");
+    const cmd = downloadCmd();
+    expect(cmd).toContain("--retry");
+    expect(cmd).toContain("--max-filesize");
+    const proto = cmd.indexOf("--proto");
+    expect(cmd[proto + 1]).toBe("=http,https");
+  });
+
+  it("falha classifica o erro e remove o parcial", async () => {
+    const cwd = fixture();
+    const { mkdirSync, writeFileSync, existsSync } = await import("node:fs");
+    const { join: joinPath } = await import("node:path");
+    mkdirSync(joinPath(cwd, ".sandbox-cache", "fetch"), { recursive: true });
+    writeFileSync(joinPath(cwd, ".sandbox-cache", "fetch", "parcial.bin"), "metade");
+    vi.mocked(execInProfile)
+      .mockResolvedValueOnce({ stdout: Buffer.from("curl 8"), stderr: "", exitCode: 0, timedOut: false, aborted: false })
+      .mockResolvedValueOnce({
+        stdout: Buffer.from(""), stderr: "curl: (6) Could not resolve host: ex.com", exitCode: 6, timedOut: false, aborted: false,
+      });
+    await expect(fetchUrl(makeConfig(), cwd, "https://ex.com/a.tar.gz", "parcial.bin"))
+      .rejects.toThrow(/DNS não resolveu/);
+    expect(existsSync(joinPath(cwd, ".sandbox-cache", "fetch", "parcial.bin"))).toBe(false);
+  });
+
+  it("classifyFetchError cobre timeout, TLS, HTTP, tamanho e genérico", () => {
+    expect(classifyFetchError(28, "curl: (28) Timeout", "https://ex.com/a")).toMatch(/tempo esgotado/);
+    expect(classifyFetchError(60, "curl: (60) SSL", "https://ex.com/a")).toMatch(/TLS/);
+    expect(classifyFetchError(22, "curl: (22) 404", "https://ex.com/a")).toMatch(/HTTP recusou/);
+    expect(classifyFetchError(63, "", "https://ex.com/a")).toMatch(/limite/);
+    expect(classifyFetchError(7, "", "https://ex.com/a")).toMatch(/conexão/);
+    expect(classifyFetchError(null, "", "https://ex.com/a")).toMatch(/desconhecido/);
   });
 
   it("output default = basename da URL", async () => {
@@ -330,6 +397,28 @@ describe("execQuarantine", () => {
     await expect(execQuarantine(makeConfig(), cwd, "   ")).rejects.toThrow(/comando/);
     await expect(execQuarantine(makeConfig(), cwd, "ls", "run", ["nao-existe"])).rejects.toThrow(/não encontrado/);
     await expect(execQuarantine(makeConfig(), cwd, "ls", "../escape")).rejects.toThrow(/fora/);
+  });
+
+  it("retorna workDir e repassa timeout configurado", async () => {
+    const cwd = fixture();
+    const res = await execQuarantine(makeConfig(), cwd, "echo 1", "run1", [], undefined, 60);
+    expect(res.workDir).toBe(join(cwd, ".sandbox-cache", "runs", "run1"));
+    expect(vi.mocked(execInProfile).mock.calls[0][1].timeout).toBe(60);
+  });
+
+  it("timeout inválido cai para o padrão sem desabilitar", async () => {
+    const cwd = fixture();
+    await execQuarantine(makeConfig(), cwd, "echo 1", "run1", [], undefined, 0);
+    expect(vi.mocked(execInProfile).mock.calls[0][1].timeout).toBe(300);
+  });
+
+  it("rejeita artefato symlink que escapa do fetch", async () => {
+    const cwd = fixture();
+    const fetchDir = join(cwd, ".sandbox-cache", "fetch");
+    mkdirSync(fetchDir, { recursive: true });
+    symlinkSync("/etc/hostname", join(fetchDir, "evil"));
+    await expect(execQuarantine(makeConfig(), cwd, "ls", "run1", ["evil"])).rejects.toThrow(/escapa/);
+    expect(vi.mocked(execInProfile)).not.toHaveBeenCalled();
   });
 });
 

@@ -14,10 +14,40 @@ const mockFs = vi.hoisted(() => {
 		readFileSync: vi.fn(),
 	};
 });
+const mockExecSync = vi.hoisted(() => vi.fn());
 
 vi.mock("node:fs", () => mockFs);
+vi.mock("node:child_process", () => ({ execSync: mockExecSync }));
 
 // getInstallGuide
+describe("getAuthInfo", () => {
+	beforeEach(() => mockExecSync.mockReset());
+
+	it("detecta gh instalado e usuário autenticado", async () => {
+		mockExecSync
+			.mockReturnValueOnce("")
+			.mockReturnValueOnce("✓ Logged in to github.com as octocat (user)\\n");
+		const { getAuthInfo } = await import("../auth");
+
+		expect(getAuthInfo()).toEqual({ available: true, authenticated: true, user: "octocat" });
+		expect(mockExecSync).toHaveBeenNthCalledWith(2, "gh auth status 2>&1", expect.objectContaining({ timeout: 8000 }));
+	});
+
+	it("distingue gh instalado mas não autenticado", async () => {
+		mockExecSync.mockReturnValueOnce("").mockImplementationOnce(() => { throw new Error("not logged in"); });
+		const { getAuthInfo } = await import("../auth");
+
+		expect(getAuthInfo()).toEqual({ available: true, authenticated: false, user: "" });
+	});
+
+	it("retorna indisponível quando gh não está instalado", async () => {
+		mockExecSync.mockImplementationOnce(() => { throw new Error("ENOENT"); });
+		const { getAuthInfo } = await import("../auth");
+
+		expect(getAuthInfo()).toEqual({ available: false, authenticated: false, user: "" });
+	});
+});
+
 describe("getInstallGuide", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();

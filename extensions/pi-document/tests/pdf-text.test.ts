@@ -20,7 +20,7 @@ import {
 	extractPdfText,
 	isPdftotextAvailable,
 	resetPdftotextAvailability,
-} from "./pdf-text";
+} from "../pdf-text";
 
 describe("pdf-text", () => {
 	beforeEach(() => {

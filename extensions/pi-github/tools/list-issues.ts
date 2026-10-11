@@ -24,10 +24,10 @@ export function listIssuesTool(gh: GhApi) {
 				),
 			),
 			limit: Type.Optional(
-				Type.Integer({ description: "Máximo de resultados", default: 10 }),
+				Type.Integer({ minimum: 1, maximum: 100, description: "Máximo de resultados", default: 10 }),
 			),
 			labels: Type.Optional(
-				Type.Array(Type.String(), { description: "Filtrar por labels" }),
+				Type.Array(Type.String({ minLength: 1 }), { description: "Filtrar por labels" }),
 			),
 		}),
 

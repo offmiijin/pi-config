@@ -32,7 +32,7 @@ import {
 	isImageFile,
 	ocrPdf,
 	recognizeImage,
-} from "./ocr";
+} from "../ocr";
 
 describe("ocr", () => {
 	beforeEach(() => vi.clearAllMocks());

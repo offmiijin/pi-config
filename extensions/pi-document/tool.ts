@@ -9,12 +9,11 @@ import { hasSufficientText, isImageFile, ocrPdf, recognizeImage } from "./ocr";
 const MAX_DOCUMENT_SIZE = 25 * 1024 * 1024;
 
 async function isPdfFile(filePath: string): Promise<boolean> {
-	if (path.extname(filePath).toLowerCase() === ".pdf") return true;
 	const handle = await fs.open(filePath, "r");
 	try {
 		const header = Buffer.alloc(5);
-		await handle.read(header, 0, header.length, 0);
-		return header.toString("latin1") === "%PDF-";
+		const { bytesRead } = await handle.read(header, 0, header.length, 0);
+		return bytesRead === header.length && header.toString("latin1") === "%PDF-";
 	} finally {
 		await handle.close();
 	}

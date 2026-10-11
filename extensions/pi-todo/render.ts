@@ -21,6 +21,8 @@ export function statusColor(status: TodoStatus): "muted" | "warning" | "success"
 			return "success";
 		case "error":
 			return "warning";
+		default:
+			return "muted";
 	}
 }
 
@@ -36,4 +38,24 @@ export function visibleTodoItems(items: readonly TodoItem[], limit = 5): readonl
 	const firstIncomplete = items.findIndex((item) => item.status !== "done");
 	const start = firstIncomplete === -1 ? Math.max(0, items.length - limit) : firstIncomplete;
 	return items.slice(start, start + limit);
+}
+
+/** Chave da mensagem que exibe o resumo final no histórico (estilo /doctor). */
+export const TODO_REPORT_MESSAGE = "todo_report";
+
+/** Texto puro do resumo final, exibido ao concluir todas as tarefas. */
+export function buildCompletionReport(items: readonly TodoItem[]): string {
+	const lines = [
+		`✅ Todo — todas as ${items.length} tarefa(s) concluídas`,
+		"",
+		...items.map((t) => `✅ #${t.id} ${t.text}`),
+		"",
+		`Resumo: ${items.length} concluída(s)`,
+	];
+	return lines.join("\n");
+}
+
+/** Verdadeiro quando a lista tem itens e todos estão concluídos. */
+export function isComplete(items: readonly TodoItem[]): boolean {
+	return items.length > 0 && items.every((item) => item.status === "done");
 }

@@ -10,8 +10,8 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { renderTodoLine, visibleTodoItems } from "./render.ts";
-import { updateTodoWidget } from "./widget.ts";
+import { buildCompletionReport, isComplete, renderTodoLine, TODO_REPORT_MESSAGE, visibleTodoItems } from "./render.ts";
+import { MAX_WIDGET_ITEMS, updateTodoWidget } from "./widget.ts";
 import { addTodos, clearTodos, isTodoStatus, snapshot, updateTodo, type TodoToolState } from "./state.ts";
 import type { TodoAction, TodoDetails, TodoState, TodoStatus } from "./types.ts";
 
@@ -86,7 +86,7 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 			"Se não conseguir prosseguir em uma etapa, marque-a como error via todo (update com id, status error e o motivo) e explique o bloqueio ao usuário.",
 			"Se uma ferramenta falhar durante a execução, a tool todo marca a etapa ativa como error automaticamente — retome usando todo update para in-progress ou pending quando corrigir o problema.",
 			"Em conversas longas, use todo list para recuperar o contexto do que já foi feito e do que falta.",
-			"Ao concluir todo o trabalho, use todo clear para limpar a lista e encerrar o rastreamento.",
+			"Quando todas as tarefas estiverem concluídas (done), a lista é exibida e limpa automaticamente via todo clear — use todo clear manualmente apenas para descartar uma lista inacabada.",
 		],
 		parameters: TodoParams,
 		executionMode: "sequential",
@@ -116,7 +116,18 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 					if (!r.ok) return fail("update", state, r.error!);
 					holder.value = r.state;
 					updateTodoWidget(ctx, holder);
-					return ok("update", r.state, `Tarefa #${params.id} → ${r.updated!.text}`);
+					if (isComplete(r.state.items)) {
+						const report = buildCompletionReport(r.state.items);
+						try {
+							pi.sendMessage?.({ customType: TODO_REPORT_MESSAGE, content: report, display: true });
+						} catch {
+							// Exibição é opcional — o resumo segue no conteúdo da tool.
+						}
+						holder.value = clearTodos();
+						updateTodoWidget(ctx, holder);
+						return ok("update", holder.value, `${report}\nLista limpa automaticamente.`);
+					}
+					return ok("update", r.state, `Tarefa #${params.id} [${r.updated!.status}] → ${r.updated!.text}`);
 				}
 
 				case "clear": {
@@ -151,13 +162,13 @@ export function registerTodoTool(pi: ExtensionAPI, holder: TodoToolState): void 
 
 			if (details.action === "list") {
 				if (details.items.length === 0) return new Text(theme.fg("dim", "Lista vazia"), 0, 0);
-				const shown = expanded ? details.items : visibleTodoItems(details.items);
+				const shown = expanded ? details.items : visibleTodoItems(details.items, MAX_WIDGET_ITEMS);
 				const lines = [
 					theme.fg("muted", `${details.items.length} tarefa(s):`),
 					...shown.map((t) => renderTodoLine(t, theme)),
 				];
-				if (!expanded && details.items.length > 5) {
-					lines.push(theme.fg("dim", `... ${details.items.length - 5} mais`));
+				if (!expanded && details.items.length > MAX_WIDGET_ITEMS) {
+					lines.push(theme.fg("dim", `... ${details.items.length - MAX_WIDGET_ITEMS} mais`));
 				}
 				return new Text(lines.join("\n"), 0, 0);
 			}

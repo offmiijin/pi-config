@@ -11,7 +11,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { existsSync, openSync, closeSync, readdirSync, realpathSync, mkdirSync, lstatSync, chmodSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { SandboxConfig, BwrapCall, BwrapResult, SandboxProfileName } from "./types";
-import { resolveSystemPaths } from "./portability";
+import { resolveSystemPaths, resolvConfTarget } from "./portability";
 
 // ─── Env vars seguras (whitelist) ──────────────────────────
 
@@ -447,6 +447,12 @@ function getBwrapCacheKey(
 
 // ─── Construção de argumentos bwrap ───────────────────────────
 
+/** Bind extra do alvo real do resolv.conf (symlink do systemd-resolved). */
+function resolvConfBind(): string[] {
+  const target = resolvConfTarget();
+  return target ? ["--ro-bind", target, target] : [];
+}
+
 /**
  * Constrói o array de argumentos base do bwrap.
  * Estes argumentos são comuns a todas as tools.
@@ -541,6 +547,9 @@ function buildNormalArgs(config: SandboxConfig, cwd: string, workspaceRoot = cwd
     // /etc seletivo — apenas arquivos necessários pra runtime.
     // Inclui ld.so.cache/conf (Debian/Ubuntu/Fedora) e outros condicionais.
     ...resolveSystemPaths().etcFiles.map((f) => ["--ro-bind", f, f]).flat(),
+    // Alvo do resolv.conf symlink (systemd-resolved): sem ele, o link
+    // aponta para um /run vazio no sandbox e o DNS morre.
+    ...resolvConfBind(),
   ];
 
   // ── Isolamento do HOME ──────────────────────────────────
@@ -813,6 +822,8 @@ function buildIsolationArgs(
     "--tmpfs", "/run",
     ...resolveSystemPaths().roDirs.map((dir) => ["--ro-bind", dir, dir]).flat(),
     ...resolveSystemPaths().etcFiles.map((f) => ["--ro-bind", f, f]).flat(),
+    // Alvo do resolv.conf symlink (ver perfil normal).
+    ...resolvConfBind(),
   ];
 
   // ── Landlock executor ─────────────────────

@@ -20,11 +20,12 @@ export function searchTool(gh: GhApi) {
 
 		parameters: Type.Object({
 			query: Type.String({
+				minLength: 1,
 				description:
 					"Query de busca (sintaxe GitHub). Ex: \"bug login\" repo:owner/name is:open",
 			}),
 			repo: Type.Optional(
-				Type.String({ description: "Limitar a um repositório (formato: owner/name)" }),
+				Type.String({ pattern: "^[^/\\s]+/[^/\\s]+$", description: "Limitar a um repositório (formato: owner/name)" }),
 			),
 			state: Type.Optional(
 				Type.Union(

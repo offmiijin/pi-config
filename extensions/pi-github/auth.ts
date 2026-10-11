@@ -12,6 +12,7 @@ import type { AuthInfo } from "./types";
 // ── Detecção de SO ────────────────────────────────────────────────────
 
 const OS_RELEASE_PATH = "/etc/os-release";
+export const GH_AUTH_TIMEOUT_MS = 8_000;
 
 interface OsRelease {
 	id: string;
@@ -98,7 +99,7 @@ export function getAuthInfo(): AuthInfo {
 
 	// gh CLI instalado?
 	try {
-		execSync("gh --version", { stdio: "ignore" });
+		execSync("gh --version", { stdio: "ignore", timeout: GH_AUTH_TIMEOUT_MS });
 		info.available = true;
 	} catch {
 		return info;
@@ -109,6 +110,7 @@ export function getAuthInfo(): AuthInfo {
 		const out = execSync("gh auth status 2>&1", {
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "pipe"],
+			timeout: GH_AUTH_TIMEOUT_MS,
 		});
 		info.authenticated = true;
 		const userMatch = out.match(/as\s+(\S+)/);

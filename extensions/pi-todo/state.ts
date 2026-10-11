@@ -107,7 +107,7 @@ export function updateTodo(
 	if (!isTodoStatus(status)) {
 		return { ok: false, state, error: `status inválido: ${String(status)}` };
 	}
-	if (status === "error" && (!errorMessage || errorMessage.trim() === "")) {
+	if (status === "error" && (typeof errorMessage !== "string" || errorMessage.trim() === "")) {
 		return { ok: false, state, error: "status error exige descrição do motivo" };
 	}
 
@@ -123,9 +123,9 @@ export function updateTodo(
 		return { ok: false, state, error: `tarefa #${id} já foi concluída e não pode ser reaberta` };
 	}
 
-	const errorText = errorMessage?.trim();
+	const errorText = typeof errorMessage === "string" ? errorMessage.trim() : "";
 	const updated = status === "error"
-		? { id: state.items[index]!.id, text: state.items[index]!.text, status, error: errorText! }
+		? { id: state.items[index]!.id, text: state.items[index]!.text, status, error: errorText }
 		: { id: state.items[index]!.id, text: state.items[index]!.text, status };
 	const items = state.items.map((item, itemIndex) => itemIndex === index ? updated : item);
 

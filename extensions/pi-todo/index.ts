@@ -18,7 +18,19 @@ export default function (pi: ExtensionAPI) {
 	const holder: TodoToolState = { value: createTodoState() };
 
 	const rebuildState = (ctx: ExtensionContext): void => {
-		holder.value = reconstructState(ctx.sessionManager.getBranch());
+		try {
+			holder.value = reconstructState(ctx.sessionManager.getBranch());
+		} catch (error) {
+			console.warn("[pi-todo] Não foi possível reconstruir o estado:", error);
+		}
+	};
+
+	const refreshWidget = (ctx: ExtensionContext): void => {
+		try {
+			updateTodoWidget(ctx, holder);
+		} catch (error) {
+			console.warn("[pi-todo] Não foi possível atualizar o widget:", error);
+		}
 	};
 
 	// Reconstrói o último snapshot válido do branch atual:
@@ -26,11 +38,11 @@ export default function (pi: ExtensionAPI) {
 	// - /fork e navegação de árvore → estado reflete o ponto da história.
 	pi.on("session_start", async (_event, ctx) => {
 		rebuildState(ctx);
-		updateTodoWidget(ctx, holder);
+		refreshWidget(ctx);
 	});
 	pi.on("session_tree", async (_event, ctx) => {
 		rebuildState(ctx);
-		updateTodoWidget(ctx, holder);
+		refreshWidget(ctx);
 	});
 
 	registerTodoTool(pi, holder);

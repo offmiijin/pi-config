@@ -31,9 +31,9 @@ export function normalizeTodoItem(value: unknown): TodoItem | null {
 
 	if (status === "error") {
 		if (typeof error !== "string" || error.trim() === "") return null;
-		return { id, text, status, error: error.trim() };
+		return { id, text: text.trim(), status, error: error.trim() };
 	}
-	return { id, text, status };
+	return { id, text: text.trim(), status };
 }
 
 /**
