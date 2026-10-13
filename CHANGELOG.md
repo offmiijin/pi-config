@@ -22,6 +22,10 @@
 - `pi-panels/changes`: evita vazamento de estilos ANSI entre as colunas durante a rolagem.
 - `pi-document`: materializa imagens temporárias do clipboard no workspace para permitir acesso pelo sandbox e declara explicitamente `wasm-feature-detect`.
 
+### Removed
+
+- Remove a extensão externa `pi-mcp-adapter` (`settings.example.json`/`settings.json` sem `packages`); MCP passa a usar apenas `builtin:mcp`.
+
 ## [1.5.0] - 2026-09-10
 
 ### Added
