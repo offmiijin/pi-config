@@ -5,6 +5,7 @@ Hooks de segurança para chamadas de ferramentas do pi.
 ## Hooks
 
 - `block-force-push.ts` bloqueia `git push --force` para `main`/`master` quando a skill `git-commit` está ativa;
+- `block-protected-commit.ts` bloqueia `git commit` em `main`/`master`/`development` de forma completa e incondicional (independe de skill ativa; sem exceção via flag ou autorização — criar branch feature);
 - `security-guard.ts` cobre padrões que não são isolados pelo `pi-sandbox`, como fork bombs, download direcionado para shell e avaliação dinâmica.
 
 Os hooks são registrados automaticamente por `index.ts` e atuam sobre chamadas da ferramenta `bash`.
