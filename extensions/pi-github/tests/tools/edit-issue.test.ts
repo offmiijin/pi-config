@@ -93,13 +93,22 @@ describe("editIssueTool", () => {
 		expect(result.content[0].text).toContain("edit failed");
 	});
 
-	it("shows no changes when no fields provided", async () => {
+	it("rejects when no fields are provided", async () => {
 		const gh = makeGh();
-		gh.issueEdit.mockResolvedValue("ok");
-
 		const tool = editIssueTool(gh);
 		const result = await tool.execute("e5", { number: 1 }, undefined, undefined, undefined);
 
-		expect(result.content[0].text).toContain("nenhuma");
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("Nenhuma alteração");
+		expect(gh.issueEdit).not.toHaveBeenCalled();
+	});
+
+	it("rejects an invalid issue number", async () => {
+		const gh = makeGh();
+		const tool = editIssueTool(gh);
+		const result = await tool.execute("e6", { number: 0, title: "New" }, undefined, undefined, undefined);
+
+		expect(result.isError).toBe(true);
+		expect(gh.issueEdit).not.toHaveBeenCalled();
 	});
 });

@@ -2,7 +2,7 @@
  * pi-memory — Tests: validação de candidatos, política e revisor (módulo puro).
  */
 
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 
 import type { CandidateRecord } from "../pipeline/pipeline.ts";

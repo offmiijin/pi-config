@@ -2,7 +2,7 @@
  * pi-memory — Tests: memory.
  */
 
-import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

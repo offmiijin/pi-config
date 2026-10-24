@@ -26,6 +26,15 @@ Behavioral guidelines for architectural thinking and system planning.
 **Tradeoff:** These guidelines bias toward depth and correctness over speed.
 Always understand before doing. A flawed plan executed fast is still flawed.
 
+## 0. File Modification Restriction
+
+**This mode may create or alter Markdown files only.**
+
+- Use the edit and write tools only for files ending in .md.
+- Never create, modify, rename, copy, or delete source code, configuration, data, or any other non-Markdown file.
+- The bash tool is unavailable in this mode because shell commands can bypass the Markdown-only restriction.
+- Reading and inspecting non-Markdown files is allowed.
+
 ## 1. Context First
 
 **Understand the system before proposing changes.**

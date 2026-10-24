@@ -11,6 +11,17 @@ export function shouldTogglePanel(data: string, now: number, lastToggleAt: numbe
 	return matchesKey(data, Key.alt("d")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
 }
 
+/** String não vazia (após trim) ou undefined — payloads de eventos não são confiáveis. */
+function cleanString(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
 export default function (pi: ExtensionAPI): void {
 	let activePanel: ChangesPanel | null = null;
 	let closeActivePanel: (() => void) | null = null;
@@ -24,14 +35,15 @@ export default function (pi: ExtensionAPI): void {
 	let sessionWorktreePath: string | undefined;
 	let sessionWorkspaceCwd: string | undefined;
 	let initializeBaseCommit: Promise<void> | undefined;
+	let refreshInFlight = false;
 
 	const persistSessionState = (
-		baseCommit: string,
-		paths: { worktreePath?: string; workspaceCwd?: string } = {},
+		baseCommit: unknown,
+		paths: { worktreePath?: unknown; workspaceCwd?: unknown } = {},
 	): void => {
-		const normalized = baseCommit.trim();
-		const worktreePath = paths.worktreePath?.trim() || sessionWorktreePath;
-		const workspaceCwd = paths.workspaceCwd?.trim() || sessionWorkspaceCwd;
+		const normalized = cleanString(baseCommit);
+		const worktreePath = cleanString(paths.worktreePath) ?? sessionWorktreePath;
+		const workspaceCwd = cleanString(paths.workspaceCwd) ?? sessionWorkspaceCwd;
 		if (!normalized) return;
 		const changed =
 			sessionBaseCommit !== normalized ||
@@ -54,9 +66,14 @@ export default function (pi: ExtensionAPI): void {
 	};
 
 	pi.events?.on("custom:dev-sandbox-session", (event: unknown) => {
-		const nextSession = event as typeof sandboxSession;
+		const session = isRecord(event) ? event : {};
+		const nextSession = {
+			worktreePath: cleanString(session.worktreePath),
+			workspaceCwd: cleanString(session.workspaceCwd),
+			baseCommit: cleanString(session.baseCommit),
+		};
 		sandboxSession = nextSession;
-		if (sessionStarted && typeof nextSession?.baseCommit === "string") {
+		if (sessionStarted && nextSession.baseCommit) {
 			persistSessionState(sessionBaseCommit ?? nextSession.baseCommit, nextSession);
 		}
 	});
@@ -69,18 +86,24 @@ export default function (pi: ExtensionAPI): void {
 		if (initializeBaseCommit) return initializeBaseCommit;
 
 		initializeBaseCommit = (async () => {
-			// Aguarda os demais listeners de session_start emitirem o estado do sandbox.
-			await Promise.resolve();
-			if (sessionBaseCommit) return;
-			if (sandboxSession?.baseCommit) {
-				persistSessionState(sandboxSession.baseCommit, sandboxSession);
-				return;
-			}
+			try {
+				// Aguarda os demais listeners de session_start emitirem o estado do sandbox.
+				await Promise.resolve();
+				if (sessionBaseCommit) return;
+				if (sandboxSession?.baseCommit) {
+					persistSessionState(sandboxSession.baseCommit, sandboxSession);
+					return;
+				}
 
-			const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ??
-				sessionWorktreePath ?? sessionWorkspaceCwd ?? ctx.cwd;
-			const result = await pi.exec("git", ["-C", cwd, "rev-parse", "--verify", "HEAD"], { timeout: 5000 });
-			if (!sessionBaseCommit && result.code === 0) persistSessionState(result.stdout);
+				const cwd = sandboxSession?.worktreePath ?? sandboxSession?.workspaceCwd ??
+					sessionWorktreePath ?? sessionWorkspaceCwd ?? ctx.cwd;
+				const result = await pi.exec("git", ["-C", cwd, "rev-parse", "--verify", "HEAD"], { timeout: 5000 });
+				if (!sessionBaseCommit && result.code === 0) persistSessionState(result.stdout);
+			} catch (error) {
+				console.warn("[pi-panels/changes] Não foi possível determinar o commit-base:", error);
+				// Permite nova tentativa no próximo refresh em vez de falhar para sempre.
+				initializeBaseCommit = undefined;
+			}
 		})();
 		return initializeBaseCommit;
 	};
@@ -98,15 +121,20 @@ export default function (pi: ExtensionAPI): void {
 
 	const refreshPanel = (ctx: ExtensionContext): void => {
 		const panel = activePanel;
-		if (!panel) return;
-		void loadChanges(ctx).then((snapshot) => {
+		if (!panel || refreshInFlight) return;
+		refreshInFlight = true;
+		loadChanges(ctx).then((snapshot) => {
 			if (activePanel === panel) panel.setSnapshot(snapshot);
+		}).catch((error) => {
+			console.warn("[pi-panels/changes] Não foi possível atualizar o painel:", error);
+		}).finally(() => {
+			refreshInFlight = false;
 		});
 	};
 
 	const openPanel = async (ctx: ExtensionContext): Promise<void> => {
-		if (ctx.mode !== "tui") {
-			ctx.ui.notify("O painel de alterações requer o modo interativo (TUI).", "error");
+		if (ctx.mode !== "tui" || !ctx.hasUI) {
+			ctx.ui?.notify?.("O painel de alterações requer o modo interativo (TUI).", "error");
 			return;
 		}
 
@@ -118,7 +146,14 @@ export default function (pi: ExtensionAPI): void {
 
 		openingPanel = true;
 		try {
-			const initialSnapshot = await loadChanges(ctx);
+			let initialSnapshot;
+			try {
+				initialSnapshot = await loadChanges(ctx);
+			} catch (error) {
+				console.warn("[pi-panels/changes] Não foi possível carregar as alterações:", error);
+				ctx.ui.notify("Não foi possível carregar as alterações do Git.", "error");
+				return;
+			}
 			await ctx.ui.custom<void>(
 			(tui, theme, _keybindings, done) => {
 				const panel = new ChangesPanel(tui, theme, initialSnapshot, done);

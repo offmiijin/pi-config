@@ -90,9 +90,9 @@ import {
 } from "./worktree";
 import { createBashOps } from "./tools/bash-ops";
 import { resolveCacheDirs, probeLandlockAbi, setLandlockExecPath, ensureQuarantineDir, resolveQuarantineDirs, execInSandbox } from "./bwrap-executor";
-import { execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
+import { classifyFetchError, execQuarantine, fetchUrl, promoteArtifact } from "./quarantine";
 import { dependencyBootstrapHint } from "./dependency-bootstrap";
-import { createNpmInstallPlan } from "./dependency-install";
+import { createDependencyInstallPlan } from "./dependency-install";
 import { Type } from "typebox";
 import { Container, SettingsList, Text, type SettingItem } from "@earendil-works/pi-tui";
 import { createReadOps } from "./tools/read-ops";
@@ -501,9 +501,9 @@ export default function (pi: ExtensionAPI) {
     name: "sandbox_install_dependencies",
     label: "Sandbox Install Dependencies",
     description:
-      "Installs npm dependencies in the current trusted sandbox workspace. " +
-      "Uses npm ci/install with --ignore-scripts and persistent npm cache. " +
-      "Does not accept arbitrary commands or run lifecycle scripts.",
+      "Installs project dependencies in the current trusted sandbox workspace (npm, Go, Cargo ou pip, pelo manifesto encontrado). " +
+      "Uses closed commands (npm ci/install with --ignore-scripts, go mod download, cargo fetch, pip install) and persistent caches. " +
+      "Does not accept arbitrary commands or run npm lifecycle scripts.",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
       if (!enabled || !config) throw sandboxBlockedError("sandbox_install_dependencies");
@@ -512,7 +512,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
-      const plan = createNpmInstallPlan(cwd);
+      const plan = createDependencyInstallPlan(cwd);
       const result = await execInSandbox(
         config,
         { command: plan.command, cwd, workspaceRoot: session?.worktreePath, timeout: 900, signal },
@@ -525,9 +525,11 @@ export default function (pi: ExtensionAPI) {
         details: {
           exitCode: result.exitCode,
           cwd,
+          kind: plan.kind,
+          manifest: plan.manifest,
           command: plan.command,
           lockfile: plan.lockfile,
-          cache: resolveCacheDirs(config, originalCwd).npm,
+          cache: resolveCacheDirs(config, originalCwd)[plan.kind === "pip" ? "pip" : "npm"],
         },
       };
     },
@@ -548,7 +550,8 @@ export default function (pi: ExtensionAPI) {
     label: "Sandbox Fetch",
     description:
       "Downloads external content (http/https) into an isolated quarantine directory " +
-      "with NO access to the project workspace. Use before executing downloaded code. " +
+      "with NO access to the project workspace. Retries transient failures, 512MB size limit. " +
+      "Use before executing downloaded code. " +
       "Returns the absolute path of the downloaded file.",
     parameters: Type.Object({
       url: Type.String({ description: "http/https URL to download" }),
@@ -561,9 +564,7 @@ export default function (pi: ExtensionAPI) {
       const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
       const { file, result } = await fetchUrl(config, cwd, params.url, params.output, signal);
       if (result.exitCode !== 0) {
-        throw new Error(
-          `[pi-sandbox] sandbox_fetch falhou (exit ${result.exitCode}).\n${result.stderr || "sem stderr"}`,
-        );
+        throw new Error(classifyFetchError(result.exitCode, result.stderr, params.url));
       }
       return {
         content: [{ type: "text", text: `Downloaded: ${file}` }],
@@ -590,24 +591,37 @@ export default function (pi: ExtensionAPI) {
       artifacts: Type.Optional(Type.Array(Type.String({
         description: "Relative paths in the fetch directory to copy into the work dir before executing",
       }))),
+      timeoutSeconds: Type.Optional(Type.Number({
+        description: "Timeout in seconds (default: 300, max: 900)",
+        minimum: 1,
+        maximum: 900,
+      })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (!enabled || !config) throw quarantineBlockedError("sandbox_quarantine_exec");
       const cwd = session?.workspaceCwd ?? ctx.cwd ?? localCwd;
+      const timeoutSeconds = params.timeoutSeconds ?? 300;
       const result = await execQuarantine(
-        config, cwd, params.command, params.workDir ?? "default", params.artifacts ?? [], signal,
+        config, cwd, params.command, params.workDir ?? "default", params.artifacts ?? [], signal, timeoutSeconds,
       );
       const out = result.stdout.toString();
       const err = result.stderr;
-      const output = [out, err].filter(Boolean).join("\n");
+      const fullOutput = [out, err].filter(Boolean).join("\n");
+      const truncated = fullOutput.length > 12_000;
+      const output = truncated ? fullOutput.slice(-12_000) : fullOutput;
       const bootstrapHint = dependencyBootstrapHint(params.command, output);
-      const text = [output, bootstrapHint, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
+      const statusLine = result.timedOut
+        ? `⏱ tempo esgotado (limite de ${timeoutSeconds}s)`
+        : result.aborted ? "cancelado pelo usuário" : undefined;
+      const text = [output, bootstrapHint, statusLine, `exit code: ${result.exitCode}`].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: text || "(no output)" }],
         details: {
           exitCode: result.exitCode,
           timedOut: result.timedOut,
           aborted: result.aborted,
+          truncated,
+          workDir: result.workDir,
           bootstrapHint: Boolean(bootstrapHint),
         },
       };

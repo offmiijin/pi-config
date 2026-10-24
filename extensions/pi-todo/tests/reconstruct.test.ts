@@ -7,8 +7,13 @@ import {
 } from "../reconstruct.ts";
 
 describe("reconstrução — normalizeTodoItem", () => {
-	it("aceita item válido", () => {
+	it("aceita item válido (texto com espaços é normalizado com trim)", () => {
 		expect(normalizeTodoItem({ id: 1, text: "a", status: "pending" })).toEqual({
+			id: 1,
+			text: "a",
+			status: "pending",
+		});
+		expect(normalizeTodoItem({ id: 1, text: "  a  ", status: "pending" })).toEqual({
 			id: 1,
 			text: "a",
 			status: "pending",

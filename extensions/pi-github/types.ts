@@ -8,17 +8,25 @@ import { Type, type Static } from "typebox";
 // NOTA: gh.ts usa estes tipos para wrapper do gh CLI (title/body simples).
 // Os schemas CC (type, scope, quebrando, etc) estão inline nas tools.
 
+const RepoParam = Type.String({
+	pattern: "^[^/\\s]+/[^/\\s]+$",
+	description: "Repositório no formato owner/name",
+});
+const PositiveNumber = Type.Integer({ minimum: 1 });
+const ResultLimit = Type.Integer({ minimum: 1, maximum: 100, description: "Máximo de resultados" });
+const RequiredText = (description: string) => Type.String({ minLength: 1, description });
+
 export const CreatePrParams = Type.Object({
-	title: Type.String({ description: "Título do pull request" }),
+	title: RequiredText("Título do pull request"),
 	body: Type.String({ description: "Descrição/corpo do pull request (markdown)" }),
-	head: Type.String({ description: "Nome da branch de origem (com as alterações)" }),
-	base: Type.Optional(Type.String({ description: "Branch de destino (padrão: main)", default: "main" })),
+	head: RequiredText("Nome da branch de origem (com as alterações)"),
+	base: Type.Optional(RequiredText("Branch de destino (padrão: main)")),
 	draft: Type.Optional(Type.Boolean({ description: "Criar como draft PR" })),
 });
 export type CreatePrParams = Static<typeof CreatePrParams>;
 
 export const CreateIssueParams = Type.Object({
-	title: Type.String({ description: "Título da issue" }),
+	title: RequiredText("Título da issue"),
 	body: Type.String({ description: "Descrição da issue (markdown)" }),
 	labels: Type.Optional(Type.Array(Type.String(), { description: "Labels para aplicar" })),
 	assignees: Type.Optional(Type.Array(Type.String(), { description: "Usuários para atribuir (login)" })),
@@ -26,8 +34,8 @@ export const CreateIssueParams = Type.Object({
 export type CreateIssueParams = Static<typeof CreateIssueParams>;
 
 export const SearchParams = Type.Object({
-	query: Type.String({ description: "Query de busca (sintaxe de busca do GitHub)" }),
-	repo: Type.Optional(Type.String({ description: "Limitar a um repositório (owner/name)" })),
+	query: RequiredText("Query de busca (sintaxe de busca do GitHub)"),
+	repo: Type.Optional(RepoParam),
 	state: Type.Optional(
 		Type.Union(
 			[Type.Literal("open"), Type.Literal("closed"), Type.Literal("all")],
@@ -44,7 +52,7 @@ export const ListPrsParams = Type.Object({
 			{ description: "Filtrar por estado", default: "open" },
 		),
 	),
-	limit: Type.Optional(Type.Integer({ description: "Máximo de resultados", default: 10 })),
+	limit: Type.Optional(ResultLimit),
 	author: Type.Optional(Type.String({ description: "Filtrar por autor (login)" })),
 });
 export type ListPrsParams = Static<typeof ListPrsParams>;
@@ -56,28 +64,28 @@ export const ListIssuesParams = Type.Object({
 			{ description: "Filtrar por estado", default: "open" },
 		),
 	),
-	limit: Type.Optional(Type.Integer({ description: "Máximo de resultados", default: 10 })),
+	limit: Type.Optional(ResultLimit),
 	labels: Type.Optional(Type.Array(Type.String(), { description: "Filtrar por labels" })),
 });
 export type ListIssuesParams = Static<typeof ListIssuesParams>;
 
 export const ViewPrParams = Type.Object({
-	number: Type.Integer({ description: "Número do pull request" }),
-	repo: Type.Optional(Type.String({ description: "Repositório (owner/name). Padrão: repositório atual" })),
+	number: PositiveNumber,
+	repo: Type.Optional(RepoParam),
 });
 export type ViewPrParams = Static<typeof ViewPrParams>;
 
 export const ViewIssueParams = Type.Object({
-	number: Type.Integer({ description: "Número da issue" }),
-	repo: Type.Optional(Type.String({ description: "Repositório (owner/name). Padrão: repositório atual" })),
+	number: PositiveNumber,
+	repo: Type.Optional(RepoParam),
 });
 export type ViewIssueParams = Static<typeof ViewIssueParams>;
 
 // ── Edit ────────────────────────────────────────────────────────────────
 
 export const EditIssueParams = Type.Object({
-	number: Type.Integer({ description: "Número da issue" }),
-	repo: Type.Optional(Type.String({ description: "Repositório (owner/name). Padrão: repositório atual" })),
+	number: PositiveNumber,
+	repo: Type.Optional(RepoParam),
 	title: Type.Optional(Type.String({ description: "Novo título" })),
 	body: Type.Optional(Type.String({ description: "Novo body (markdown)" })),
 	addLabels: Type.Optional(Type.Array(Type.String(), { description: "Labels para adicionar" })),
@@ -95,8 +103,8 @@ export const EditIssueParams = Type.Object({
 export type EditIssueParams = Static<typeof EditIssueParams>;
 
 export const EditPrParams = Type.Object({
-	number: Type.Integer({ description: "Número do pull request" }),
-	repo: Type.Optional(Type.String({ description: "Repositório (owner/name). Padrão: repositório atual" })),
+	number: PositiveNumber,
+	repo: Type.Optional(RepoParam),
 	title: Type.Optional(Type.String({ description: "Novo título" })),
 	body: Type.Optional(Type.String({ description: "Novo body (markdown)" })),
 	base: Type.Optional(Type.String({ description: "Nova branch de destino" })),

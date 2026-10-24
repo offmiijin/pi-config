@@ -159,6 +159,8 @@ export class ChangesPanel implements Component {
 	private selectedIndex = 0;
 	private metadataOffset = 0;
 	private codeOffset = 0;
+	private codeHorizontalOffset = 0;
+	private pendingG = false;
 	private showFullFile = false;
 	private readonly expandedCommits = new Set<string>();
 	private focus: PanelFocus = "files";
@@ -196,6 +198,7 @@ export class ChangesPanel implements Component {
 			previousFile.file.content !== nextFile.file.content
 		) {
 			this.codeOffset = 0;
+			this.codeHorizontalOffset = 0;
 		}
 		this.tui.requestRender();
 	}
@@ -214,11 +217,30 @@ export class ChangesPanel implements Component {
 			return;
 		}
 
+		if (data !== "g") this.pendingG = false;
+		if (this.focus === "code") {
+			if (data === "g") {
+				if (this.pendingG) {
+					this.pendingG = false;
+					this.goToCodeStart();
+				} else {
+					this.pendingG = true;
+				}
+				return;
+			}
+			this.pendingG = false;
+			if (data === "G") {
+				this.goToCodeEnd();
+				return;
+			}
+		}
+
 		const moveUp = matchesKey(data, Key.up) || matchesKey(data, "k") || data === "K";
 		const moveDown = matchesKey(data, Key.down) || matchesKey(data, "j") || data === "J";
 		if (data === "f" || data === "F") {
 			this.showFullFile = !this.showFullFile;
 			this.codeOffset = 0;
+			this.codeHorizontalOffset = 0;
 			this.tui.requestRender();
 		} else if (matchesKey(data, Key.enter)) {
 			if (this.focus === "files") {
@@ -234,8 +256,13 @@ export class ChangesPanel implements Component {
 				this.tui.requestRender();
 			}
 		} else if (matchesKey(data, Key.left) && this.focus === "code") {
-			this.focus = "files";
-			this.tui.requestRender();
+			this.scrollCodeHorizontal(-1);
+		} else if ((matchesKey(data, "h") || data === "H") && this.focus === "code") {
+			this.scrollCodeHorizontal(-1);
+		} else if (matchesKey(data, Key.right) && this.focus === "code") {
+			this.scrollCodeHorizontal(1);
+		} else if ((matchesKey(data, "l") || data === "L") && this.focus === "code") {
+			this.scrollCodeHorizontal(1);
 		} else if (moveUp) {
 			this.focus === "files"
 				? this.selectFile(this.selectedIndex - 1)
@@ -258,7 +285,9 @@ export class ChangesPanel implements Component {
 		const viewportRows = this.viewportRows();
 		const selectedItem = this.selectedItem();
 		const selection = fileSelection(selectedItem);
-		const codeLines = selection ? this.renderCodeLines(selection.file, codeWidth) : this.emptyCodeLines(codeWidth);
+		const codeLines = selection ? this.renderCodeLines(selection.file) : this.emptyCodeLines();
+		const maxCodeHorizontalOffset = Math.max(0, ...codeLines.map((line) => visibleWidth(line) - codeWidth));
+		this.codeHorizontalOffset = Math.min(this.codeHorizontalOffset, maxCodeHorizontalOffset);
 		const metadata = this.renderMetadataLines(metadataWidth);
 		const bodyRows = Math.max(1, Math.min(viewportRows, Math.max(codeLines.length, metadata.lines.length)));
 		const maxCodeOffset = Math.max(0, codeLines.length - bodyRows);
@@ -309,15 +338,17 @@ export class ChangesPanel implements Component {
 		];
 
 		for (let row = 0; row < bodyRows; row++) {
-			const codeLine = codeLines[codeStart + row] ?? "";
+			const codeLine = sliceByColumn(codeLines[codeStart + row] ?? "", this.codeHorizontalOffset, codeWidth, true);
 			const metadataLine = metadata.lines[this.metadataOffset + row] ?? "";
-			lines.push(`│${padToWidth(codeLine, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
+			// A fatia pode terminar antes do reset ANSI original; restaure o estado antes da divisória.
+			const codeCell = `${codeLine}\x1b[0m`;
+			lines.push(`│${padToWidth(codeCell, codeWidth)}│${padToWidth(metadataLine, metadataWidth)}│`);
 		}
 
 		const toggleLabel = this.showFullFile ? "diff" : "arquivo completo";
 		const footerText = this.focus === "files"
 			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${toggleLabel}  Alt+D/Esc fechar `
-			: ` ↑↓ K↑ J↓ rolar arquivo  ← arquivos  F ${toggleLabel}  Alt+D/Esc fechar `;
+			: ` ↑↓ K↑ J↓ rolar  → L direita  ← H esquerda  F ${toggleLabel}  Enter arquivos  Alt+D/Esc fechar `;
 		const footer = this.theme.fg("dim", footerText);
 		lines.push(contentRow(footer));
 		lines.push(horizontalRow("╰", "╯"));
@@ -338,6 +369,8 @@ export class ChangesPanel implements Component {
 		this.selectedIndex = Math.max(0, Math.min(index, items.length - 1));
 		this.metadataOffset = 0;
 		this.codeOffset = 0;
+		this.codeHorizontalOffset = 0;
+		this.pendingG = false;
 		this.tui.requestRender();
 	}
 
@@ -360,12 +393,28 @@ export class ChangesPanel implements Component {
 		this.tui.requestRender();
 	}
 
+	private scrollCodeHorizontal(delta: number): void {
+		this.codeHorizontalOffset = Math.max(0, this.codeHorizontalOffset + delta);
+		this.tui.requestRender();
+	}
+
+	private goToCodeStart(): void {
+		this.codeOffset = 0;
+		this.tui.requestRender();
+	}
+
+	private goToCodeEnd(): void {
+		// O render calcula o limite real conforme a altura atual do viewport.
+		this.codeOffset = Number.MAX_SAFE_INTEGER;
+		this.tui.requestRender();
+	}
+
 	private viewportRows(): number {
 		return Math.max(3, Math.floor(this.tui.terminal.rows * 0.9) - 6);
 	}
 
-	private renderCodeLines(file: ChangedFile, width: number): string[] {
-		if (!this.showFullFile || file.content === undefined) return this.renderDiffLines(file, width);
+	private renderCodeLines(file: ChangedFile): string[] {
+		if (!this.showFullFile || file.content === undefined) return this.renderDiffLines(file);
 
 		const rawLines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 		const totalLines = rawLines.length;
@@ -381,11 +430,8 @@ export class ChangesPanel implements Component {
 		const lines: string[] = [];
 		const renderSourceLine = (lineNumber: number, color: "toolDiffAdded" | "toolDiffRemoved" | "toolDiffContext", content: string): void => {
 			const number = String(lineNumber).padStart(lineNumberWidth, " ");
-			lines.push(truncateToWidth(
-				`${this.theme.fg("dim", number)} │ ${this.theme.fg(color, content)}`,
-				width,
-				"",
-			));
+			const marker = color === "toolDiffAdded" ? "+ " : color === "toolDiffRemoved" ? "- " : "  ";
+			lines.push(`${this.theme.fg("dim", number)}│${this.theme.fg(color, `${marker}${content}`)}`);
 		};
 
 		for (let lineNumber = 1; lineNumber <= totalLines; lineNumber++) {
@@ -406,7 +452,7 @@ export class ChangesPanel implements Component {
 		return lines;
 	}
 
-	private renderDiffLines(file: ChangedFile, width: number): string[] {
+	private renderDiffLines(file: ChangedFile): string[] {
 		const rawLines = file.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 		const codeLines: Array<{
 			lineNumber: number;
@@ -460,21 +506,20 @@ export class ChangesPanel implements Component {
 		}
 
 		if (codeLines.length === 0) {
-			return [truncateToWidth(this.theme.fg("dim", "Nenhum conteúdo textual disponível."), width, "")];
+			return [this.theme.fg("dim", "Nenhum conteúdo textual disponível.")];
 		}
 		const lineNumberWidth = String(Math.max(...codeLines.map((line) => line.lineNumber))).length;
-		return codeLines.map((line) => truncateToWidth(
-			`${this.theme.fg("dim", String(line.lineNumber).padStart(lineNumberWidth, " "))} │ ${this.theme.fg(line.color, line.content)}`,
-			width,
-			"",
-		));
+		return codeLines.map((line) => {
+			const marker = line.color === "toolDiffAdded" ? "+ " : line.color === "toolDiffRemoved" ? "- " : "  ";
+			return `${this.theme.fg("dim", String(line.lineNumber).padStart(lineNumberWidth, " "))}│${this.theme.fg(line.color, `${marker}${line.content}`)}`;
+		});
 	}
 
-	private emptyCodeLines(width: number): string[] {
+	private emptyCodeLines(): string[] {
 		if (panelItems(this.snapshot, this.expandedCommits).length === 0) {
-			return [truncateToWidth(this.theme.fg("dim", "Nenhuma alteração desde o início da sessão."), width, "")];
+			return [this.theme.fg("dim", "Nenhuma alteração desde o início da sessão.")];
 		}
-		return [truncateToWidth(this.theme.fg("dim", "Selecione um arquivo para ver o arquivo."), width, "")];
+		return [this.theme.fg("dim", "Selecione um arquivo para ver o arquivo.")];
 	}
 
 	private renderMetadataLines(width: number): MetadataRender {

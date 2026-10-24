@@ -5,7 +5,7 @@
  * leitura de caminhos fora das memórias ativas do projeto.
  */
 
-import { after as afterAll, before as beforeAll, describe, it } from "node:test";
+import { afterAll, beforeAll, describe, it } from "vitest";
 import { expect } from "./expect-shim.ts";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

@@ -360,10 +360,13 @@ artefatos para `sandbox_quarantine_exec`.
 
 ### Bootstrap de dependências do projeto
 
-Para projeto confiável, use `sandbox_install_dependencies`. A tool executa
-`npm ci --ignore-scripts` (ou `npm install --ignore-scripts` sem lockfile) no
-worktree atual, usando o cache npm persistente. Como worktrees são temporários,
-repita a instalação após reiniciar a sessão; o cache evita baixar tudo de novo.
+Para projeto confiável, use `sandbox_install_dependencies`. A tool detecta o
+manifesto (npm, Go, Rust ou Python) e executa um comando fechado no worktree
+atual: `npm ci --ignore-scripts` (ou `npm install --ignore-scripts` sem
+lockfile), `go mod download`, `cargo fetch [--locked]` ou
+`pip install --requirement`, usando os caches persistentes. Como worktrees são
+temporários, repita a instalação após reiniciar a sessão; o cache evita baixar
+tudo de novo.
 
 O bash bloqueia instalações e execução implícita de pacotes externos (`npm install`,
 `npx`, `pnpm dlx`, `pip install`, `cargo install`, entre outros). Testes Vitest locais

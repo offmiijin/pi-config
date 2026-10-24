@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

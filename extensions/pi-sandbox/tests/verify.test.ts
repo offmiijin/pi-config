@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverChecks, runVerification } from "../tools/verify";
@@ -45,5 +45,58 @@ describe("verify", () => {
     expect(report.results[0]?.ok).toBe(false);
     expect(report.results[0]?.output).toHaveLength(12_000);
     expect(report.skipped).toEqual(["typecheck"]);
+  });
+
+  it("consome commands do project-context com proveniência", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "verify-"));
+    writeFileSync(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(join(cwd, ".pi", "project-context.json"), JSON.stringify({
+      version: 1,
+      detectedAt: new Date(Date.now() + 60_000).toISOString(),
+      stack: ["Node.js"],
+      packageManager: "pnpm",
+      commands: { test: { command: "pnpm run test", source: "package.json#scripts.test" } },
+    }));
+    const calls: string[] = [];
+    const report = await runVerification(cwd, undefined, async (command) => {
+      calls.push(command);
+      return { exitCode: 0, output: "ok" };
+    }, new AbortController().signal, 1000);
+    expect(calls).toEqual(["pnpm run test"]);
+    expect(report.packageManager).toBe("pnpm");
+    expect(report.results[0]).toMatchObject({ check: "test", source: "package.json#scripts.test", ok: true });
+    expect(report.skipped).toEqual(["typecheck", "lint", "build"]);
+  });
+
+  it("ignora project-context velho (package.json mais novo que detectedAt)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "verify-"));
+    writeFileSync(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(join(cwd, ".pi", "project-context.json"), JSON.stringify({
+      version: 1,
+      detectedAt: "2020-01-01T00:00:00.000Z",
+      stack: ["Node.js"],
+      packageManager: "pnpm",
+      commands: { test: { command: "pnpm run test", source: "package.json#scripts.test" } },
+    }));
+    const calls: string[] = [];
+    const report = await runVerification(cwd, ["test"], async (command) => {
+      calls.push(command);
+      return { exitCode: 0, output: "ok" };
+    }, new AbortController().signal, 1000);
+    // Redescobre do package.json (npm, sem lockfile) em vez do contexto velho (pnpm).
+    expect(calls).toEqual(["npm run test"]);
+    expect(report.packageManager).toBe("npm");
+    expect(report.results[0]).toMatchObject({ source: "package.json#scripts.test" });
+  });
+
+  it("ignora project-context corrompido e redescobre do package.json", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "verify-"));
+    writeFileSync(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(join(cwd, ".pi", "project-context.json"), "{invalid");
+    const discovered = await discoverChecks(cwd, ["test"]);
+    expect(discovered.checks).toEqual([{ check: "test", script: "test", command: "npm run test", source: "package.json#scripts.test" }]);
   });
 });

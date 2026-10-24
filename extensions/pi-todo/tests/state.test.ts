@@ -70,6 +70,13 @@ describe("estado — update", () => {
 		expect(updateTodo(s, 1, "error", "  ").ok).toBe(false);
 	});
 
+	it("rejeita error não-string sem lançar (JSON do modelo não é confiável)", () => {
+		const s = addTodos(createTodoState(), ["a"]).state;
+		expect(updateTodo(s, 1, "error", 123 as unknown as string).ok).toBe(false);
+		expect(updateTodo(s, 1, "error", null as unknown as string).ok).toBe(false);
+		expect(s.items[0]).toEqual({ id: 1, text: "a", status: "pending" });
+	});
+
 	it("rejeita pular para uma tarefa posterior", () => {
 		const s = addTodos(createTodoState(), ["a", "b", "c"]).state;
 		const result = updateTodo(s, 2, "in-progress");

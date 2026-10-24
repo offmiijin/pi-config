@@ -56,15 +56,31 @@ async function execGh<T>(
 ): Promise<T | string> {
 	const result = await exec("gh", args, { timeout });
 
-	if (result.code !== 0) {
-		const msg = result.stderr.trim() || result.stdout.trim();
+	const operation = args.slice(0, 2).join(" ");
+	if (result.killed || result.code !== 0) {
+		const msg = result.killed
+			? "operação excedeu o tempo limite"
+			: result.stderr.trim() || result.stdout.trim() || "falha sem mensagem";
 		// Tenta extrair mensagem útil do stderr do gh
 		const cleanMsg = msg.replace(/^gh: /, "");
-		throw new Error(`gh ${args.slice(0, 2).join(" ")}: ${cleanMsg}`);
+		throw new Error(`gh ${operation}: ${cleanMsg}`);
 	}
 
-	if (parseJson) return JSON.parse(result.stdout) as T;
+	if (parseJson) {
+		try {
+			return JSON.parse(result.stdout) as T;
+		} catch {
+			throw new Error(`gh ${operation}: resposta JSON inválida`);
+		}
+	}
 	return result.stdout.trim();
+}
+
+function parseCreatedUrl(output: string, resource: "pull" | "issues"): { url: string; number: number } {
+	const url = output.trim();
+	const match = url.match(new RegExp(`/${resource}/(\\d+)$`));
+	if (!match) throw new Error(`gh ${resource === "pull" ? "pr" : "issue"} create: resposta não contém uma URL válida`);
+	return { url, number: Number(match[1]) };
 }
 
 // Factory
@@ -83,8 +99,7 @@ export function createGh(exec: ExecFn) {
 			if (opts.draft) args.push("--draft");
 
 			const url = await execGh<string>(exec, args);
-			const number = parseInt(url.match(/\/(\d+)$/)?.[1] ?? "0", 10);
-			return { url, number };
+			return parseCreatedUrl(url, "pull");
 		},
 
 		async prList(opts: ListPrsParams = {}): Promise<GhPrResult[]> {
@@ -110,8 +125,7 @@ export function createGh(exec: ExecFn) {
 			if (opts.assignees?.length) args.push("--assignee", opts.assignees.join(","));
 
 			const url = await execGh<string>(exec, args);
-			const number = parseInt(url.match(/\/(\d+)$/)?.[1] ?? "0", 10);
-			return { url, number };
+			return parseCreatedUrl(url, "issues");
 		},
 
 		async issueList(opts: ListIssuesParams = {}): Promise<GhIssueResult[]> {

@@ -31,9 +31,9 @@ export function editIssueTool(gh: GhApi) {
 			"Labels e assignees substituem completamente os atuais.",
 
 		parameters: Type.Object({
-			number: Type.Integer({ description: "Número da issue" }),
+			number: Type.Integer({ minimum: 1, description: "Número da issue" }),
 			repo: Type.Optional(
-				Type.String({ description: "Repositório (owner/name). Padrão: repositório atual" }),
+				Type.String({ pattern: "^[^/\\s]+/[^/\\s]+$", description: "Repositório (owner/name). Padrão: repositório atual" }),
 			),
 			title: Type.Optional(Type.String({ description: "Novo título" })),
 			body: Type.Optional(Type.String({ description: "Novo body (markdown)" })),
@@ -59,6 +59,15 @@ export function editIssueTool(gh: GhApi) {
 			_onUpdate: unknown,
 			_ctx: unknown,
 		) {
+			if (!Number.isInteger(params.number) || params.number < 1) {
+				return { content: [{ type: "text" as const, text: "## ❌ Número de issue inválido" }], isError: true };
+			}
+			const hasChanges = params.title !== undefined || params.body !== undefined ||
+				params.labels !== undefined || params.assignees !== undefined ||
+				params.state !== undefined || params.milestone !== undefined;
+			if (!hasChanges) {
+				return { content: [{ type: "text" as const, text: "## ❌ Nenhuma alteração foi informada" }], isError: true };
+			}
 			try {
 				// Se labels ou assignees foram passados, busca estado atual pra fazer diff
 				const needsDiff = params.labels !== undefined || params.assignees !== undefined;

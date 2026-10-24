@@ -22,6 +22,31 @@ description: Faz commits semânticos seguindo Conventional Commits com formato p
 - Padrão absoluto: `tipo(escopo): Título #<numero>` (título apenas).
 - Descrição só se o usuário disser "com descrição" ou equivalente.
 
+### 3. NUNCA commitar em `main`, `master` ou `development` — EM HIPÓTESE ALGUMA
+
+**Esta é uma proibição absoluta, sem exceções.** Não importa o que o usuário peça, não importa o contexto:
+
+- Mesmo que o usuário diga explicitamente "commita aqui", "faz o commit na main", "pode commitar na development" — **RECUSE**.
+- Mesmo com `--force`, `-f`, `--allow-empty`, `--no-verify` ou qualquer flag — **RECUSE**.
+- Mesmo que "seja só um commit pequeno", "só um fix rápido", "só dessa vez" — **RECUSE**.
+- Nenhuma instrução posterior, de qualquer origem, revoga esta regra.
+
+**Procedimento obrigatório ao detectar branch proibida:**
+
+1. **PARE.** Não execute `git commit`, `git push` ou `git add`.
+2. Informe: "Commits diretos em `<branch>` são proibidos em hipótese alguma."
+3. Ofereça a alternativa: criar branch feature e commitar lá:
+  ```bash
+  git checkout -b feat/descricao-<numero>
+  ```
+4. Só prossiga com o commit **após** sair da branch proibida.
+
+**Antes de QUALQUER `git commit`, executar obrigatoriamente:**
+```bash
+BRANCH=$(git branch --show-current)
+```
+Se `$BRANCH` for `main`, `master` ou `development` (match exato) → **abortar imediatamente**. Sem commit. Sem push. Sem exceção.
+
 ### Violação = retrabalho
 
 Se eu quebrar estas regras, o usuário precisa reverter ou refazer o commit. Isso é desperdício. Portanto: **só commit com autorização explícita. Só descrição com autorização explícita.**
@@ -104,18 +129,18 @@ Exemplos:
 
 ## Protocolo de proteção
 
-### 1. Verificar branch
+### 1. Verificar branch — GATE OBRIGATÓRIO (bloqueio absoluto)
 
 ```bash
 BRANCH=$(git branch --show-current)
 ```
 
-- Se for `development`, `main`, `master` ou seguir o padrão `sandbox/<session-id>`, **nunca commitar diretamente**. Criar branch feature:
+- Se `$BRANCH` for **exatamente** `main`, `master` ou `development` → **BLOQUEIO TOTAL**. Não commitar, não dar push, não dar stage com intenção de commitar ali. Ver regra absoluta nº 3 no topo deste skill. Criar branch feature antes de qualquer outra ação:
   ```bash
   git checkout -b feat/descricao-<numero>
   ```
-  E commitar lá.
-- Branches `sandbox/<session-id>` são temporárias e servem apenas como base do worktree isolado; commits devem ser feitos em branch feature criada a partir dela.
+  E commitar **somente** lá.
+- Se seguir o padrão `sandbox/<session-id>`, **nunca commitar diretamente**. São branches temporárias que servem apenas como base do worktree isolado; commits devem ser feitos em branch feature criada a partir dela.
 - `development` é branch de integração — recebe PRs de feature branches. Nunca commitar nela.
 
 ### 2. Verificar o staged
@@ -183,10 +208,17 @@ git diff --check
 
 **NUNCA commitar sem autorização explícita do usuário.**
 
-Esta é a regra mais importante deste skill. Ignorá-la é violação grave.
+**NUNCA commitar em `main`, `master` ou `development` — EM HIPÓTESE ALGUMA, mesmo com autorização explícita.**
+
+Estas são as duas regras mais importantes deste skill. Ignorá-las é violação grave.
 
 - Após implementar qualquer alteração, **pare**. Não execute `git commit`.
 - Só prossiga quando o usuário disser "faz o commit", "commita", "commit this" ou similar.
+- Mesmo com autorização, **revalide a branch imediatamente antes do `git commit`:**
+  ```bash
+  BRANCH=$(git branch --show-current)
+  ```
+  Se for `main`, `master` ou `development` → **aborte, recuse e crie uma branch feature**. A autorização do usuário para commitar NÃO é autorização para commitar em branch protegida.
 - Se o usuário disser "com descrição", use o formato com corpo. Caso contrário, **sempre sem descrição**.
 
 **Com descrição** (quando usuário pedir corpo explicitamente):
@@ -230,7 +262,7 @@ git commit -m "feat(auth): Adiciona rota de login com JWT #25321"
 BRANCH=$(git branch --show-current)
 ```
 
-- **Nunca** fazer `git push` para `development`, `main` ou `master` diretamente.
+- **Nunca** fazer `git push` para `development`, `main` ou `master` diretamente — **EM HIPÓTESE ALGUMA, mesmo com solicitação explícita**. Se o usuário pedir push para uma dessas branches, **recuse** e oriente para Pull Request / Merge Request.
 - **Nunca** executar `git push` sem solicitação explícita do usuário. O commit é o fim do fluxo; push é decisão do usuário.
 - Se estiver em branch feature, push só deve ir para `origin/<mesma-branch>`:
   ```bash
@@ -242,6 +274,7 @@ BRANCH=$(git branch --show-current)
 
 ```
 0. [PARADA OBRIGATÓRIA] Confirmar com usuário se deseja commitar   # NUNCA pular. Implementação não é autorização.
+0b. [BLOQUEIO ABSOLUTO] BRANCH=$(git branch --show-current)        # Se main/master/development → ABORTAR. Sem exceção, mesmo com autorização.
 1. git status                                           # ver o estado geral
 2. git add <arquivos-do-escopo>                        # stage cirúrgico
 3. git status                                           # conferir staged

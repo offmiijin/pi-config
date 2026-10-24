@@ -22,7 +22,8 @@ import { updateTodoWidget } from "./widget.ts";
 const MAX_ERROR_MESSAGE_LENGTH = 200;
 
 /** Extrai um motivo legível da falha: nome da ferramenta + 1º bloco de texto. */
-function extractErrorText(toolName: string, result: unknown): string {
+function extractErrorText(toolName: unknown, result: unknown): string {
+	const name = typeof toolName === "string" && toolName.trim() ? toolName.trim() : "ferramenta";
 	const content = (result as { content?: unknown } | undefined)?.content;
 	const blocks = Array.isArray(content) ? content : [];
 	const first = blocks.find(
@@ -31,7 +32,7 @@ function extractErrorText(toolName: string, result: unknown): string {
 	);
 	const trimmed = typeof first?.text === "string" ? first.text.trim() : "";
 	const brief = trimmed ? `: ${trimmed.slice(0, MAX_ERROR_MESSAGE_LENGTH)}` : "";
-	return `falha em ${toolName}${brief}`;
+	return `falha em ${name}${brief}`;
 }
 
 export function registerAutoError(pi: ExtensionAPI, holder: TodoToolState): void {

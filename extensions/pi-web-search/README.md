@@ -8,7 +8,7 @@ Pesquisa web e coleta o conteúdo completo das páginas para o agente.
 - `web_fetch` baixa páginas em paralelo, converte HTML para Markdown e preserva arquivos binários;
 - `web_agent` coordena pesquisas com múltiplas consultas e coletas.
 
-Configure provedores com `/web_search config <provider> <key>` ou pelas variáveis de ambiente. O SearXNG local pode ser iniciado com Docker Compose.
+Configure provedores com `/web_search config <provider> <key>` ou pelas variáveis de ambiente. O SearXNG local é opcional e pode ser instalado/iniciado pelo `./install.sh --all-optional` ou manualmente com Docker Compose.
 
 Os resultados são gravados em `.sandbox-cache/fetch/` no workspace da sessão, para permanecerem acessíveis dentro do `pi-sandbox`.
 
@@ -16,7 +16,13 @@ Os resultados são gravados em `.sandbox-cache/fetch/` no workspace da sessão, 
 
 Páginas que dependem de JavaScript podem retornar apenas o shell inicial da aplicação no `web_fetch`. Quando o modo está em `auto`, a extensão tenta usar o renderer local somente quando detecta sinais de SPA.
 
-O renderer usa Python + Playwright e é instalado separadamente:
+O renderer usa Python + Playwright e é opcional. Ele pode ser instalado pelo instalador principal:
+
+```bash
+./install.sh --all-optional
+```
+
+Ou, depois da instalação:
 
 ```text
 /web_search config renderer install

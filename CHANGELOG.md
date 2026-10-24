@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `install.sh`: adiciona seleção interativa e flags `--all-optional`/`--no-optional` para instalar dependências opcionais, incluindo Docker/SearXNG, Poppler, renderer Playwright e Rust/Landlock.
+- `pi-doctor`: informa recursos opcionais inativos e apresenta os comandos necessários para ativá-los.
+- `pi-panels/changes`: adiciona rolagem horizontal com setas e atalhos `H`/`L`, além de navegação para o início (`gg`) e o final (`G`) do arquivo.
+- `pi-document`: adiciona a tool `document_extract` para ler imagens e PDFs, usando OCR como fallback.
+- `pi-document`: adiciona a biblioteca compartilhada de extração PDF e suporte ao Tesseract.js.
+- `pi-todo`: adiciona conclusão automática com resumo final ao concluir todas as tarefas.
+- `pi-project-context`: expande a detecção de stacks e frameworks.
+- `pi-sandbox`: adiciona instalação de dependências Go, Rust e Python.
+
+### Changed
+
+- `pi-web-search`: documenta SearXNG como opcional e permite instalar o renderer pelo instalador principal.
+- `install.sh`: corrige o modo `DRY_RUN` para simular a instalação sem exigir arquivos copiados no destino.
+- `pi-panels/changes`: exibe os sinais `+` e `-` nas linhas adicionadas e removidas e aproxima a numeração da barra de divisão.
+- `pi-web-search`: reutiliza a biblioteca `pi-document` para extração de texto de PDFs e OCR de documentos escaneados.
+- `pi-sandbox`: `verify` consome os `commands` do project-context; alinha `quarantine_exec` com `verify`/`fetch` e reforça download e rede efetiva do `fetch`.
+
+### Fixed
+
+- `pi-panels/changes`: evita vazamento de estilos ANSI entre as colunas durante a rolagem.
+- `pi-document`: materializa imagens temporárias do clipboard no workspace para permitir acesso pelo sandbox e declara explicitamente `wasm-feature-detect`.
+- `pi-agent-type`: restringe a escrita a arquivos Markdown.
+- `pi-doctor`, `pi-document`, `pi-github`, `pi-hooks`, `pi-project-context`, `pi-status-bar` e `pi-panels`: reforça validações, robustez e regras de segurança (diagnóstico do renderer, autenticação, refresh sem rejection e atualização/persistência do contexto).
+
+### Removed
+
+- Remove a extensão externa `pi-mcp-adapter` (`settings.example.json`/`settings.json` sem `packages`); MCP passa a usar apenas `builtin:mcp`.
+
 ## [1.5.0] - 2026-09-10
 
 ### Added

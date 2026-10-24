@@ -34,4 +34,29 @@ describe("monitor de tokens do pi-panels", () => {
     expect(range.to - range.from).toBe(60 * 60_000 + 60_000);
     expect(notifications).toEqual([]);
   });
+
+  it("rejeita hora/minuto fora da faixa", async () => {
+    const values = ["01/01/2026 25:00", "01/01/2026 11:00"];
+    const notifications: string[] = [];
+    const ctx = {
+      hasUI: true,
+      ui: {
+        input: async () => values.shift(),
+        notify: (message: string) => notifications.push(message),
+      },
+    } as any;
+    await expect(requestCustomPeriod(ctx)).resolves.toBeNull();
+    expect(notifications).toHaveLength(1);
+  });
+
+  it("comando fora do TUI e sem UI resolve sem lançar", async () => {
+    const commands: Record<string, { handler: (args: string, ctx: any) => Promise<void> }> = {};
+    const pi = {
+      registerCommand: (name: string, definition: any) => { commands[name] = definition; },
+      on: () => {},
+    };
+    registerTokenMonitor(pi as any);
+    await expect(commands["token-monitor"]!.handler("", { mode: "print", hasUI: false } as any))
+      .resolves.toBeUndefined();
+  });
 });

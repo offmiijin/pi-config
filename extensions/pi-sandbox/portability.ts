@@ -9,7 +9,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 // ── Paths de sistema por distro ──────────────────────────────────────────
@@ -31,6 +31,7 @@ const BASE_RO_DIRS = ["/usr", "/bin", "/lib"];
  *   /nix              → nix em outra distro (NixOS não suportado)
  *   /etc/static       → configs estáticas (NixOS não suportado)
  *   /etc/ssl, /etc/ca-certificates → TLS (Debian/Ubuntu usam ca-certificates)
+ *   /etc/pki → TLS (Fedora/RHEL usam /etc/pki/tls — sem ele, https falha)
  */
 const CONDITIONAL_RO_DIRS = [
 	"/lib64",
@@ -42,6 +43,7 @@ const CONDITIONAL_RO_DIRS = [
 	"/etc/static",
 	"/etc/ssl",
 	"/etc/ca-certificates",
+	"/etc/pki",
 ];
 
 /** Resolução de libs e runtime. */
@@ -52,6 +54,21 @@ const BASE_ETC_FILES = [
 	"/etc/group",
 	"/etc/nsswitch.conf",
 ];
+
+/**
+ * Alvo real do /etc/resolv.conf quando é symlink (systemd-resolved aponta
+ * para /run/... — e /run é tmpfs vazio no sandbox, matando o DNS).
+ * Retorna null quando não é symlink ou o alvo não existe.
+ */
+export function resolvConfTarget(): string | null {
+	try {
+		if (!lstatSync("/etc/resolv.conf").isSymbolicLink()) return null;
+		const target = realpathSync("/etc/resolv.conf");
+		return existsSync(target) ? target : null;
+	} catch {
+		return null;
+	}
+}
 
 /**
  * Arquivos de /etc condicionais:

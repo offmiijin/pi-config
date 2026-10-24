@@ -39,8 +39,8 @@ export function createIssueTool(gh: GhApi) {
 				[...VALID_TYPES].map((t) => Type.Literal(t)),
 				{ description: "Tipo da mudança (ex: feat, fix, refactor)" },
 			),
-			scope: Type.String({ description: "Escopo/módulo (ex: auth, api/orders, docs)" }),
-			title: Type.String({ description: "Descrição curta, sem type/scope/numero" }),
+			scope: Type.String({ minLength: 1, description: "Escopo/módulo (ex: auth, api/orders, docs)" }),
+			title: Type.String({ minLength: 1, description: "Descrição curta, sem type/scope/numero" }),
 			breaking: Type.Optional(
 				Type.Boolean({ description: "Se true, adiciona '!' e deve incluir BREAKING CHANGE: no body", default: false }),
 			),
@@ -48,7 +48,7 @@ export function createIssueTool(gh: GhApi) {
 				Type.Union([Type.String(), Type.Number()], { description: "Nº da tarefa (opcional, vai no título como #numero)" }),
 			),
 			body: Type.String({ description: "Descrição (markdown). Se breaking=true, incluir BREAKING CHANGE: <desc>" }),
-			labels: Type.Array(Type.String(), { description: "Labels para aplicar (obrigatório — ex: bug, enhancement, documentation, question)" }),
+			labels: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: "Labels para aplicar (obrigatório — ex: bug, enhancement, documentation, question)" }),
 			assignees: Type.Optional(Type.Array(Type.String(), { description: "Usuários para atribuir (login)" })),
 		}),
 

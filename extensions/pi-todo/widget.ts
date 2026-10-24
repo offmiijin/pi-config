@@ -1,3 +1,11 @@
+/**
+ * pi-todo — Widget acima do editor
+ *
+ * Janela deslizante de até MAX_WIDGET_ITEMS tarefas a partir da primeira
+ * ainda não concluída. Recriado via setWidget a cada mutação (por isso
+ * invalidate é no-op); removido quando a lista esvazia (inclusive no
+ * clear automático ao concluir todas as tarefas).
+ */
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { renderTodoLine, visibleTodoItems } from "./render.ts";
@@ -20,6 +28,7 @@ export function renderWidgetLines(state: TodoState, theme: Theme, width: number)
 export function createTodoWidget(holder: { value: TodoState }, theme: Theme) {
   return {
     render: (width: number): string[] => renderWidgetLines(holder.value, theme, width),
+    // No-op: o widget é recriado via setWidget a cada mutação do estado.
     invalidate: (): void => {},
   };
 }

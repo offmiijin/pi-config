@@ -1,4 +1,3 @@
 {
-  "theme": "miyake-catppuccin",
-  "packages": ["npm:pi-mcp-adapter"]
+  "theme": "miyake-catppuccin"
 }
