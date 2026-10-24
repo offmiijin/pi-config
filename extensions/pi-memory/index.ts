@@ -120,6 +120,7 @@ export default function (pi: ExtensionAPI) {
 		const registry = extractionModelRegistry;
 		if (!registry) return null;
 		const configured = getModelProcessorConfig();
+		if (!configured) return null;
 		const model = registry.find(configured.provider, configured.id);
 		if (!model) return null;
 		if (!registry.hasConfiguredAuth(model)) return null;

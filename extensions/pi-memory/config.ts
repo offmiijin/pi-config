@@ -7,10 +7,6 @@
  * ficam gravados no job para auditoria.
  */
 
-/** Provider + id do modelo de extração (resolvido via modelRegistry.find). */
-export const EXTRACTION_MODEL_PROVIDER = "opencode-go";
-export const EXTRACTION_MODEL_ID = "deepseek-v4-flash";
-
 export const EXTRACTION_REASONING = "low";
 // "medium" NÃO: modelo deepseek-thinking devolve só reasoning sem texto
 // final intermitentemente (medido 75% de respostas vazias em prompt real) —

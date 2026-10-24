@@ -15,8 +15,6 @@ import {
 	EXTRACTION_CACHE_RETENTION,
 	EXTRACTION_MAX_CANDIDATES_PER_JOB,
 	EXTRACTION_MAX_OUTPUT_TOKENS,
-	EXTRACTION_MODEL_ID,
-	EXTRACTION_MODEL_PROVIDER,
 	EXTRACTION_PROMPT_VERSION,
 	EXTRACTION_REASONING,
 	EXTRACTION_SESSION_ID,
@@ -218,8 +216,7 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 				ok: false,
 				retryable: true,
 				error:
-					`modelo de extração não configurado (${EXTRACTION_MODEL_PROVIDER}/` +
-					`${EXTRACTION_MODEL_ID}) ou sem auth`,
+					"modelo de extração indisponível (settings.json defaultModel ou /memory config) ou sem auth",
 			};
 		}
 

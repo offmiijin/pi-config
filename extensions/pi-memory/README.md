@@ -242,17 +242,18 @@ invalidado a cada escrita.
 
 ### Modelo de extração (`config.ts` + `memory/config.ts`)
 
-O modelo padrão continua sendo `opencode-go/deepseek-v4-flash`, mas pode ser
-alterado pelo usuário com `/memory config`. O comando abre um menu de
-configuração extensível; em seguida, a opção **Model processor** mostra apenas
+O modelo padrão é o modelo atual do usuário (`settings.json`:
+`defaultProvider` + `defaultModel`), lido ao vivo a cada job — trocar o
+`/model` troca a extração automaticamente. Com `/memory config` o usuário
+pode fixar um override explícito; a opção **Model processor** mostra apenas
 modelos autenticados no `pi`, usando o catálogo e o `modelRegistry` da sessão.
 A seleção é persistida em `~/.pi/agent/memory-config.json` como referência
 `provider` + `id`; credenciais nunca são copiadas. A alteração vale para os
 próximos jobs e não altera o modelo interativo selecionado via `/model`.
+A opção **Seguir modelo atual** remove o override e volta ao `settings.json`.
 
 | Constante | Valor | Efeito |
 |---|---|---|
-| `EXTRACTION_MODEL_PROVIDER` / `ID` | `opencode-go` / `deepseek-v4-flash` | modelo padrão quando não há configuração do usuário |
 | `EXTRACTION_REASONING` | `low` | `medium` devolvia só reasoning sem resposta (75% vazio em teste real) |
 | `EXTRACTION_CACHE_RETENTION` | `short` | cache de prompt habilitado |
 | `EXTRACTION_SESSION_ID` | `pi-memory-extraction` | chave fixa do `prompt_cache_key` (cache reutilizável) |

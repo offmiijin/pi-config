@@ -9,7 +9,9 @@ import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@earend
 import { Container, Input, SelectList, Text, matchesKey } from "@earendil-works/pi-tui";
 import { getMemoryArgumentCompletions } from "../command-completions.ts";
 import {
+	clearModelProcessorConfig,
 	getModelProcessorConfig,
+	resolveModelProcessorConfig,
 	saveModelProcessorConfig,
 	type MemoryModelConfig,
 } from "../memory/config.ts";
@@ -52,9 +54,9 @@ export function availableAuthenticatedModels(ctx: ConfigContext): RegistryModel[
 		.sort((a, b) => modelKey(a).localeCompare(modelKey(b)));
 }
 
-export function modelLabels(models: RegistryModel[], current: MemoryModelConfig): string[] {
+export function modelLabels(models: RegistryModel[], current: MemoryModelConfig | null): string[] {
 	return models.map((model) => {
-		const selected = modelKey(model) === modelKey(current) ? "● " : "  ";
+		const selected = current && modelKey(model) === modelKey(current) ? "● " : "  ";
 		return `${selected}${model.id} [${model.provider}]`;
 	});
 }
@@ -157,7 +159,7 @@ async function chooseModelProcessor(ctx: ConfigContext): Promise<void> {
 		return;
 	}
 
-	const current = getModelProcessorConfig();
+	const current = getModelProcessorConfig() ?? models[0];
 	const labels = modelLabels(models, current);
 	const selected = await selectModel(ctx, models, labels);
 	if (selected === undefined) return;
@@ -181,12 +183,18 @@ export function registerMemoryConfig(pi: ExtensionAPI): void {
 			const ctx = rawCtx as unknown as ConfigContext;
 			const command = args.trim();
 			if (command === "info") {
-				const configured = getModelProcessorConfig();
+				const { model, source } = resolveModelProcessorConfig();
+				const sourceLabel =
+					source === "override"
+						? "override (/memory config)"
+						: source === "settings"
+							? "settings.json (defaultModel)"
+							: "nenhum disponível";
 				ctx.ui.notify(
 					[
 						"Memória persistente",
 						"",
-						`Model processor: ${modelKey(configured)}`,
+						`Model processor: ${model ? modelKey(model) : "—"} [${sourceLabel}]`,
 						"Autenticação: reutiliza as credenciais configuradas no Pi",
 					].join("\n"),
 					"info",
@@ -198,11 +206,28 @@ export function registerMemoryConfig(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const current = getModelProcessorConfig();
-			const option = await ctx.ui.select("Memory configuration", [
-				`Model processor (${modelKey(current)})`,
-			]);
+			const { model: current, source } = resolveModelProcessorConfig();
+			const options = [
+				`Model processor (${current ? modelKey(current) : "—"})`,
+				...(source === "override"
+					? ["Seguir modelo atual (remover override)"]
+					: []),
+			];
+			const option = await ctx.ui.select("Memory configuration", options);
 			if (option === undefined) return;
+			if (option.startsWith("Seguir modelo atual")) {
+				try {
+					clearModelProcessorConfig();
+					const next = resolveModelProcessorConfig();
+					ctx.ui.notify(
+						`Processor segue settings.json: ${next.model ? modelKey(next.model) : "—"}`,
+						"info",
+					);
+				} catch (err) {
+					ctx.ui.notify(`Não foi possível remover o override: ${(err as Error).message}`, "error");
+				}
+				return;
+			}
 			await chooseModelProcessor(ctx);
 		},
 	});
