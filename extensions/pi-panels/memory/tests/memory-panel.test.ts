@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filterEntries, listAvailableProjects, MemoryStore, readMemoryPreview } from "../data.ts";
-import { MemoryDetailsPanel } from "../panel.ts";
+import { formatUpdated, MemoryDetailsPanel, MemoryPanel } from "../panel.ts";
 import { shouldToggleMemoryPanel } from "../index.ts";
 import type { MemoryEntry } from "../types.ts";
 
@@ -78,6 +78,51 @@ describe("painel de memórias", () => {
 		expect(second).not.toEqual(first);
 		panel.handleInput("k");
 		expect(panel.render(80)).toEqual(first);
+	});
+
+	it("colunas de dados ficam sob os títulos mesmo com nome longo", () => {
+		const longEntry = makeEntry({
+			scope: "project",
+			type: "decisions",
+			context: "um-contexto-muito-longo-que-ultrapassa-a-largura-disponivel-da-coluna",
+			title: "um título também muito longo para forçar o corte antes da coluna Conf",
+			confidence: 0.85,
+			updated: "2026-10-25T00:00:00.000Z",
+		});
+		const snapshot = {
+			generatedAt: Date.now(),
+			projectId: "demo",
+			availableProjects: ["demo"],
+			query: { scope: "all" as const, type: "all" as const, search: "" },
+			entries: [makeEntry({}), longEntry],
+			totals: { global: 1, project: 1 },
+		};
+		const tui = { terminal: { rows: 24 }, requestRender() {} } as unknown as import("@earendil-works/pi-tui").TUI;
+		const theme = { fg: (_c: string, v: string) => v, bold: (v: string) => v } as unknown as import("@earendil-works/pi-coding-agent").Theme;
+		const panel = new MemoryPanel(tui, theme, snapshot, {
+			onQueryChange: () => {},
+			onRefresh: () => {},
+			onClose: () => {},
+			onPreview: () => {},
+			onSearch: () => {},
+		});
+		// truncateToWidth anexa reset ANSI ao truncar: comparar largura visível.
+		const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+		const lines = panel.render(100).map(stripAnsi);
+		const header = lines.find((l) => l.includes("Escopo") && l.includes("Memória"));
+		expect(header).toBeDefined();
+		const rows = lines.filter((l) => l.includes("GLOBAL") || l.includes("PROJETO"));
+		expect(rows).toHaveLength(2);
+		// Todas as linhas de dados têm a mesma largura visível do cabeçalho.
+		for (const row of rows) expect(row.length).toBe(header!.length);
+		// Conf e data de cada linha caem sob os títulos.
+		for (const row of rows) {
+			expect(row.indexOf("0.85") >= 0 || row.indexOf("0.80") >= 0).toBe(true);
+			const conf = row.includes("0.85") ? "0.85" : "0.80";
+			expect(row.indexOf(conf)).toBe(header!.indexOf("Conf"));
+			const date = formatUpdated("2026-10-25T00:00:00.000Z");
+			expect(row.indexOf(date)).toBe(header!.indexOf("Atual."));
+		}
 	});
 
 	it("respeita debounce do Alt+G", () => {

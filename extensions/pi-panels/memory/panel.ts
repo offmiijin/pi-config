@@ -212,14 +212,22 @@ export class MemoryPanel implements Component {
 				this.theme.fg("dim", " Gere com memory_save ou aguarde a extração automática."),
 			];
 		}
-		const header = ` ${this.pad("Escopo", 8)} ${this.pad("Tipo", 10)} ${this.pad("Memória", Math.max(20, width - 44))} ${this.pad("Conf", 6)} ${this.pad("Atual.", 10)}`;
+		// Linha: `␣▸␣ ESCOPO(8) ␣ TIPO(10) ␣ NOME(N) ␣ CONF(6) ␣ DATA(10)` = 41 + N.
+		// O cabeçalho reserva o mesmo prefixo de 3 cols do marcador para as
+		// colunas de dados caírem exatamente sob os títulos. Cada célula é
+		// truncada na largura da coluna ANTES do pad, então nomes longos são
+		// cortados antes de alcançar Conf/Atual.
+		const nameWidth = Math.max(10, width - 41);
+		const header = `   ${this.pad("Escopo", 8)} ${this.pad("Tipo", 10)} ${this.pad("Memória", nameWidth)} ${this.pad("Conf", 6)} ${this.pad("Atual.", 10)}`;
 		const lines = [this.theme.fg("muted", truncateToWidth(header, width, ""))];
-		const nameWidth = Math.max(20, width - 44);
 		for (const [index, entry] of this.snapshot.entries.entries()) {
 			const marker = index === this.selectedRow && this.focusArea === "content" ? "▶" : " ";
-			const scope = entry.scope === "global" ? "GLOBAL" : "PROJETO";
+			const scope = truncateToWidth(entry.scope === "global" ? "GLOBAL" : "PROJETO", 8, "");
+			const type = truncateToWidth(entry.type, 10, "");
 			const name = truncateToWidth(`${entry.context} — ${entry.title}`, nameWidth, "");
-			const line = ` ${marker} ${this.pad(scope, 8)} ${this.pad(entry.type, 10)} ${this.pad(name, nameWidth)} ${this.pad(formatConfidence(entry.confidence), 6)} ${this.pad(formatUpdated(entry.updated), 10)}`;
+			const conf = truncateToWidth(formatConfidence(entry.confidence), 6, "");
+			const updated = truncateToWidth(formatUpdated(entry.updated), 10, "");
+			const line = ` ${marker} ${this.pad(scope, 8)} ${this.pad(type, 10)} ${this.pad(name, nameWidth)} ${this.pad(conf, 6)} ${this.pad(updated, 10)}`;
 			lines.push(index === this.selectedRow ? this.theme.fg("accent", truncateToWidth(line, width, "")) : truncateToWidth(line, width, ""));
 		}
 		return lines;
