@@ -1101,13 +1101,29 @@ export class PipelineDB {
 		sessionFile: string;
 		reason: string;
 	}): void {
-		this.requireDb()
-			.prepare(
-				"INSERT OR IGNORE INTO pending_sessions " +
+		// Re-enfileiramento: a mesma sessão pode acumular novos episódios
+		// após um ciclo shutdown→start já concluído (resume da mesma
+		// sessão). INSERT OR IGNORE sozinho descartaria o segundo ciclo
+		// porque a PK session_id já existe como 'done' — por isso primeiro
+		// reabre linhas terminadas para 'pending', depois insere se inexistente.
+		const db = this.requireDb();
+		db.prepare(
+			"UPDATE pending_sessions SET status = ?, project_id = ?, session_file = ?, reason = ?, created_at = ? " +
+					"WHERE session_id = ? AND status = ?",
+		).run(
+			PENDING_SESSION_STATUS.PENDING,
+			opts.projectId,
+			opts.sessionFile,
+			opts.reason,
+			new Date().toISOString(),
+			opts.sessionId,
+			PENDING_SESSION_STATUS.DONE,
+		);
+		db.prepare(
+			"INSERT OR IGNORE INTO pending_sessions " +
 					"(session_id, project_id, session_file, reason, status, created_at) " +
 					"VALUES (?, ?, ?, ?, ?, ?)",
-			)
-			.run(
+			).run(
 				opts.sessionId,
 				opts.projectId,
 				opts.sessionFile,
