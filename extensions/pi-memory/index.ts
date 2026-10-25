@@ -374,6 +374,9 @@ export default function (pi: ExtensionAPI) {
 				// Jobs 'done' com candidatos pending (estado órfão) voltam para a
 				// fila — o worker refaz a extração até resolver (Bloqueador 2).
 				pipeline.recoverJobsWithPendingCandidates();
+				// Pendências claimed sem done (crash entre claim e complete no
+				// start anterior) voltam para pending antes de reivindicar.
+				pipeline.recoverStalePendingSessions();
 				worker = new PipelineWorker(pipeline, {
 					processor: createExtractionProcessor({
 						getModel,

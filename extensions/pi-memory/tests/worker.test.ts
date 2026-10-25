@@ -269,6 +269,22 @@ describe("pending_sessions (shutdown marca, start consolida)", () => {
 		pipeline.completePendingSession(sess);
 	});
 
+	it("recoverStalePendingSessions resgata claimed órfão de crash", () => {
+		const proj = "proj-pend-crash";
+		const sess = `sess-${Math.random()}`;
+		pipeline.queuePendingSession({
+			sessionId: sess,
+			projectId: proj,
+			sessionFile: "/tmp/s.jsonl",
+			reason: "shutdown",
+		});
+		expect(pipeline.claimPendingSessions(proj).length).toBe(1);
+		// Crash aqui: sem complete. O próximo start recupera.
+		expect(pipeline.recoverStalePendingSessions()).toBe(1);
+		expect(pipeline.countPendingSessions(proj, PENDING_SESSION_STATUS.PENDING)).toBe(1);
+		pipeline.completePendingSession(sess);
+	});
+
 	it("release devolve para pending", () => {
 		const proj = "proj-pend-rel";
 		const sess = `sess-${Math.random()}`;

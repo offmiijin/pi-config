@@ -43,14 +43,13 @@ export const PENDING_SESSION_STATUS = {
 export type PendingSessionStatus =
 	(typeof PENDING_SESSION_STATUS)[keyof typeof PENDING_SESSION_STATUS];
 
-/** Status de episódio (ciclo: pending → normalized → selected → processed | ignored | failed). */
+/** Status de episódio (ciclo: pending → normalized → selected → processed | ignored). */
 export const EPISODE_STATUS = {
 	PENDING: "pending",
 	NORMALIZED: "normalized",
 	SELECTED: "selected",
 	IGNORED: "ignored",
 	PROCESSED: "processed",
-	FAILED: "failed",
 } as const;
 export type EpisodeStatus = (typeof EPISODE_STATUS)[keyof typeof EPISODE_STATUS];
 
@@ -830,14 +829,18 @@ export class PipelineDB {
 		return Math.max(0, new Date(row.m).getTime() - Date.now());
 	}
 
-	/** Agregação de episódios pendentes de extração (normalized + selected). */
-	aggregatePendingEpisodes(projectId: string): { tokens: number; count: number } {
+	/**
+	 * Agregação de episódios elegíveis para consolidação (só NORMALIZED —
+	 * trabalho novo ainda não reivindicado por chunk job). SELECTED já tem
+	 * dono e não conta como elegível.
+	 */
+	aggregateNormalizedEpisodes(projectId: string): { tokens: number; count: number } {
 		const row = this.requireDb()
 			.prepare(
 				"SELECT COALESCE(SUM(token_estimate), 0) AS tokens, COUNT(*) AS n " +
-					"FROM episodes WHERE project_id = ? AND status IN (?, ?)",
+					"FROM episodes WHERE project_id = ? AND status = ?",
 			)
-			.get(projectId, EPISODE_STATUS.NORMALIZED, EPISODE_STATUS.SELECTED) as {
+			.get(projectId, EPISODE_STATUS.NORMALIZED) as {
 			tokens: number;
 			n: number;
 		};
@@ -1155,6 +1158,18 @@ export class PipelineDB {
 		this.requireDb()
 			.prepare("UPDATE pending_sessions SET status = ? WHERE session_id = ?")
 			.run(PENDING_SESSION_STATUS.DONE, sessionId);
+	}
+
+	/**
+	 * Recupera pendências órfãs de crash: claimed sem done (processo morreu
+	 * entre claim e complete) voltam para pending. Chamado no session_start
+	 * junto com recoverStuckJobs — mesma classe de garantia.
+	 */
+	recoverStalePendingSessions(): number {
+		const result = this.requireDb()
+			.prepare("UPDATE pending_sessions SET status = ? WHERE status = ?")
+			.run(PENDING_SESSION_STATUS.PENDING, PENDING_SESSION_STATUS.CLAIMED);
+		return Number(result.changes);
 	}
 
 	/** Devolve pendência claimed para pending (falha antes de criar jobs). */
