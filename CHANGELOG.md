@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `pi-memory`: adiciona pendências de sessão (`pending_sessions`) com recuperação de `claimed` órfão de crash no `session_start`.
+- `pi-memory`: adiciona jobs de consolidação pré-vinculados por chunk (`session`/`compact`/`manual`) com dedup entre chunks via FTS.
+- `pi-memory`: adiciona endereço explícito `scope/tipo/contexto` no `supersedes` e `scope`/`type` opcionais no `memory_decay`.
+- `pi-memory`: `/memory config` ganha a opção "Seguir modelo atual" (remove o override e volta ao `settings.json`); `/memory info` mostra a fonte efetiva.
+
+### Changed
+
+- `pi-memory`: o modelo de extração usa `settings.json` (`defaultProvider`/`defaultModel`) como padrão, lido ao vivo; override explícito continua valendo.
+- `pi-memory`: consolidação passa a ocorrer na compactação (imediato) e no início da sessão seguinte ao fim (pendência marcada no `shutdown`); remove os gatilhos automáticos por turno (tokens/episódios/sinal forte).
+- `pi-memory`: extração automática é estritamente `project-scoped`; memórias globais só via `memory_save` manual.
+- `pi-memory`: `.history/` guarda arquivo único por memória (espelho do ativo); a cadeia de versões vive no Git.
+- `pi-memory`: `archiveFile` com ordem copy-first (cópia atômica antes de remover o original).
+- `pi-memory`: `saveMemory` remove resíduo de `.supersedes/` ao ressuscitar uma key.
+- `pi-memory`: `memory_status` conta como elegíveis só episódios `normalized` e exibe sessões pendentes; remove o status morto `failed`.
+
+### Fixed
+
+- `pi-memory`: `commit` Git ignora paths deletados e nunca commitados em vez de falhar o commit inteiro com `fatal: pathspec`.
+- `pi-memory`: `recoverStalePendingSessions` evita pendências `claimed` presas após crash entre claim e complete.
+
 ## [1.6.0] 2026-10-24
 
 ### Added
