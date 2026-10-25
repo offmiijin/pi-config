@@ -12,10 +12,15 @@ Em worktrees criados pelo `pi-sandbox`, compara o estado atual com o commit-base
 
 Use `/token-monitor` ou `Alt+M` para abrir o monitor de tokens e custos. Ele lê os JSONL das sessões do Pi, oferece os modos Resumo, Tabela e Logs e permite filtrar por período, router e modelo.
 
-Os dois painéis continuam implementados em módulos independentes:
+Os painéis continuam implementados em módulos independentes:
 
 - `changes/` — alterações Git e estado da sessão;
-- `token-monitor/` — coleta, agregação e visualização de uso.
+- `token-monitor/` — coleta, agregação e visualização de uso;
+- `memory/` — monitoramento de memórias (globais e do projeto).
+
+## Painel de memórias
+
+Use `/memory` ou `Alt+G` para abrir o painel de memórias. Ele lista as memórias globais (`memories/_global/`) e do projeto atual (`memories/projects/<projeto>/`), com filtros por escopo (Todas/Globais/Projeto), por tipo (`_rules`, `decisions`, `gotchas`, `lessons`, `patterns`) e busca textual. `Enter` abre o preview do `.md` selecionado.
 
 ## Testes
 
