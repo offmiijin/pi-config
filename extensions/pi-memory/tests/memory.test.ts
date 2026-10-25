@@ -756,6 +756,129 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(existsSync(join(MEMORIES_ROOT, "_global", "_rules", "cache-rule.md"))).toBeFalse();
 	});
 
+	it("supersedes explícito scope/tipo/contexto resolve sem ambiguidade", async () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "alvo-gotcha",
+			title: "Gotcha",
+			content: "versão gotcha",
+			scope: "project",
+		});
+		saveMemory(testProjectId, {
+			type: "lessons",
+			context: "alvo-lesson",
+			title: "Lesson",
+			content: "versão lesson",
+			scope: "project",
+		});
+
+		// Endereço com tipo errado NÃO atinge o vizinho — erro em vez de
+		// mover o arquivo errado (o fuzzy legado teria pego o primeiro match).
+		const errado = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "nova-ctx",
+			title: "Nova",
+			content: "x",
+			scope: "project",
+			supersedes: "project/decisions/alvo-lesson",
+		});
+		expect(errado.action).toBe("error");
+
+		const result = saveMemory(testProjectId, {
+			type: "lessons",
+			context: "nova-ctx",
+			title: "Nova",
+			content: "substitui a lesson",
+			scope: "project",
+			supersedes: "project/lessons/alvo-lesson",
+		});
+		expect(result.action).toBe("created");
+
+		const { MEMORIES_ROOT } = await import("../constants.ts");
+		expect(
+			existsSync(
+				join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId, "lessons", "alvo-lesson.md"),
+			),
+		).toBeTrue();
+		// O outro tipo continua ativo — explícito não toca vizinhos.
+		expect(
+			existsSync(join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "alvo-gotcha.md")),
+		).toBeTrue();
+	});
+
+	it("supersedes explícito inexistente → erro (sem adivinhar)", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "qualquer-ctx",
+			title: "T",
+			content: "C",
+			scope: "project",
+			supersedes: "project/decisions/nope-ctx",
+		});
+		expect(result.action).toBe("error");
+		expect(result.error).toContain("Supersede target not found");
+	});
+
+	it("recriar key superseded remove o resíduo de .supersedes/", async () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "morta-ctx",
+			title: "Antiga",
+			content: "morreu",
+			scope: "project",
+		});
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "viva-ctx",
+			title: "Nova",
+			content: "substitui",
+			scope: "project",
+			supersedes: "morta-ctx",
+		});
+
+		const { MEMORIES_ROOT } = await import("../constants.ts");
+		const supPath = join(
+			MEMORIES_ROOT,
+			".supersedes",
+			"projects",
+			testProjectId,
+			"gotchas",
+			"morta-ctx.md",
+		);
+		expect(existsSync(supPath)).toBeTrue();
+
+		// Ressurreição: novo create limpa a cópia obsoleta e registra no Git.
+		const revived = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "morta-ctx",
+			title: "Ressuscitada",
+			content: "de volta",
+			scope: "project",
+		});
+		expect(revived.action).toBe("created");
+		expect(existsSync(supPath)).toBeFalse();
+		expect(existsSync(revived.file)).toBeTrue();
+		expect(revived.gitPaths).toContain(supPath);
+	});
+
+	it("parseMemoryRef aceita scope/tipo/contexto e rejeita o resto", async () => {
+		const { parseMemoryRef, findMemoryFileScoped } = await import("../memory/memory.ts");
+		expect(parseMemoryRef("project/decisions/cache-x")).toEqual({
+			scope: "project",
+			type: "decisions",
+			context: "cache-x",
+		});
+		expect(parseMemoryRef("global/_rules/minha-regra")).toEqual({
+			scope: "global",
+			type: "_rules",
+			context: "minha-regra",
+		});
+		expect(parseMemoryRef("só-uma-key")).toBeNull();
+		expect(parseMemoryRef("project/invalido/x")).toBeNull();
+		expect(parseMemoryRef("outro/decisions/x")).toBeNull();
+		expect(findMemoryFileScoped(testProjectId, "project", "gotchas", "nope-nunca")).toBeUndefined();
+	});
+
 	it("consolidates existing memory (mode=consolidate)", () => {
 		const result = saveMemory(testProjectId, {
 			type: "gotchas",

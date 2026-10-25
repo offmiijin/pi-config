@@ -38,7 +38,11 @@ export const SaveSchema = Type.Object({
 		}),
 	),
 	supersedes: Type.Optional(
-		Type.String({ description: "Context key of memory this replaces" }),
+		Type.String({
+			description:
+				"Context key of memory this replaces, or explicit scope/type/context " +
+				'(e.g. "project/decisions/cache-sessao") to disambiguate duplicate keys',
+		}),
 	),
 	summary: Type.Optional(
 		Type.String({
@@ -113,6 +117,14 @@ export const DecaySchema = Type.Object({
 	),
 	reason: Type.Optional(
 		Type.String({ description: "Why this memory is being decayed (PT-BR)" }),
+	),
+	scope: Type.Optional(
+		ScopeEnum,
+		{ description: "Exact scope (with type) to disambiguate duplicate context keys" },
+	),
+	type: Type.Optional(
+		MemoryTypeEnum,
+		{ description: "Exact type (with scope) to disambiguate duplicate context keys" },
 	),
 });
 

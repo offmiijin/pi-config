@@ -109,7 +109,11 @@ function archiveContent(
 /**
  * Arquiva um arquivo de memória (frontmatter + corpo) num caminho de
  * destino, com metadados de superseded e confidence zerada. O original é
- * removido. Usado por .supersedes/ (moveToSupersedes) e .history/ (revisão).
+ * removido. Usado por .supersedes/ (moveToSupersedes).
+ *
+ * Ordem copy-first: a cópia é persistida (temporário + rename atômico)
+ * ANTES de remover o original — crash no meio deixa duplicata (recuperável
+ * via retry idempotente), nunca perda. Nunca inverta a ordem.
  */
 export function archiveFile(
 	filePath: string,
@@ -126,7 +130,7 @@ export function archiveFile(
 	}
 
 	ensureFileDir(targetPath);
-	writeFileSync(targetPath, formatFrontmatter(meta) + body);
+	writeFileAtomic(targetPath, formatFrontmatter(meta) + body);
 	rmSync(filePath, { force: true });
 	return targetPath;
 }
@@ -150,8 +154,46 @@ export function extractTitle(body: string): string | undefined {
 }
 
 /**
+ * Referência explícita de memória no formato "scope/tipo/contexto"
+ * (ex.: "project/decisions/cache-sessao"). Retorna null quando a string
+ * não segue o formato — o chamador usa a resolução legada (fuzzy).
+ */
+export function parseMemoryRef(
+	ref: string,
+): { scope: "global" | "project"; type: string; context: string } | null {
+	const parts = ref.split("/");
+	if (parts.length !== 3) return null;
+	const [scope, type, ...rest] = parts;
+	if (scope !== "global" && scope !== "project") return null;
+	if (!(MEMORY_TYPES as readonly string[]).includes(type)) return null;
+	const context = rest.join("/").trim();
+	if (!context || !sanitizeFilename(context)) return null;
+	return { scope, type, context };
+}
+
+/**
+ * Encontra o arquivo de memória de um contexto + escopo + tipo exatos.
+ * Retorna undefined se não existir. Sem ambiguidade — prefira esta função
+ * a findMemoryFile sempre que scope e type forem conhecidos.
+ */
+export function findMemoryFileScoped(
+	projectId: string,
+	scope: "global" | "project",
+	type: string,
+	context: string,
+): string | undefined {
+	const fp = getMemoryFilePath(projectId, type, context, scope);
+	return existsSync(fp) ? fp : undefined;
+}
+
+/**
  * Encontra o arquivo de memória de um contexto em todos os tipos e escopos.
  * Retorna undefined se não encontrar.
+ *
+ * Legado/fuzzy: a key não é globalmente única (só por scope+tipo), então o
+ * primeiro match por ordem de busca pode não ser o pretendido. Use
+ * findMemoryFileScoped ou parseMemoryRef ("scope/tipo/contexto") quando
+ * a precisão importar (ex.: supersedes).
  */
 export function findMemoryFile(
 	projectId: string,
@@ -536,7 +578,25 @@ export function saveMemory(
 	const pendingArchives: PendingArchive[] = [];
 
 	if (supersedes) {
-		const oldPath = findMemoryFile(projectId, supersedes);
+		// Formato explícito "scope/tipo/contexto" resolve o arquivo exato
+		// (sem ambiguidade entre tipos); string curta usa a busca legada.
+		const explicit = parseMemoryRef(supersedes);
+		let oldPath: string | undefined;
+		if (explicit) {
+			oldPath = findMemoryFileScoped(projectId, explicit.scope, explicit.type, explicit.context);
+			if (!oldPath) {
+				return {
+					action: "error",
+					file: "",
+					revision: 0,
+					error: `Supersede target not found: "${supersedes}" (expected scope/tipo/contexto existente)`,
+					archived,
+					gitPaths: [],
+				};
+			}
+		} else {
+			oldPath = findMemoryFile(projectId, supersedes);
+		}
 		if (oldPath) {
 			pendingArchives.push({
 				raw: readFileSync(oldPath, "utf-8"),
@@ -639,6 +699,13 @@ export function saveMemory(
 	}
 	const body = `# ${title}\n\n${content.trim()}\n`;
 	writeFileAtomic(filePath, formatFrontmatter(metaOut) + body);
+	// Ressurreição: se a key estava morta em .supersedes/, a cópia obsoleta
+	// é removida APÓS o novo snapshot estar em disco — a key volta a ter
+	// exatamente uma versão viva (a cópia antiga segue recuperável no Git).
+	const staleSuperseded = !existed ? getSupersedesPath(filePath) : null;
+	if (staleSuperseded && existsSync(staleSuperseded)) {
+		rmSync(staleSuperseded, { force: true });
+	}
 	for (const a of pendingArchives) {
 		// Guarda do caso supersedes === context (self-supersede): o original
 		// É o snapshot recém-escrito — removê-lo apagaria a memória nova.
@@ -649,6 +716,7 @@ export function saveMemory(
 
 	const gitPaths = [
 		filePath,
+		...(staleSuperseded ? [staleSuperseded] : []),
 		...pendingArchives.flatMap((a) => [
 			a.targetPath,
 			...(a.removeOriginalPath ? [a.removeOriginalPath] : []),
