@@ -126,7 +126,7 @@ async function selectFilter(
 }
 
 export function shouldToggleTokenMonitor(data: string, now: number, lastToggleAt: number): boolean {
-  return matchesKey(data, Key.alt("m")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
+  return matchesKey(data, Key.alt("t")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -213,7 +213,7 @@ export default function (pi: ExtensionAPI): void {
     removeTerminalInputListener = undefined;
     if (ctx.mode !== "tui") return;
     removeTerminalInputListener = ctx.ui.onTerminalInput((data) => {
-      if (!matchesKey(data, Key.alt("m"))) return;
+      if (!matchesKey(data, Key.alt("t"))) return;
       const now = Date.now();
       if (shouldToggleTokenMonitor(data, now, lastToggleAt)) {
         lastToggleAt = now;

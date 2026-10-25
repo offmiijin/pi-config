@@ -12,10 +12,11 @@ describe("monitor de tokens do pi-panels", () => {
     expect(commands["token-monitor"]).toBeDefined();
   });
 
-  it("reconhece Alt+M sem repetir eventos da tecla", () => {
-    expect(shouldToggleTokenMonitor("\x1bm", 1000, 0)).toBe(true);
-    expect(shouldToggleTokenMonitor("\x1bm", 1100, 1000)).toBe(false);
+  it("reconhece Alt+T sem repetir eventos da tecla", () => {
+    expect(shouldToggleTokenMonitor("\x1bt", 1000, 0)).toBe(true);
+    expect(shouldToggleTokenMonitor("\x1bt", 1100, 1000)).toBe(false);
     expect(shouldToggleTokenMonitor("\x1b[109;3:2u", 2000, 0)).toBe(false);
+    expect(shouldToggleTokenMonitor("\x1bm", 2000, 0)).toBe(false);
   });
 
   it("valida o período personalizado e inclui o minuto final", async () => {

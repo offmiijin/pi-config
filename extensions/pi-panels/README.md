@@ -4,18 +4,23 @@ Extensão TUI que reúne painéis visuais independentes do Pi.
 
 ## Painel de alterações Git
 
-Pressione `Alt+D` no modo interativo para abrir ou fechar o painel de alterações. O conteúdo é atualizado após operações do agente, mudanças de árvore da sessão e por polling para alterações externas. Nos commits e nas alterações ainda não commitadas, o painel exibe diffs e arquivos completos com linhas inseridas e apagadas.
+Pressione `Alt+C` no modo interativo para abrir ou fechar o painel de alterações. O conteúdo é atualizado após operações do agente, mudanças de árvore da sessão e por polling para alterações externas. Nos commits e nas alterações ainda não commitadas, o painel exibe diffs e arquivos completos com linhas inseridas e apagadas.
 
 Em worktrees criados pelo `pi-sandbox`, compara o estado atual com o commit-base da sessão e persiste a âncora para sobreviver a reinicializações e recarregamentos.
 
 ## Monitor de tokens
 
-Use `/token-monitor` ou `Alt+M` para abrir o monitor de tokens e custos. Ele lê os JSONL das sessões do Pi, oferece os modos Resumo, Tabela e Logs e permite filtrar por período, router e modelo.
+Use `/token-monitor` ou `Alt+T` para abrir o monitor de tokens e custos. Ele lê os JSONL das sessões do Pi, oferece os modos Resumo, Tabela e Logs e permite filtrar por período, router e modelo.
 
-Os dois painéis continuam implementados em módulos independentes:
+Os painéis continuam implementados em módulos independentes:
 
 - `changes/` — alterações Git e estado da sessão;
-- `token-monitor/` — coleta, agregação e visualização de uso.
+- `token-monitor/` — coleta, agregação e visualização de uso;
+- `memory/` — monitoramento de memórias (globais e do projeto).
+
+## Painel de memórias
+
+Use `/memory` ou `Alt+M` para abrir o painel de memórias. Ele lista as memórias globais (`memories/_global/`) e do projeto atual (`memories/projects/<projeto>/`), com filtros por escopo (Todas/Globais/Projeto), por tipo (`_rules`, `decisions`, `gotchas`, `lessons`, `patterns`) e busca textual. `Enter` abre o preview do `.md` selecionado.
 
 ## Testes
 

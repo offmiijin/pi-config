@@ -213,7 +213,7 @@ export class LogDetailsPanel implements Component {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, Key.alt("m"))) {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, Key.alt("t"))) {
       this.onClose();
     }
   }
@@ -307,7 +307,7 @@ export class TokenMonitorPanel implements Component {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, Key.alt("m"))) {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, Key.alt("t"))) {
       this.onClose();
       return;
     }
