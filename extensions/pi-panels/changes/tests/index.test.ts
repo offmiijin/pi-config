@@ -3,14 +3,14 @@ import registerChanges, { shouldTogglePanel } from "../index.ts";
 import { PANEL_SESSION_ENTRY } from "../session.ts";
 
 describe("painel de alterações do pi-panels", () => {
-	it("ignora repetições do Alt+D enquanto a tecla permanece pressionada", () => {
-		expect(shouldTogglePanel("\x1bd", 1000, 0)).toBe(true);
-		expect(shouldTogglePanel("\x1bd", 1100, 1000)).toBe(false);
+	it("ignora repetições do Alt+C enquanto a tecla permanece pressionada", () => {
+		expect(shouldTogglePanel("\x1bc", 1000, 0)).toBe(true);
+		expect(shouldTogglePanel("\x1bc", 1100, 1000)).toBe(false);
 		// Kitty: D + Alt, evento de repetição (:2u).
-		expect(shouldTogglePanel("\x1b[100;3:2u", 2000, 0)).toBe(false);
+		expect(shouldTogglePanel("\x1b[99;3:2u", 2000, 0)).toBe(false);
 	});
 
-	it("intercepta Alt+D e usa o worktree/base emitidos pelo sandbox", async () => {
+	it("intercepta Alt+C e usa o worktree/base emitidos pelo sandbox", async () => {
 		const handlers: Record<string, (event: any, ctx: any) => unknown> = {};
 		const eventHandlers: Record<string, (event: any) => unknown> = {};
 		const execCalls: string[][] = [];
@@ -54,7 +54,7 @@ describe("painel de alterações do pi-panels", () => {
 
 		expect(shortcutRegistered).toBe(false);
 		expect(inputListener).toBeDefined();
-		expect(inputListener!("\x1bd")).toEqual({ consume: true });
+		expect(inputListener!("\x1bc")).toEqual({ consume: true });
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(customOptions.overlayOptions.anchor).toBe("center");
 		expect(execCalls[0]).toEqual(expect.arrayContaining(["-C", "/tmp/worktree", "base123^{commit}"]));
@@ -100,7 +100,7 @@ describe("painel de alterações do pi-panels", () => {
 		await handlers.session_start!({ reason: "reload" }, ctx);
 		eventHandlers["custom:dev-sandbox-session"]!({ worktreePath: "/tmp/worktree", baseCommit: "new-sandbox-base" });
 		expect(inputListener).toBeDefined();
-		inputListener!("\x1bd");
+		inputListener!("\x1bc");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(customOptions.overlayOptions.anchor).toBe("center");
@@ -144,7 +144,7 @@ describe("painel de alterações do pi-panels", () => {
 		registerChanges(pi as any);
 		eventHandlers["custom:dev-sandbox-session"]!({ worktreePath: "/tmp/worktree", baseCommit: "new-session-base" });
 		await handlers.session_start!({ reason: "new" }, ctx);
-		inputListener!("\x1bd");
+		inputListener!("\x1bc");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(customOptions.overlayOptions.anchor).toBe("center");
@@ -212,7 +212,7 @@ describe("robustez do painel de alterações", () => {
 		try {
 			const { handlers, ctx, getInputListener, releaseCustom } = setup(async () => ({ stdout: "", stderr: "", code: 0 }));
 			await handlers.session_start!({ reason: "new" }, ctx);
-			getInputListener()!("\x1bd");
+			getInputListener()!("\x1bc");
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			// Exec passa a lançar (sandbox fail-closed) nos refreshes seguintes.
 			await handlers.tool_execution_end!({}, ctx);
@@ -234,7 +234,7 @@ describe("robustez do painel de alterações", () => {
 				return { stdout: "", stderr: "", code: 0 };
 			});
 			await handlers.session_start!({ reason: "new" }, ctx);
-			getInputListener()!("\x1bd");
+			getInputListener()!("\x1bc");
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			fail = true;
 			await handlers.tool_execution_end!({}, ctx);
@@ -257,7 +257,7 @@ describe("robustez do painel de alterações", () => {
 		// Turno seguinte fora do modo interativo: o atalho avisa e não abre o painel.
 		(ctx as any).mode = "print";
 		(ctx as any).hasUI = false;
-		getInputListener()!("\x1bd");
+		getInputListener()!("\x1bc");
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(wasCustomOpened()).toBe(false);
 		expect(notified).toHaveLength(1);

@@ -211,7 +211,7 @@ export class ChangesPanel implements Component {
 		if (
 			matchesKey(data, Key.escape) ||
 			matchesKey(data, Key.ctrl("c")) ||
-			matchesKey(data, Key.alt("d"))
+			matchesKey(data, Key.alt("c"))
 		) {
 			this.close();
 			return;
@@ -347,8 +347,8 @@ export class ChangesPanel implements Component {
 
 		const toggleLabel = this.showFullFile ? "diff" : "arquivo completo";
 		const footerText = this.focus === "files"
-			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${toggleLabel}  Alt+D/Esc fechar `
-			: ` ↑↓ K↑ J↓ rolar  → L direita  ← H esquerda  F ${toggleLabel}  Enter arquivos  Alt+D/Esc fechar `;
+			? ` ↑↓ K↑ J↓ arquivo  Enter arquivo  F ${toggleLabel}  Alt+C/Esc fechar `
+			: ` ↑↓ K↑ J↓ rolar  → L direita  ← H esquerda  F ${toggleLabel}  Enter arquivos  Alt+C/Esc fechar `;
 		const footer = this.theme.fg("dim", footerText);
 		lines.push(contentRow(footer));
 		lines.push(horizontalRow("╰", "╯"));

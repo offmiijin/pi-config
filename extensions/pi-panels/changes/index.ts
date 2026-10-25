@@ -8,7 +8,7 @@ const REFRESH_INTERVAL_MS = 1500;
 const TOGGLE_DEBOUNCE_MS = 250;
 
 export function shouldTogglePanel(data: string, now: number, lastToggleAt: number): boolean {
-	return matchesKey(data, Key.alt("d")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
+	return matchesKey(data, Key.alt("c")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
 }
 
 /** String não vazia (após trim) ou undefined — payloads de eventos não são confiáveis. */
@@ -181,8 +181,8 @@ export default function (pi: ExtensionAPI): void {
 		}
 	};
 
-	// Alt+D é tratado antes do editor para evitar o conflito com a ação
-	// nativa `tui.editor.deleteWordForward`.
+	// Alt+C é tratado antes do editor e consumido para evitar
+	// ações nativas do editor.
 	pi.on("session_start", (event, ctx) => {
 		const freshSession = event.reason === "new" || event.reason === "fork";
 		const branch = typeof ctx.sessionManager?.getBranch === "function"
@@ -201,13 +201,13 @@ export default function (pi: ExtensionAPI): void {
 		if (ctx.mode !== "tui") return;
 
 		removeTerminalInputListener = ctx.ui.onTerminalInput((data) => {
-			if (!matchesKey(data, Key.alt("d"))) return;
+			if (!matchesKey(data, Key.alt("c"))) return;
 			const now = Date.now();
 			if (shouldTogglePanel(data, now, lastToggleAt)) {
 				lastToggleAt = now;
 				void openPanel(ctx);
 			}
-			// Consome também repetições para que o editor nunca execute deleteWordForward.
+			// Consome também repetições para que o editor nunca execute outra ação.
 			return { consume: true };
 		});
 	});

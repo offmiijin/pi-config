@@ -8,7 +8,7 @@ const REFRESH_INTERVAL_MS = 2000;
 const TOGGLE_DEBOUNCE_MS = 250;
 
 export function shouldToggleMemoryPanel(data: string, now: number, lastToggleAt: number): boolean {
-	return matchesKey(data, Key.alt("g")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
+	return matchesKey(data, Key.alt("m")) && !isKeyRepeat(data) && now - lastToggleAt >= TOGGLE_DEBOUNCE_MS;
 }
 
 function resolveProjectId(ctx: ExtensionContext): string {
@@ -111,7 +111,7 @@ export default function (pi: ExtensionAPI): void {
 		removeTerminalInputListener = undefined;
 		if (ctx.mode !== "tui") return;
 		removeTerminalInputListener = ctx.ui.onTerminalInput((data) => {
-			if (!matchesKey(data, Key.alt("g"))) return;
+			if (!matchesKey(data, Key.alt("m"))) return;
 			const now = Date.now();
 			if (shouldToggleMemoryPanel(data, now, lastToggleAt)) {
 				lastToggleAt = now;

@@ -186,11 +186,11 @@ describe("painel de memórias", () => {
 		expect(current).toMatchObject({ scope: "all", type: "decisions" });
 	});
 
-	it("respeita debounce do Alt+G", () => {
-		// Alt+G em terminal legacy = ESC + g.
-		const toggle = "\x1bg";
+	it("respeita debounce do Alt+M", () => {
+		// Alt+M em terminal legacy = ESC + m.
+		const toggle = "\x1bm";
 		expect(shouldToggleMemoryPanel(toggle, 1000, Number.NEGATIVE_INFINITY)).toBe(true);
 		expect(shouldToggleMemoryPanel(toggle, 1100, 1000)).toBe(false);
-		expect(shouldToggleMemoryPanel("\x1bm", 2000, 0)).toBe(false);
+		expect(shouldToggleMemoryPanel("\x1bg", 2000, 0)).toBe(false);
 	});
 });
