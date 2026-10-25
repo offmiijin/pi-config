@@ -227,12 +227,15 @@ export class MemoryPanel implements Component {
 }
 
 export class MemoryDetailsPanel implements Component {
+	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly entry: MemoryEntry;
 	private readonly preview: string;
 	private readonly onClose: () => void;
+	private scroll = 0;
 
-	constructor(theme: Theme, entry: MemoryEntry, preview: string, onClose: () => void) {
+	constructor(tui: TUI, theme: Theme, entry: MemoryEntry, preview: string, onClose: () => void) {
+		this.tui = tui;
 		this.theme = theme;
 		this.entry = entry;
 		this.preview = preview;
@@ -242,6 +245,17 @@ export class MemoryDetailsPanel implements Component {
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, Key.alt("g"))) {
 			this.onClose();
+			return;
+		}
+		if (matchesKey(data, Key.up) || data === "k" || data === "K") {
+			this.scroll = Math.max(0, this.scroll - 1);
+			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, Key.down) || data === "j" || data === "J") {
+			this.scroll = Math.min(this.maxScroll(), this.scroll + 1);
+			this.tui.requestRender();
+			return;
 		}
 	}
 
@@ -249,22 +263,37 @@ export class MemoryDetailsPanel implements Component {
 		const innerWidth = Math.max(1, width - 2);
 		const row = (content: string): string => `│${this.pad(content, innerWidth)}│`;
 		const separator = `├${"─".repeat(innerWidth)}┤`;
-		const lines = [
+		const header = [
 			`╭${"─".repeat(innerWidth)}╮`,
 			row(this.theme.fg("accent", this.theme.bold(` ${this.entry.scope === "global" ? "GLOBAL" : "PROJETO"} · ${this.entry.type}/${this.entry.context}`))),
 			row(this.theme.fg("muted", ` ${this.entry.title} · conf ${formatConfidence(this.entry.confidence)} · ${formatUpdated(this.entry.updated)}`)),
 			row(this.theme.fg("dim", ` ${this.entry.path}`)),
 			separator,
-			...this.preview.split(/\r?\n/).slice(0, 40).map((line) => row(` ${truncateToWidth(line, innerWidth - 1, "")}`)),
+		];
+		const footer = [
 			separator,
-			row(this.theme.fg("dim", " Esc fechar ")),
+			row(this.theme.fg("dim", " ↑↓/j/k rolar  Esc fechar ")),
 			`╰${"─".repeat(innerWidth)}╯`,
 		];
-		return lines.map((line) => truncateToWidth(line, width, ""));
+		const body = this.preview.split(/\r?\n/).map((line) => row(` ${truncateToWidth(line, innerWidth - 1, "")}`));
+		const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.9));
+		const availableBodyRows = Math.max(1, maxPanelRows - header.length - footer.length);
+		this.scroll = Math.max(0, Math.min(this.maxScroll(availableBodyRows), this.scroll));
+		const visible = body.slice(this.scroll, this.scroll + availableBodyRows);
+		return [...header, ...visible, ...footer].slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
 	}
 
 	invalidate(): void {}
 	dispose(): void {}
+
+	private maxScroll(availableBodyRows?: number): number {
+		const total = this.preview.split(/\r?\n/).length;
+		if (availableBodyRows === undefined) {
+			const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.9));
+		availableBodyRows = Math.max(1, maxPanelRows - 8);
+		}
+		return Math.max(0, total - availableBodyRows);
+	}
 
 	private pad(content: string, width: number): string {
 		const value = truncateToWidth(content, width, "");

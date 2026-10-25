@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { filterEntries, listAvailableProjects, MemoryStore } from "../data.ts";
+import { filterEntries, listAvailableProjects, MemoryStore, readMemoryPreview } from "../data.ts";
+import { MemoryDetailsPanel } from "../panel.ts";
 import { shouldToggleMemoryPanel } from "../index.ts";
 import type { MemoryEntry } from "../types.ts";
 
@@ -54,6 +55,29 @@ describe("painel de memórias", () => {
 
 		const onlyProject = store.snapshot("demo", { scope: "project", type: "all", search: "" });
 		expect(onlyProject.entries.map((e) => e.context)).toEqual(["login"]);
+	});
+
+	it("preview lê o conteúdo completo sem corte", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-memory-preview-"));
+		mkdirSync(join(root, "_global", "decisions"), { recursive: true });
+		const big = `# Titulo\n${"linha de conteudo\n".repeat(500)}`;
+		writeFileSync(join(root, "_global", "decisions", "big.md"), big);
+		expect(readMemoryPreview(root, "_global/decisions/big.md")).toBe(big);
+	});
+
+	it("preview do painel respeita o limite do painel e navega com j/k", () => {
+		const preview = Array.from({ length: 100 }, (_, i) => `linha ${i}`).join("\n");
+		const tui = { terminal: { rows: 24 }, requestRender() {} } as unknown as import("@earendil-works/pi-tui").TUI;
+		const theme = { fg: (_c: string, s: string) => s, bold: (s: string) => s } as unknown as import("@earendil-works/pi-coding-agent").Theme;
+		const panel = new MemoryDetailsPanel(tui, theme, makeEntry({}), preview, () => {});
+		const first = panel.render(80);
+		// Limite do painel: 90% de 24 linhas.
+		expect(first.length).toBeLessThanOrEqual(Math.floor(24 * 0.9));
+		panel.handleInput("j");
+		const second = panel.render(80);
+		expect(second).not.toEqual(first);
+		panel.handleInput("k");
+		expect(panel.render(80)).toEqual(first);
 	});
 
 	it("respeita debounce do Alt+G", () => {

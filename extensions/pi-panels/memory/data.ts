@@ -147,11 +147,10 @@ export function listAvailableProjects(root = getMemoriesRoot()): string[] {
 	}
 }
 
-/** Lê o corpo do .md para o preview (limitado a maxChars). */
-export function readMemoryPreview(root: string, relPath: string, maxChars = 4000): string {
+/** Lê o corpo completo do .md para o preview (sem corte de conteúdo; o limite é o do painel). */
+export function readMemoryPreview(root: string, relPath: string): string {
 	try {
-		const content = readFileSync(join(root, relPath), "utf-8");
-		return content.length > maxChars ? `${content.slice(0, maxChars)}…` : content;
+		return readFileSync(join(root, relPath), "utf-8");
 	} catch {
 		return "Não foi possível ler o arquivo de memória.";
 	}

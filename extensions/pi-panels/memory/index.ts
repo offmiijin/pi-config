@@ -22,7 +22,7 @@ function resolveProjectId(ctx: ExtensionContext): string {
 function openEntryPreview(ctx: ExtensionContext, store: MemoryStore, entry: MemoryEntry): void {
 	const preview = readMemoryPreview(store.root, entry.path);
 	void ctx.ui.custom<void>(
-		(_tui, theme, _keybindings, done) => new MemoryDetailsPanel(theme, entry, preview, done),
+		(tui, theme, _keybindings, done) => new MemoryDetailsPanel(tui, theme, entry, preview, done),
 		{
 			overlay: true,
 			overlayOptions: { anchor: "center", width: "70%", minWidth: 60, maxHeight: "80%", margin: 1 },
