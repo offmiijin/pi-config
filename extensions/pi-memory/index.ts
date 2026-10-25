@@ -618,5 +618,5 @@ export default function (pi: ExtensionAPI) {
 	registerMemoryExtract(pi, state);
 	registerMemoryRetention(pi, state);
 	registerMemoryGit(pi, state);
-	registerMemoryConfig(pi);
+	registerMemoryConfig(pi, state);
 }

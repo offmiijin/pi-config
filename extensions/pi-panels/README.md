@@ -20,7 +20,7 @@ Os painéis continuam implementados em módulos independentes:
 
 ## Painel de memórias
 
-Use `/memory` ou `Alt+M` para abrir o painel de memórias. Ele lista as memórias globais (`memories/_global/`) e do projeto atual (`memories/projects/<projeto>/`), com filtros por escopo (Todas/Globais/Projeto), por tipo (`_rules`, `decisions`, `gotchas`, `lessons`, `patterns`) e busca textual. `Enter` abre o preview do `.md` selecionado.
+Use `/memory-panel` ou `Alt+M` para abrir o painel de memórias. Ele lista as memórias globais (`memories/_global/`) e do projeto atual (`memories/projects/<projeto>/`), com filtros por escopo (Todas/Globais/Projeto), por tipo (`_rules`, `decisions`, `gotchas`, `lessons`, `patterns`) e busca textual. `Enter` abre o preview do `.md` selecionado.
 
 ## Testes
 

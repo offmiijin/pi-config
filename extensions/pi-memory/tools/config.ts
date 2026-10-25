@@ -15,6 +15,8 @@ import {
 	saveModelProcessorConfig,
 	type MemoryModelConfig,
 } from "../memory/config.ts";
+import { formatPipelineStatus } from "./status.ts";
+import type { ToolState } from "./state.ts";
 
 interface RegistryModel {
 	provider: string;
@@ -175,7 +177,7 @@ async function chooseModelProcessor(ctx: ConfigContext): Promise<void> {
 	}
 }
 
-export function registerMemoryConfig(pi: ExtensionAPI): void {
+export function registerMemoryConfig(pi: ExtensionAPI, state?: ToolState): void {
 	pi.registerCommand("memory", {
 		description: "Configurações da memória persistente; use /memory info para informações",
 		getArgumentCompletions: getMemoryArgumentCompletions,
@@ -190,19 +192,22 @@ export function registerMemoryConfig(pi: ExtensionAPI): void {
 						: source === "settings"
 							? "settings.json (defaultModel)"
 							: "nenhum disponível";
+				const statusText = state ? formatPipelineStatus(state) : "Pipeline status: indisponível (sem estado da sessão).";
 				ctx.ui.notify(
 					[
 						"Memória persistente",
 						"",
 						`Model processor: ${model ? modelKey(model) : "—"} [${sourceLabel}]`,
 						"Autenticação: reutiliza as credenciais configuradas no Pi",
+						"",
+						statusText,
 					].join("\n"),
 					"info",
 				);
 				return;
 			}
 			if (command !== "config") {
-				ctx.ui.notify("Uso: /memory config ou /memory info", "info");
+				ctx.ui.notify("Uso: /memory config ou /memory info — painel: /memory-panel ou Alt+M", "info");
 				return;
 			}
 
