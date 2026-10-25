@@ -8,6 +8,7 @@
 - `pi-memory`: adiciona jobs de consolidação pré-vinculados por chunk (`session`/`compact`/`manual`) com dedup entre chunks via FTS.
 - `pi-memory`: adiciona endereço explícito `scope/tipo/contexto` no `supersedes` e `scope`/`type` opcionais no `memory_decay`.
 - `pi-memory`: `/memory config` ganha a opção "Seguir modelo atual" (remove o override e volta ao `settings.json`); `/memory info` mostra a fonte efetiva.
+- `pi-panels/memory`: adiciona painel de monitoramento de memórias (`/memory`, `Alt+M`) com filtros por escopo (Todas/Globais/Projeto), por tipo e busca textual, além de preview do `.md` selecionado.
 
 ### Changed
 
@@ -18,6 +19,9 @@
 - `pi-memory`: `archiveFile` com ordem copy-first (cópia atômica antes de remover o original).
 - `pi-memory`: `saveMemory` remove resíduo de `.supersedes/` ao ressuscitar uma key.
 - `pi-memory`: `memory_status` conta como elegíveis só episódios `normalized` e exibe sessões pendentes; remove o status morto `failed`.
+- `pi-panels`: remapa os atalhos — memórias `Alt+M` (`/memory`), tokens `Alt+T` (`/token-monitor`) e alterações `Alt+C`.
+- `pi-panels/memory`: preview com quebra por palavra (sem cortar no meio) e rolagem com `j/k`; colunas de dados alinhadas sob os cabeçalhos, com corte do nome antes de `Conf`.
+- `pi-panels/memory`: movimento lateral (`←→`/`h/l`) nos filtros alterna o campo focado (Escopo ↔ Tipo); cima/baixo não trocam de campo.
 
 ### Fixed
 
