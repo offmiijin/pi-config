@@ -101,7 +101,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 	};
 
-	pi.registerCommand("memory", {
+	pi.registerCommand("memory-panel", {
 		description: "Abre o painel de monitoramento de memórias (globais e do projeto)",
 		handler: async (_args, ctx) => openPanel(ctx),
 	});

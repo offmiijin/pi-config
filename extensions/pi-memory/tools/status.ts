@@ -16,6 +16,64 @@ import {
 import { StatusSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
 
+export function formatPipelineStatus(state: ToolState): string {
+	if (!state.projectId) {
+		return "Pipeline status: sem projeto ativo.";
+	}
+	const p = state.pipeline;
+	if (!p?.isOpen) {
+		return "Pipeline status: indisponível — extração desligada.";
+	}
+
+	const countE = (s: string) => p.countEpisodes(state.projectId, s as never);
+	const episodes = {
+		pending: countE(EPISODE_STATUS.PENDING),
+		normalized: countE(EPISODE_STATUS.NORMALIZED),
+		selected: countE(EPISODE_STATUS.SELECTED),
+		processed: countE(EPISODE_STATUS.PROCESSED),
+		ignored: countE(EPISODE_STATUS.IGNORED),
+		total: p.countEpisodes(state.projectId),
+	};
+	const evidenceCount = p.countEvidence({ projectId: state.projectId });
+	const elig = p.aggregateNormalizedEpisodes(state.projectId);
+	const jobs = {
+		queued: p.countJobs(state.projectId, JOB_STATUS.QUEUED),
+		processing: p.countJobs(state.projectId, JOB_STATUS.PROCESSING),
+		retry: p.countJobs(state.projectId, JOB_STATUS.RETRY),
+		done: p.countJobs(state.projectId, JOB_STATUS.DONE),
+		dead_letter: p.countJobs(state.projectId, JOB_STATUS.DEAD_LETTER),
+	};
+	const pendingCandidates = p.countCandidatesByProject(
+		state.projectId,
+		CANDIDATE_STATUS.PENDING,
+	);
+	const pendingSessions = p.countPendingSessions(
+		state.projectId,
+		PENDING_SESSION_STATUS.PENDING,
+	);
+	const lastExtraction = p.listJobs(state.projectId, JOB_STATUS.DONE, 1)[0] ?? null;
+
+	let retText = "";
+	if (state.retention?.isOpen) {
+		const m = state.retention.getMetrics(state.projectId);
+		retText = `  Retention: ${m.tracked} tracked (never used ${m.neverUsed}, protected ${m.protectedCount}, low ${m.lowRetention}), last sweep ${m.lastSweepAt ?? "(none)"}`;
+	}
+
+	return [
+		"Pipeline status:",
+		`  Episodes: ${episodes.total} (pending ${episodes.pending}, normalized ${episodes.normalized}, selected ${episodes.selected}, processed ${episodes.processed}, ignored ${episodes.ignored})`,
+		`  Evidence: ${evidenceCount} fragments, ~${elig.tokens} tokens eligible (${elig.count} episodes)`,
+		`  Jobs: ${jobs.queued} queued, ${jobs.processing} processing, ${jobs.retry} retry, ${jobs.done} done, ${jobs.dead_letter} dead_letter`,
+		lastExtraction
+			? `  Last extraction: ${lastExtraction.finishedAt} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
+			: "  Last extraction: (none yet)",
+		`  Candidates pending review: ${pendingCandidates}`,
+		`  Sessions pending consolidation: ${pendingSessions}`,
+		`  Worker: ${state.worker?.isRunning ? `running (job ${state.worker.currentJobId ?? "-"})` : "off"}`,
+		...(retText ? [retText] : []),
+	].join("\n");
+}
+
 export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 	pi.registerTool({
 		name: "memory_status",
@@ -74,11 +132,9 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 			const lastExtraction = p.listJobs(state.projectId, JOB_STATUS.DONE, 1)[0] ?? null;
 
 			// Seção de retenção por inatividade (feature flag) — omitida quando off.
-			let retText = "";
 			let retDetails: Record<string, unknown> | null = null;
 			if (state.retention?.isOpen) {
 				const m = state.retention.getMetrics(state.projectId);
-				retText = `  Retention: ${m.tracked} tracked (never used ${m.neverUsed}, protected ${m.protectedCount}, low ${m.lowRetention}), last sweep ${m.lastSweepAt ?? "(none)"}`;
 				retDetails = {
 					tracked: m.tracked,
 					never_used: m.neverUsed,
@@ -89,17 +145,7 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 			}
 
 			const text = [
-				"Pipeline status:",
-				`  Episodes: ${episodes.total} (pending ${episodes.pending}, normalized ${episodes.normalized}, selected ${episodes.selected}, processed ${episodes.processed}, ignored ${episodes.ignored})`,
-				`  Evidence: ${evidenceCount} fragments, ~${elig.tokens} tokens eligible (${elig.count} episodes)`,
-				`  Jobs: ${jobs.queued} queued, ${jobs.processing} processing, ${jobs.retry} retry, ${jobs.done} done, ${jobs.dead_letter} dead_letter`,
-				lastExtraction
-					? `  Last extraction: ${lastExtraction.finishedAt} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
-					: "  Last extraction: (none yet)",
-				`  Candidates pending review: ${pendingCandidates}`,
-				`  Sessions pending consolidation: ${pendingSessions}`,
-				`  Worker: ${state.worker?.isRunning ? `running (job ${state.worker.currentJobId ?? "-"})` : "off"}`,
-				...(retText ? [retText] : []),
+				formatPipelineStatus(state),
 				"",
 				"Call memory_extract to consolidate the current session now.",
 			].join("\n");
