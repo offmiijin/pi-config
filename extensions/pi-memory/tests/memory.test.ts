@@ -563,21 +563,20 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(content).toContain("Conteúdo novo");
 		expect(content).not.toContain("Some rich content");
 
-		// Versão anterior arquivada em .history/ (não mais acumulada no ativo)
+		// Versão anterior arquivada em .history/ (arquivo único, espelho do ativo)
 		const histPath = join(
 			MEMORIES_ROOT,
 			".history",
 			"projects",
 			testProjectId,
 			"gotchas",
-			"test-ctx",
-			"v1.md",
+			"test-ctx.md",
 		);
 		expect(existsSync(histPath)).toBeTrue();
 		expect(result.gitPaths).toContain(histPath);
 	});
 
-	it("snapshot: confiança é a da última escrita; .history/ acumula revisões", () => {
+	it("snapshot: confiança é a da última escrita; .history/ guarda só a versão anterior", () => {
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "multi-avg",
@@ -607,9 +606,11 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		const { meta } = parseFrontmatter(readFileSync(fp, "utf-8"));
 		expect(meta.confidence).toBe(0.5); // decisão da última versão (não média)
 		expect(meta.revision).toBe(3);
-		expect(
-			existsSync(join(MEMORIES_ROOT, ".history", "projects", testProjectId, "gotchas", "multi-avg", "v2.md")),
-		).toBeTrue();
+		const histAvg = join(MEMORIES_ROOT, ".history", "projects", testProjectId, "gotchas", "multi-avg.md");
+		expect(existsSync(histAvg)).toBeTrue();
+		// Arquivo único: contém a penúltima versão ("Segunda"), não a primeira
+		expect(readFileSync(histAvg, "utf-8")).toContain("# Segunda");
+		expect(readFileSync(histAvg, "utf-8")).not.toContain("# Primeira");
 	});
 
 	it("nova escrita substitui confiança decayed (snapshot)", () => {
@@ -785,15 +786,14 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(content).toContain("revision: 2");
 		expect(content).toContain("confidence: 0.8");
 
-		// Versão antiga arquivada em .history/ com metadados
+		// Versão antiga arquivada em .history/ (espelho) com metadados
 		const histPath = join(
 			MEMORIES_ROOT,
 			".history",
 			"projects",
 			testProjectId,
 			"gotchas",
-			"consol-ctx",
-			"v1.md",
+			"consol-ctx.md",
 		);
 		expect(existsSync(histPath)).toBeTrue();
 		const histContent = readFileSync(histPath, "utf-8");
@@ -1027,7 +1027,7 @@ describe("migração v1 → snapshot v2", () => {
 		return fp;
 	}
 
-	it("converte v1 em snapshot v2 com a última entrada e arquiva em .history/v0", () => {
+	it("converte v1 em snapshot v2 com a última entrada e arquiva baseline em .history/", () => {
 		ensureDirectories(proj);
 		const fp = writeV1("legacy-mig");
 
@@ -1040,9 +1040,9 @@ describe("migração v1 → snapshot v2", () => {
 		expect(body.startsWith("# Bug corrigido")).toBeTrue();
 		expect(body).not.toContain("Bug antigo");
 
-		// Baseline arquivada em .history/projects/test_project/gotchas/legacy-mig/v0.md
+		// Baseline arquivada em .history/projects/test_project/gotchas/legacy-mig.md
 		const hist = join(
-			MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "legacy-mig", "v0.md",
+			MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "legacy-mig.md",
 		);
 		expect(existsSync(hist)).toBeTrue();
 		expect(readFileSync(hist, "utf-8")).toContain("Bug antigo");

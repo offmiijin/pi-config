@@ -7,7 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 
 import { MEMORIES_ROOT, MEMORY_TYPES, defaultRetentionPolicy, type MemoryType } from "../constants.ts";
 import { ensureFileDir } from "../session.ts";
@@ -52,17 +52,19 @@ export function getSupersedesPath(originalPath: string): string {
 }
 
 /**
- * Retorna o caminho em .history/ para uma revisão de um arquivo de memória:
- *   _global/gotchas/foo.md → .history/_global/gotchas/foo/v{N}.md
- * Versão anterior do MESMO contexto (semântica de revisão).
+ * Retorna o caminho em .history/ para a revisão anterior de um arquivo de
+ * memória (espelho do path ativo, arquivo único sobrescrito a cada escrita):
+ *   _global/gotchas/foo.md → .history/_global/gotchas/foo.md
+ * A cadeia completa de versões vive no versionamento Git (cada mutação gera
+ * commit com os paths afetados); o arquivo em .history/ guarda SOMENTE a
+ * versão imediatamente anterior, como rede de segurança para ambientes sem
+ * Git e inspeção manual direta.
  */
-export function getHistoryPath(filePath: string, revision: number): string {
+export function getHistoryPath(filePath: string): string {
 	const relative = filePath.startsWith(MEMORIES_ROOT + "/")
 		? filePath.slice(MEMORIES_ROOT.length + 1)
 		: filePath;
-	const dir = dirname(relative);
-	const base = basename(relative, ".md");
-	return join(MEMORIES_ROOT, ".history", dir, base, `v${revision}.md`);
+	return join(MEMORIES_ROOT, ".history", relative);
 }
 
 /**
@@ -463,8 +465,9 @@ export interface SaveMemoryParams {
  * Snapshot consolidado:
  * - Contexto novo → cria arquivo com frontmatter v2 (revision: 1, created,
  *   updated, confidence, scope, tags, summary, evidence).
- * - Contexto existente → a versão atual vai para .history/{context}/v{N}.md
- *   e a nova substitui o ativo (revision N+1).
+ * - Contexto existente → a versão atual vai para .history/ (arquivo único,
+ *   espelho do path ativo, sobrescrito) e a nova substitui o ativo
+ *   (revision N+1). A cadeia de versões vive no Git.
  * - supersedes → move a memória da OUTRA chave para .supersedes/ primeiro.
  *
  * Retorna revision atual e os paths arquivados (o índice SQLite precisa
@@ -561,10 +564,9 @@ export function saveMemory(
 	if (existingPath && existingPath !== filePath) {
 		const existingRaw = readFileSync(existingPath, "utf-8");
 		const { meta: existingMeta } = parseFrontmatter(existingRaw);
-		const oldRev = typeof existingMeta.revision === "number" ? existingMeta.revision : 1;
 		pendingArchives.push({
 			raw: existingRaw,
-			targetPath: getHistoryPath(existingPath, oldRev),
+			targetPath: getHistoryPath(existingPath),
 			extraMeta: { superseded_by: context, superseded_reason: "context_moved" },
 			removeOriginalPath: existingPath,
 		});
@@ -596,7 +598,7 @@ export function saveMemory(
 		if (typeof meta.retention_policy === "string") carriedPolicy = meta.retention_policy;
 		pendingArchives.push({
 			raw: existing,
-			targetPath: getHistoryPath(filePath, oldRevision),
+			targetPath: getHistoryPath(filePath),
 			extraMeta: { superseded_by: context, superseded_reason: "consolidated" },
 			removeOriginalPath: null, // o rename substitui o ativo — nada a remover
 		});
@@ -670,8 +672,8 @@ export function saveMemory(
  * `## [data] Título`) para o snapshot v2. Idempotente: arquivo já v2
  * (frontmatter com revision) ou sem entradas datadas → no-op (false).
  *
- * O arquivo v1 INTEIRO é arquivado em .history/{...}/v0.md (revisão
- * baseline) e o path ativo é reescrito como snapshot v2 com a ÚLTIMA
+ * O arquivo v1 INTEIRO é arquivado em .history/ (baseline, arquivo único)
+ * e o path ativo é reescrito como snapshot v2 com a ÚLTIMA
  * entrada como estado atual. Retorna true quando migrou.
  */
 export function migrateMemoryToSnapshot(filePath: string, changedPaths: string[] = []): boolean {
@@ -696,7 +698,7 @@ export function migrateMemoryToSnapshot(filePath: string, changedPaths: string[]
 	// Cópia do v1 inteiro como revisão baseline — escrita ANTES da
 	// substituição atômica (Bloqueador 4): se o snapshot novo falhar, o
 	// ativo continua v1 e a migração é retentável (idempotente).
-	archiveContent(content, getHistoryPath(filePath, 0), {
+	archiveContent(content, getHistoryPath(filePath), {
 		superseded_by: typeof meta.context === "string" ? meta.context : "",
 		superseded_reason: "migrated_to_snapshot_v2",
 	});
@@ -715,7 +717,7 @@ export function migrateMemoryToSnapshot(filePath: string, changedPaths: string[]
 	if (typeof meta.summary === "string") metaOut.summary = meta.summary;
 
 	writeFileAtomic(filePath, formatFrontmatter(metaOut) + `# ${lastTitle}\n\n${lastContent}\n`);
-	changedPaths.push(filePath, getHistoryPath(filePath, 0));
+	changedPaths.push(filePath, getHistoryPath(filePath));
 	return true;
 }
 

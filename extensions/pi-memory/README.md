@@ -52,7 +52,7 @@ a extração roda assíncrona.
                ▼
 ┌──────────────────────────────┐
 │ Memória ativa (markdown v2)  │ ← snapshot consolidado
-│  ├─ .history/ (revisões)     │    escrita atômica (.tmp + rename)
+│  ├─ .history/ (anterior)     │    escrita atômica (.tmp + rename)
 │  ├─ .supersedes/ (obsol.)    │
 │  └─ .index.sqlite (FTS5)     │
 └──────────────────────────────┘
@@ -163,7 +163,7 @@ memories/
 ├── projects/<projectId>/<type>/<context>.md
 ├── .git/                                 ← repositório Git aninhado
 ├── .gitignore                            ← bancos e temporários ignorados
-├── .history/<path>/v{N}.md              ← versão anterior (revisões)
+├── .history/<path>.md                    ← versão anterior (arquivo único)
 ├── .supersedes/<path>                   ← memória substituída por OUTRA chave
 ├── .pipeline.sqlite                     ← episódios/evidências/jobs/candidatos
 └── .index.sqlite                        ← FTS5/BM25 (derivado)
@@ -171,7 +171,7 @@ memories/
 
 - Escrita **atômica**: conteúdo novo vai para `.tmp` e é `rename`ado sobre o
   ativo — falha no meio nunca deixa a memória sem versão.
-- A versão anterior é arquivada em `.history/` com `revision+1`.
+- A versão anterior é arquivada em `.history/` (arquivo único, espelho do ativo, sobrescrito; cadeia completa no Git) com `revision+1`.
 - O frontmatter guarda `summary` (estado atual, usado para dedup futuro),
   `confidence`, `tags`, `evidence`.
 - `supersedes` move a memória da outra chave para `.supersedes/`.
