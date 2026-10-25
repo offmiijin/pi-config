@@ -196,8 +196,8 @@ Regras:
 - Apenas memórias com confidence >= 0.5.
 - Toda memória exige evidência: cite os ids (ev_...) das evidências usadas em evidence_ids. Nada além da evidência.
 - Nunca inclua segredos/credenciais; nunca status temporário (progresso, "agora funciona", TODO); nunca cópia extensa de tool output; nada trivialmente redescobrível no código.
-- scope "global" SÓ para conhecimento que aplica a TODOS os projetos; "project" para o restante.
-- action "create" para contexto novo; "update" quando a informação nova atualiza/contradiz memória com a MESMA context key (reutilize a key); "supersedes" quando substitui memória de OUTRA key (informe a key em "supersedes"); "ignore" quando nada durável.
+- scope SEMPRE "project": a extração automática nunca cria memórias globais (globais só manualmente). Se o conhecimento já está coberto por memória existente de qualquer escopo, responda "ignore".
+- action "create" para contexto novo (project); "update" quando a informação nova atualiza/contradiz memória PROJECT com a MESMA context key (reutilize a key); "supersedes" quando substitui memória PROJECT de OUTRA key (informe a key em "supersedes"); "ignore" quando nada durável. Nunca toque memórias de escopo global.
 - Forneça "summary" (1-2 frases PT-BR) do estado ATUAL do conhecimento — persiste no frontmatter e serve de dedup futuro.
 - Content: markdown rico e autocontido — não notas atômicas.
 - Marcadores "[truncated: ~N tokens omitted]" significam dados cortados por orçamento — trate a evidência como parcial, nunca invente além deles.`;
@@ -213,7 +213,7 @@ export function buildExtractionPrompt(opts: {
 		`## Evidências da sessão\n\n${opts.evidence}`,
 		"",
 		"Responda com JSON apenas, sem code fences:",
-		'{"memories": [{"action": "create|update|supersede|ignore", "context": "chave-curta", "type": "gotchas|decisions|lessons|patterns|_rules", "scope": "global|project", "title": "título conciso", "summary": "1-2 frases PT-BR do estado atual", "content": "markdown rico autocontido", "confidence": 0.8, "evidence_ids": ["ev_..."], "supersedes": "chave-existente (opcional)", "reason": "por que é durável"}]}',
+		'{"memories": [{"action": "create|update|supersede|ignore", "context": "chave-curta", "type": "gotchas|decisions|lessons|patterns|_rules", "scope": "project", "title": "título conciso", "summary": "1-2 frases PT-BR do estado atual", "content": "markdown rico autocontido", "confidence": 0.8, "evidence_ids": ["ev_..."], "supersedes": "chave-existente (opcional)", "reason": "por que é durável"}]}',
 	];
 	return parts.filter(Boolean).join("\n\n");
 }

@@ -88,6 +88,25 @@ describe("validateCandidate", () => {
 		expect(issues.some((i) => i.code === "update_without_existing" && i.severity === "soft")).toBeTrue();
 	});
 
+	it("scope global na extração automática → erro", () => {
+		const issues = validateCandidate(makeCandidate({ scope: "global" }), ctx);
+		expect(issues.some((i) => i.code === "global_scope_auto" && i.severity === "error")).toBeTrue();
+	});
+
+	it("memória global existente é intocável (update e supersede) → erro", () => {
+		const globalExisting: MemoryFileRef = { ...existing, scope: "global" };
+		const upd = validateCandidate(makeCandidate({ action: "update" }), {
+			...ctx,
+			existing: globalExisting,
+		});
+		expect(upd.some((i) => i.code === "global_existing")).toBeTrue();
+		const sup = validateCandidate(
+			makeCandidate({ action: "supersede", supersedes: "outro-ctx" }),
+			{ ...ctx, existingSupersedeTarget: globalExisting },
+		);
+		expect(sup.some((i) => i.code === "global_supersede_target")).toBeTrue();
+	});
+
 	it("supersede sem target → erro; alvo inexistente → erro", () => {
 		const noTarget = validateCandidate(makeCandidate({ action: "supersede", supersedes: null }), ctx);
 		expect(noTarget.some((i) => i.code === "supersede_without_target")).toBeTrue();
@@ -130,8 +149,9 @@ describe("classifyCandidate", () => {
 		expect(classifyCandidate(makeCandidate({ type: "_rules" }), [], null)).toBe("review");
 	});
 
-	it("global → review", () => {
-		expect(classifyCandidate(makeCandidate({ scope: "global" }), [], null)).toBe("review");
+	it("scope global com issues de validação → reject (erro determinístico)", () => {
+		const issues = validateCandidate(makeCandidate({ scope: "global" }), ctx);
+		expect(classifyCandidate(makeCandidate({ scope: "global" }), issues, null)).toBe("reject");
 	});
 
 	it("supersede → review", () => {

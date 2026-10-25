@@ -134,15 +134,13 @@ sucesso: o job volta para retry.
 
 1. **Limite**: top 8 candidatos por job (por confidence) — o excedente é
    rejeitado sem chamar o LLM.
-2. **Validação determinística** (`validateCandidate`): tipo, escopo,
-   confidence ∈ [0.5, 1], tamanho, segredos, PT-BR, `evidence_ids` válidos,
-   ação × estado atual (create com key existente → erro).
+2. **Validação determinística** (`validateCandidate`): tipo, escopo (`project`; `global` → erro), confidence ∈ [0.5, 1], tamanho, segredos, PT-BR, `evidence_ids` válidos, ação × estado atual (create com key existente → erro; update/supersede envolvendo memória global → erro).
 3. **Política** (`classifyCandidate`):
 
 | Decisão | Quando |
 |---|---|
-| `reject` | erro determinístico ou confidence < 0.5 |
-| `review` | `_rules`, escopo `global`, `supersede`, `update` de memória existente, soft issue, confidence < 0.75 |
+| `reject` | erro determinístico (inclui scope `global` ou toque em memória global — extração automática é project-scoped, globais só via `memory_save` manual) ou confidence < 0.5 |
+| `review` | `_rules`, `supersede`, `update` de memória existente, soft issue, confidence < 0.75 |
 | `auto-accept` | o resto (create project com confidence alto) |
 
 4. **Revisor** (`runReviewer`): segundo passe do LLM (mesmo modelo,
