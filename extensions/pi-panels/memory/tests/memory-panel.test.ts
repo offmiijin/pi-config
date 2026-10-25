@@ -145,6 +145,47 @@ describe("painel de memórias", () => {
 		expect(body.join(" ")).toBe(paragraph);
 	});
 
+	it("filtros alternam o campo com h/l e setas; cima/baixo nao trocam", () => {
+		const base = {
+			generatedAt: Date.now(),
+			projectId: "demo",
+			availableProjects: ["demo"],
+			entries: [makeEntry({})],
+			totals: { global: 1, project: 0 },
+		};
+		let current: import("../types.ts").MemoryQuery = { scope: "all", type: "all", search: "" };
+		const tui = { terminal: { rows: 24 }, requestRender() {} } as unknown as import("@earendil-works/pi-tui").TUI;
+		const theme = { fg: (_c: string, v: string) => v, bold: (v: string) => v } as unknown as import("@earendil-works/pi-coding-agent").Theme;
+		const panel = new MemoryPanel(tui, theme, { ...base, query: current }, {
+			onQueryChange: (q) => { current = q; panel.setSnapshot({ ...base, query: q }); },
+			onRefresh: () => {},
+			onClose: () => {},
+			onPreview: () => {},
+			onSearch: () => {},
+		});
+		const enter = "\r";
+		const right = "\x1b[C";
+		const left = "\x1b[D";
+		const up = "\x1b[A";
+		panel.handleInput("\t"); // Tab: conteudo -> filtros (foco em Escopo)
+		panel.handleInput("l"); // foco -> Tipo
+		panel.handleInput(enter);
+		expect(current).toMatchObject({ scope: "all", type: "_rules" });
+		panel.handleInput("h"); // foco -> Escopo
+		panel.handleInput(enter);
+		expect(current).toMatchObject({ scope: "global", type: "_rules" });
+		panel.handleInput(right); // foco -> Tipo
+		panel.handleInput(enter);
+		expect(current).toMatchObject({ scope: "global", type: "decisions" });
+		panel.handleInput(left); // foco -> Escopo
+		panel.handleInput("j"); // baixo nao troca de campo
+		panel.handleInput(enter);
+		expect(current).toMatchObject({ scope: "project", type: "decisions" });
+		panel.handleInput(up); // cima nao troca de campo
+		panel.handleInput(enter);
+		expect(current).toMatchObject({ scope: "all", type: "decisions" });
+	});
+
 	it("respeita debounce do Alt+G", () => {
 		// Alt+G em terminal legacy = ESC + g.
 		const toggle = "\x1bg";

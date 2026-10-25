@@ -112,19 +112,24 @@ export class MemoryPanel implements Component {
 			else if (this.focusArea === "filters") this.cycleFocusedFilter(1);
 			return;
 		}
-		if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+		// Nos filtros, o movimento lateral alterna o campo focado
+		// (Escopo <-> Tipo). Cima/baixo nao trocam de campo.
+		if (matchesKey(data, Key.left) || data === "h" || data === "H") {
 			if (this.focusArea !== "filters") return;
-			this.cycleFocusedFilter(matchesKey(data, Key.left) ? -1 : 1);
+			this.moveFilterFocus(-1);
+			return;
+		}
+		if (matchesKey(data, Key.right) || data === "l" || data === "L") {
+			if (this.focusArea !== "filters") return;
+			this.moveFilterFocus(1);
 			return;
 		}
 		if (matchesKey(data, Key.up) || data === "k") {
 			if (this.focusArea === "content") this.moveSelection(-1);
-			else this.moveFilterFocus(-1);
 			return;
 		}
 		if (matchesKey(data, Key.down) || data === "j") {
 			if (this.focusArea === "content") this.moveSelection(1);
-			else this.moveFilterFocus(1);
 			return;
 		}
 	}
@@ -148,7 +153,7 @@ export class MemoryPanel implements Component {
 		const offset = this.getContentOffset(body.length, availableBodyRows);
 		lines.push(...body.slice(offset, offset + availableBodyRows).map(row));
 		lines.push(separator);
-		lines.push(row(this.theme.fg("dim", " Tab filtros/lista  ←→ filtro  1/2/3 escopo  T tipo  / buscar  Enter preview  R atualizar  Esc fechar ")));
+		lines.push(row(this.theme.fg("dim", " Tab filtros/lista  ←→/h/l campo  Enter valor  T tipo  / buscar  R atualizar  Esc fechar ")));
 		lines.push(`╰${"─".repeat(innerWidth)}╯`);
 		return lines.slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
 	}
