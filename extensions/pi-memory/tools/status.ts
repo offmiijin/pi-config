@@ -38,6 +38,27 @@ const MEMORY_STATUS_ICON: Record<MemoryCheckStatus, string> = {
 	error: "❌",
 };
 
+/**
+ * Formata ISO UTC (ex.: 2026-10-25T20:41:53.784Z) no horário local do
+ * sistema (ex.: 25/10/2026, 17:41:53). O banco grava em UTC via
+ * toISOString(); exibir o cru parecia "3h adiantado" para quem está em -03.
+ * Falha de parse devolve o original (nunca quebra o relatório).
+ */
+export function formatLocalTimestamp(iso: string | null | undefined): string {
+	if (!iso) return "(none yet)";
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return iso;
+	return d.toLocaleString("pt-BR", {
+		day: "2-digit",
+		month: "2-digit",
+		year: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false,
+	});
+};
+
 export function formatPipelineStatus(state: ToolState): string {
 	if (!state.projectId) {
 		return "Pipeline status: sem projeto ativo.";
@@ -78,7 +99,7 @@ export function formatPipelineStatus(state: ToolState): string {
 	let retText = "";
 	if (state.retention?.isOpen) {
 		const m = state.retention.getMetrics(state.projectId);
-		retText = `  Retention: ${m.tracked} tracked (never used ${m.neverUsed}, protected ${m.protectedCount}, low ${m.lowRetention}), last sweep ${m.lastSweepAt ?? "(none)"}`;
+		retText = `  Retention: ${m.tracked} tracked (never used ${m.neverUsed}, protected ${m.protectedCount}, low ${m.lowRetention}), last sweep ${m.lastSweepAt ? formatLocalTimestamp(m.lastSweepAt) : "(none)"}`;
 	}
 
 	return [
@@ -87,7 +108,7 @@ export function formatPipelineStatus(state: ToolState): string {
 		`  Evidence: ${evidenceCount} fragments, ~${elig.tokens} tokens eligible (${elig.count} episodes)`,
 		`  Jobs: ${jobs.queued} queued, ${jobs.processing} processing, ${jobs.retry} retry, ${jobs.done} done, ${jobs.dead_letter} dead_letter`,
 		lastExtraction
-			? `  Last extraction: ${lastExtraction.finishedAt} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
+			? `  Last extraction: ${formatLocalTimestamp(lastExtraction.finishedAt)} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
 			: "  Last extraction: (none yet)",
 		`  Candidates pending review: ${pendingCandidates}`,
 		`  Sessions pending consolidation: ${pendingSessions}`,
@@ -218,7 +239,7 @@ export function buildMemoryChecks(
 		label: "Última extração",
 		status: "info",
 		detail: lastExtraction
-			? `${lastExtraction.finishedAt} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
+			? `${formatLocalTimestamp(lastExtraction.finishedAt)} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
 			: "(none yet)",
 	});
 
@@ -256,7 +277,7 @@ export function buildMemoryChecks(
 			status: "info",
 			detail:
 			`${m.tracked} tracked (never used ${m.neverUsed}, protected ${m.protectedCount}, ` +
-			`low ${m.lowRetention}), last sweep ${m.lastSweepAt ?? "(none)"}`,
+			`low ${m.lowRetention}), last sweep ${m.lastSweepAt ? formatLocalTimestamp(m.lastSweepAt) : "(none)"}`,
 		});
 	} else {
 		checks.push({
