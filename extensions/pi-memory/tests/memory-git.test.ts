@@ -92,4 +92,34 @@ describe("MemoryGitRepository", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("ignora path deletado e nunca commitado em vez de falhar o commit", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-memory-git-"));
+		try {
+			const repo = new MemoryGitRepository(root, gitWithTestIdentity);
+			expect(repo.initialize().ok).toBeTrue();
+
+			// Mudança real + path fantasma (ex.: resíduo de .supersedes/
+			// removido sem nunca ter sido commitado): o commit sai com a
+			// mudança válida, sem fatal de pathspec.
+			const active = join(root, "projects", "p", "gotchas", "x.md");
+			mkdirSync(join(active, ".."), { recursive: true });
+			writeFileSync(active, "nova memória\n");
+			const ghost = join(root, ".supersedes", "projects", "p", "gotchas", "velha.md");
+			const res = repo.commit(
+				[active, ghost],
+				"[p] mem(projects/gotchas): cria x",
+			);
+			expect(res.ok).toBeTrue();
+			expect(res.action).toBe("committed");
+			expect(git(["status", "--porcelain"], root)).toBe("");
+
+			// Só o fantasma (nada a registrar) → noop, não erro.
+			const noop = repo.commit([ghost], "nada a commitar");
+			expect(noop.ok).toBeTrue();
+			expect(noop.action).toBe("noop");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 });

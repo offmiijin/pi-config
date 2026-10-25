@@ -17,12 +17,17 @@ import {
 	EPISODE_STATUS,
 	JOB_STATUS,
 	PipelineDB,
-	type NewEvidence,
 	type NewEpisode,
 } from "../pipeline/pipeline.ts";
 import {
+	JOB_REASONS,
+	PENDING_SESSION_STATUS,
+	type EpisodeRecord,
+} from "../pipeline/pipeline.ts";
+import {
 	PipelineWorker,
-	maybeCreateJob,
+	chunkEpisodes,
+	createSessionJobs,
 	selectEpisodesForJob,
 	type JobExecutionResult,
 	type JobProcessor,
@@ -50,23 +55,6 @@ function makeEpisode(overrides: Partial<NewEpisode> & { fingerprint?: string } =
 function makeNormalizedEpisode(tokenEstimate: number, projectId = "proj-a"): string {
 	const id = pipeline.insertEpisode(makeEpisode({ projectId, tokenEstimate }));
 	pipeline.finalizeEpisode(id, [], EPISODE_STATUS.NORMALIZED);
-	return id;
-}
-
-/** Insere episódio normalized com evidência de correção (sinal forte). */
-function makeCorrectionEpisode(projectId = "proj-a"): string {
-	const id = pipeline.insertEpisode(makeEpisode({ projectId, tokenEstimate: 100 }));
-	const ev: NewEvidence = {
-		episodeId: id,
-		kind: "correction",
-		payloadJson: JSON.stringify({ text: "não, isso está errado" }),
-		contentHash: `h-${Math.random()}`,
-		tokenEstimate: 10,
-		redactionFlags: 0,
-		isError: 0,
-		priority: 2,
-	};
-	pipeline.finalizeEpisode(id, [ev], EPISODE_STATUS.NORMALIZED);
 	return id;
 }
 
@@ -122,17 +110,14 @@ describe("PipelineDB jobs (CRUD + fila)", () => {
 		expect(pipeline.nextEligibleJob(proj)!.id).toBe(j2);
 	});
 
-	it("hasActiveJob: true para não terminais, false após completeJobWithEpisodes", () => {
+	it("completeJobWithEpisodes finaliza o job (sem jobs não terminais)", () => {
 		const proj = "proj-active";
-		const jobId = pipeline.createJob(proj, "tokens");
-		expect(pipeline.hasActiveJob(proj)).toBeTrue();
-		// Finaliza o job via completeJobWithEpisodes (sem depender de updateJob
-		// dinâmico — que tem bug de bind params no Bun). One-off rápido:
-		// vincular episódio dummy para usar completeJobWithEpisodes.
+		const jobId = pipeline.createJob(proj, JOB_REASONS.SESSION);
+		expect(pipeline.nextEligibleJob(proj)!.id).toBe(jobId);
 		const epId = pipeline.insertEpisode(makeEpisode({ projectId: proj }));
 		pipeline.finalizeEpisode(epId, [], EPISODE_STATUS.NORMALIZED);
 		pipeline.completeJobWithEpisodes(jobId, [epId], EPISODE_STATUS.PROCESSED, null);
-		expect(pipeline.hasActiveJob(proj)).toBeFalse();
+		expect(pipeline.nextEligibleJob(proj)).toBeUndefined();
 	});
 
 	it("recoverStuckJobs devolve jobs presos para queued", () => {
@@ -188,58 +173,131 @@ describe("selectEpisodesForJob", () => {
 	});
 });
 
-describe("maybeCreateJob (gatilhos)", () => {
-	it("tokens acumulados ≥ 10K → reason tokens", () => {
-		const proj = "proj-t-tokens";
-		makeNormalizedEpisode(4000, proj);
-		makeNormalizedEpisode(4000, proj);
-		makeNormalizedEpisode(3000, proj); // 11K
-		const t = maybeCreateJob(pipeline, proj);
-		expect(t.jobId).toBeDefined();
-		expect(t.reason).toBe("tokens");
+describe("chunkEpisodes (divisão de sessão grande)", () => {
+	it("divide em chunks até o alvo sem estourar o hard cap", () => {
+		const eps = [
+			{ tokenEstimate: 4000 },
+			{ tokenEstimate: 4000 },
+			{ tokenEstimate: 5000 },
+			{ tokenEstimate: 1000 },
+		] as EpisodeRecord[];
+		const chunks = chunkEpisodes(eps, { targetTokens: 8000, hardCap: 18_000 });
+		expect(chunks.length).toBe(2);
+		expect(chunks[0].length).toBe(2);
+		expect(chunks[1].length).toBe(2);
 	});
 
-	it("episódios elegíveis ≥ 5 → reason episodes", () => {
-		const proj = "proj-t-episodes";
-		for (let i = 0; i < 5; i++) makeNormalizedEpisode(10, proj);
-		const t = maybeCreateJob(pipeline, proj);
-		expect(t.jobId).toBeDefined();
-		expect(t.reason).toBe("episodes");
+	it("episódio único maior que o cap forma um chunk sozinho", () => {
+		const eps = [{ tokenEstimate: 50_000 }] as EpisodeRecord[];
+		const chunks = chunkEpisodes(eps, { targetTokens: 1000, hardCap: 18_000 });
+		expect(chunks.length).toBe(1);
 	});
 
-	it("job ativo → não empilha (null)", () => {
-		const proj = "proj-t-active";
-		const jid = pipeline.createJob(proj, "manual");
-		makeNormalizedEpisode(10_000, proj);
-		const t = maybeCreateJob(pipeline, proj);
-		expect(t.jobId).toBeNull();
-		pipeline.updateJob(jid, { status: JOB_STATUS.DONE, finishedAt: new Date().toISOString() });
+	it("sessão pequena vira chunk único", () => {
+		const eps = [{ tokenEstimate: 100 }, { tokenEstimate: 200 }] as EpisodeRecord[];
+		const chunks = chunkEpisodes(eps);
+		expect(chunks.length).toBe(1);
+		expect(chunks[0].length).toBe(2);
 	});
+});
 
-	it("force cria mesmo com job ativo", () => {
-		const proj = "proj-t-force";
-		const jid = pipeline.createJob(proj, "manual");
-		const t = maybeCreateJob(pipeline, proj, { force: true });
-		expect(t.jobId).toBeDefined();
-		expect(t.reason).toBe("manual");
-		for (const j of pipeline.listJobs(proj)) {
-			pipeline.updateJob(j.id, { status: JOB_STATUS.DONE, finishedAt: new Date().toISOString() });
+describe("createSessionJobs (consolidação por sessão)", () => {
+	it("cria um job por chunk, pré-vinculado e com episódios selected", () => {
+		const proj = "proj-cs-jobs";
+		const sess = `sess-${Math.random()}`;
+		for (let i = 0; i < 3; i++) {
+			const id = pipeline.insertEpisode(
+				makeEpisode({ projectId: proj, sessionId: sess, tokenEstimate: 4000 }),
+			);
+			pipeline.finalizeEpisode(id, [], EPISODE_STATUS.NORMALIZED);
 		}
+		const jobIds = createSessionJobs(pipeline, proj, sess, JOB_REASONS.SESSION, {
+			targetTokens: 8000,
+			hardCap: 18_000,
+		});
+		expect(jobIds.length).toBe(2);
+		const linked = pipeline.listEpisodesByJob(jobIds[0]);
+		expect(linked.length).toBe(2);
+		expect(pipeline.getJob(jobIds[0])!.reason).toBe(JOB_REASONS.SESSION);
+		// Episódios do chunk saem de normalized (não são redrenados)
+		expect(
+			pipeline.listEpisodesBySession(sess, [EPISODE_STATUS.NORMALIZED]).filter((e) => e.projectId === proj)
+				.length,
+		).toBe(0);
 	});
 
-	it("sinal forte (correção) → reason signal", () => {
-		const proj = "proj-t-signal";
-		const ep = makeCorrectionEpisode(proj);
-		const t = maybeCreateJob(pipeline, proj, { signalEpisodeId: ep });
-		expect(t.jobId).toBeDefined();
-		expect(t.reason).toBe("signal");
+	it("ignora episódios de outro projeto e sessões vazias", () => {
+		const sess = `sess-${Math.random()}`;
+		const other = pipeline.insertEpisode(
+			makeEpisode({ projectId: "proj-cs-other", sessionId: sess, tokenEstimate: 10 }),
+		);
+		pipeline.finalizeEpisode(other, [], EPISODE_STATUS.NORMALIZED);
+		expect(createSessionJobs(pipeline, "proj-cs-empty", sess, JOB_REASONS.SESSION)).toEqual([]);
+		expect(createSessionJobs(pipeline, "proj-cs-other", "sess-inexistente", JOB_REASONS.SESSION)).toEqual(
+			[],
+		);
 	});
 
-	it("sem critério → null", () => {
-		const proj = "proj-t-none";
-		makeNormalizedEpisode(10, proj);
-		const t = maybeCreateJob(pipeline, proj);
-		expect(t.jobId).toBeNull();
+	it("sem episódios normalized → nenhum job (sem job vazio)", () => {
+		expect(
+			createSessionJobs(pipeline, "proj-cs-none", `sess-${Math.random()}`, JOB_REASONS.MANUAL),
+		).toEqual([]);
+	});
+});
+
+describe("pending_sessions (shutdown marca, start consolida)", () => {
+	it("queue é idempotente; claim → complete", () => {
+		const proj = "proj-pend";
+		const sess = `sess-${Math.random()}`;
+		pipeline.queuePendingSession({
+			sessionId: sess,
+			projectId: proj,
+			sessionFile: "/tmp/s.jsonl",
+			reason: "shutdown",
+		});
+		pipeline.queuePendingSession({
+			sessionId: sess,
+			projectId: proj,
+			sessionFile: "/tmp/s.jsonl",
+			reason: "shutdown",
+		});
+		expect(pipeline.countPendingSessions(proj, PENDING_SESSION_STATUS.PENDING)).toBe(1);
+		const claimed = pipeline.claimPendingSessions(proj);
+		expect(claimed.length).toBe(1);
+		expect(claimed[0].sessionId).toBe(sess);
+		expect(pipeline.countPendingSessions(proj, PENDING_SESSION_STATUS.PENDING)).toBe(0);
+		pipeline.completePendingSession(sess);
+	});
+
+	it("recoverStalePendingSessions resgata claimed órfão de crash", () => {
+		const proj = "proj-pend-crash";
+		const sess = `sess-${Math.random()}`;
+		pipeline.queuePendingSession({
+			sessionId: sess,
+			projectId: proj,
+			sessionFile: "/tmp/s.jsonl",
+			reason: "shutdown",
+		});
+		expect(pipeline.claimPendingSessions(proj).length).toBe(1);
+		// Crash aqui: sem complete. O próximo start recupera.
+		expect(pipeline.recoverStalePendingSessions()).toBe(1);
+		expect(pipeline.countPendingSessions(proj, PENDING_SESSION_STATUS.PENDING)).toBe(1);
+		pipeline.completePendingSession(sess);
+	});
+
+	it("release devolve para pending", () => {
+		const proj = "proj-pend-rel";
+		const sess = `sess-${Math.random()}`;
+		pipeline.queuePendingSession({
+			sessionId: sess,
+			projectId: proj,
+			sessionFile: "/tmp/s.jsonl",
+			reason: "shutdown",
+		});
+		expect(pipeline.claimPendingSessions(proj).length).toBe(1);
+		pipeline.releasePendingSession(sess);
+		expect(pipeline.countPendingSessions(proj, PENDING_SESSION_STATUS.PENDING)).toBe(1);
+		pipeline.completePendingSession(sess);
 	});
 });
 
@@ -378,18 +436,16 @@ describe("PipelineWorker", () => {
 		await w.stop();
 	});
 
-	it("episódios normalizados durante o job abrem novo job automaticamente", async () => {
-		const proj = "proj-w-retrigger";
-		// 5 episódios → gatilho episodes já teria disparado no settle; o job
-		// existe quando o worker inicia (como em produção).
-		for (let i = 0; i < 5; i++) makeNormalizedEpisode(100, proj);
-		const jobA = pipeline.createJob(proj, "episodes");
+	it("episódios normalizados durante o job NÃO abrem novo job (sem gatilho automático)", async () => {
+		const proj = "proj-w-no-retrigger";
+		makeNormalizedEpisode(100, proj);
+		const jobA = pipeline.createJob(proj, JOB_REASONS.MANUAL);
 		let injected = false;
 		const w = new PipelineWorker(pipeline, {
 			includeClaimed: true, // como o index.ts configura
 			processor: async (_p, _job, _sel) => {
-				// Simula agent_settled DURANTE o job: +5 episódios normalizados
-				// que não entram na seleção atual.
+				// Simula agent_settled DURANTE o job: episódios novos que
+				// ficam normalized até o próximo compact/start/manual.
 				if (!injected) {
 					injected = true;
 					for (let i = 0; i < 5; i++) makeNormalizedEpisode(100, proj);
@@ -399,10 +455,41 @@ describe("PipelineWorker", () => {
 		});
 		w.setProject(proj);
 		w.start();
-		// Job A termina; a reavaliação pós-job conta os 5 novos (normalized) e
-		// abre o job B automaticamente — sem esperar novo agent_settled.
-		await waitFor(() => pipeline.countJobs(proj, JOB_STATUS.DONE) >= 2);
-		expect(pipeline.getJob(jobA)!.status).toBe(JOB_STATUS.DONE);
+		await waitFor(() => pipeline.getJob(jobA)!.status === JOB_STATUS.DONE);
+		await new Promise((r) => setTimeout(r, 100));
+		// Nenhum job automático: os 5 novos aguardam compact/shutdown/manual.
+		expect(pipeline.countJobs(proj)).toBe(1);
+		expect(
+			pipeline.listEpisodesByStatuses(proj, [EPISODE_STATUS.NORMALIZED]).length,
+		).toBe(5);
+		await w.stop();
+	});
+
+	it("job pré-vinculado processa só seus episódios (chunk de sessão)", async () => {
+		const proj = "proj-w-linked";
+		const sess = `sess-${Math.random()}`;
+		for (let i = 0; i < 3; i++) {
+			const id = pipeline.insertEpisode(
+				makeEpisode({ projectId: proj, sessionId: sess, tokenEstimate: 100 }),
+			);
+			pipeline.finalizeEpisode(id, [], EPISODE_STATUS.NORMALIZED);
+		}
+		const jobIds = createSessionJobs(pipeline, proj, sess, JOB_REASONS.COMPACT);
+		expect(jobIds.length).toBe(1);
+		let seen: string[] = [];
+		const w = new PipelineWorker(pipeline, {
+			processor: async (_p, _job, sel) => {
+				seen = sel.episodeIds;
+				return { ok: true, episodesStatus: EPISODE_STATUS.PROCESSED };
+			},
+		});
+		w.setProject(proj);
+		w.start();
+		await waitFor(() => pipeline.getJob(jobIds[0])!.status === JOB_STATUS.DONE);
+		expect(seen.length).toBe(3);
+		expect(
+			pipeline.listEpisodesBySession(sess, [EPISODE_STATUS.PROCESSED]).length,
+		).toBe(3);
 		await w.stop();
 	});
 });

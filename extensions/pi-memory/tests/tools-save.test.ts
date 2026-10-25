@@ -185,7 +185,7 @@ describe("memory_save — supersedes/consolidate propagam ao índice", () => {
 		// Snapshot: só a versão nova fica buscável; a antiga foi para .history/
 		expect(searchPaths(["token_app_antigo_xyz"], proj)).not.toContain(`projects/${proj}/gotchas/append-save.md`);
 		expect(searchPaths(["token_app_novo_xyz"], proj)).toContain(`projects/${proj}/gotchas/append-save.md`);
-		expect(existsSync(join(MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "append-save", "v1.md"))).toBeTrue();
+		expect(existsSync(join(MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "append-save.md"))).toBeTrue();
 	});
 
 	it("versiona a mutação pelos paths retornados por saveMemory", async () => {

@@ -11,6 +11,7 @@ import {
 	CANDIDATE_STATUS,
 	EPISODE_STATUS,
 	JOB_STATUS,
+	PENDING_SESSION_STATUS,
 } from "../pipeline/pipeline.ts";
 import { StatusSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
@@ -51,11 +52,10 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 				selected: countE(EPISODE_STATUS.SELECTED),
 				processed: countE(EPISODE_STATUS.PROCESSED),
 				ignored: countE(EPISODE_STATUS.IGNORED),
-				failed: countE(EPISODE_STATUS.FAILED),
 				total: p.countEpisodes(state.projectId),
 			};
 			const evidenceCount = p.countEvidence({ projectId: state.projectId });
-			const elig = p.aggregatePendingEpisodes(state.projectId);
+			const elig = p.aggregateNormalizedEpisodes(state.projectId);
 			const jobs = {
 				queued: p.countJobs(state.projectId, JOB_STATUS.QUEUED),
 				processing: p.countJobs(state.projectId, JOB_STATUS.PROCESSING),
@@ -66,6 +66,10 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 			const pendingCandidates = p.countCandidatesByProject(
 				state.projectId,
 				CANDIDATE_STATUS.PENDING,
+			);
+			const pendingSessions = p.countPendingSessions(
+				state.projectId,
+				PENDING_SESSION_STATUS.PENDING,
 			);
 			const lastExtraction = p.listJobs(state.projectId, JOB_STATUS.DONE, 1)[0] ?? null;
 
@@ -86,17 +90,18 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 
 			const text = [
 				"Pipeline status:",
-				`  Episodes: ${episodes.total} (pending ${episodes.pending}, normalized ${episodes.normalized}, selected ${episodes.selected}, processed ${episodes.processed}, ignored ${episodes.ignored}, failed ${episodes.failed})`,
+				`  Episodes: ${episodes.total} (pending ${episodes.pending}, normalized ${episodes.normalized}, selected ${episodes.selected}, processed ${episodes.processed}, ignored ${episodes.ignored})`,
 				`  Evidence: ${evidenceCount} fragments, ~${elig.tokens} tokens eligible (${elig.count} episodes)`,
 				`  Jobs: ${jobs.queued} queued, ${jobs.processing} processing, ${jobs.retry} retry, ${jobs.done} done, ${jobs.dead_letter} dead_letter`,
 				lastExtraction
 					? `  Last extraction: ${lastExtraction.finishedAt} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
 					: "  Last extraction: (none yet)",
 				`  Candidates pending review: ${pendingCandidates}`,
+				`  Sessions pending consolidation: ${pendingSessions}`,
 				`  Worker: ${state.worker?.isRunning ? `running (job ${state.worker.currentJobId ?? "-"})` : "off"}`,
 				...(retText ? [retText] : []),
 				"",
-				"Call memory_extract to force a background extraction job.",
+				"Call memory_extract to consolidate the current session now.",
 			].join("\n");
 
 			return {
@@ -107,6 +112,7 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 					eligible_tokens: elig.tokens,
 					jobs,
 					candidates_pending: pendingCandidates,
+					sessions_pending: pendingSessions,
 					worker_running: state.worker?.isRunning ?? false,
 					last_extraction: lastExtraction
 						? {

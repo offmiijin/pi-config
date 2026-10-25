@@ -7,12 +7,13 @@ sessões de codificação.
 ## Visão geral
 
 A cada turno, o pi-memory captura o episódio (o prompt do usuário até a
-resposta final), normaliza as evidências (o que foi lido, editado, executado,
-corrigido) e — quando há material suficiente — um **worker em background**
-chama um LLM dedicado para extrair memórias duráveis. O resultado é validado
-por uma camada determinística, revisado condicionalmente por um segundo
-passo do LLM, e gravado como **snapshot consolidado** (markdown v2 + índice
-FTS5).
+resposta final) e normaliza as evidências (o que foi lido, editado,
+executado, corrigido) — sem LLM no meio da sessão. A consolidação roda num
+**worker em background** em dois pontos: na compactação (`session_compact`)
+e no início da sessão seguinte ao fim de uma sessão (pendência marcada no
+`session_shutdown`). O resultado é validado por uma camada determinística,
+revisado condicionalmente por um segundo passo do LLM, e gravado como
+**snapshot consolidado** (markdown v2 + índice FTS5).
 
 Nada disso bloqueia o agente: a captura é leve (metadados + classificação) e
 a extração roda assíncrona.
@@ -29,10 +30,10 @@ a extração roda assíncrona.
 │  ├─ code-change, command, …  │    code-change, command, tool, …
 │  └─ pending → normalized     │
 └──────────────┬───────────────┘
-               ▼  gatilhos: tokens / episódios / sinal forte / manual
+               ▼  compact (imediato) / session (pendente→start) / manual
 ┌──────────────────────────────┐
 │ Worker assíncrono (fila)     │ ← retry 0s→30s→2min→dead_letter
-│  ├─ seleciona episódios      │
+│  ├─ chunks pré-vinculados    │
 │  └─ processa o job           │
 └──────────────┬───────────────┘
                ▼
@@ -51,7 +52,7 @@ a extração roda assíncrona.
                ▼
 ┌──────────────────────────────┐
 │ Memória ativa (markdown v2)  │ ← snapshot consolidado
-│  ├─ .history/ (revisões)     │    escrita atômica (.tmp + rename)
+│  ├─ .history/ (anterior)     │    escrita atômica (.tmp + rename)
 │  ├─ .supersedes/ (obsol.)    │
 │  └─ .index.sqlite (FTS5)     │
 └──────────────────────────────┘
@@ -92,22 +93,28 @@ Toda evidência passa por `sanitizeEvidenceText` (segredos viram
 `[REDACTED]`: chaves `sk-`/`ghp_`, `Authorization: Basic`, URLs com
 credenciais `user:pass@`, chaves privadas PEM, `api_key=...`).
 
-### 2. Fila de jobs (Fase 2) — gatilhos
+### 2. Fila de jobs (Fase 2) — consolidação por sessão (sempre via LLM)
 
-Um job de extração é criado quando:
+Não há gatilhos por turno. A captura (`agent_settled`) só acumula episódios
++ evidências; a consolidação LLM acontece em dois pontos:
 
-| Gatilho | Condição (padrão) |
-|---|---|
-| Tokens | ≥ 10.000 tokens de episódios `normalized` |
-| Episódios | ≥ 5 episódios `normalized` |
-| Sinal forte | episódio com correção do usuário ou comando com erro |
-| Manual | `memory_extract` (força job; recusa se não há episódios elegíveis) |
+| Gatilho | Quando | Job |
+|---|---|---|
+| Compactação | `session_compact` — drena os episódios `normalized` da sessão atual (o trecho resumido) | `compact` imediato, assíncrono |
+| Fim de sessão | `session_shutdown` só **marca** a sessão em `pending_sessions` (ms, sem LLM); o próximo `session_start` reivindica e drena | `session` em background |
+| Manual | `memory_extract` consolida a sessão atual agora | `manual` |
+
+Sessões grandes viram N chunk jobs sequenciais (`chunkEpisodes`: alvo ~12K,
+cap 18K tokens, fronteira sempre em fim de episódio). Cada chunk é um job
+pré-vinculado (`createJobWithEpisodes`); como os jobs rodam em sequência e
+cada commit sincroniza o FTS, o chunk N+1 enxerga as memórias do chunk N e
+prefere `update`/`supersede` a duplicar.
 
 O **worker** consome um job por vez (do projeto ativo). Falha transitória →
 retry com backoff `0s → 30s → 2min`; após 4 tentativas → `dead_letter`.
 Crash/reload deixa o job em `processing` → `recoverStuckJobs` o devolve à
 fila no próximo `session_start` (o mesmo vale para jobs `done` com
-candidatos `pending`).
+candidatos `pending` e pendências `claimed` não concluídas).
 
 ### 3. Extração LLM (Fase 3) — modelo dedicado
 
@@ -127,15 +134,13 @@ sucesso: o job volta para retry.
 
 1. **Limite**: top 8 candidatos por job (por confidence) — o excedente é
    rejeitado sem chamar o LLM.
-2. **Validação determinística** (`validateCandidate`): tipo, escopo,
-   confidence ∈ [0.5, 1], tamanho, segredos, PT-BR, `evidence_ids` válidos,
-   ação × estado atual (create com key existente → erro).
+2. **Validação determinística** (`validateCandidate`): tipo, escopo (`project`; `global` → erro), confidence ∈ [0.5, 1], tamanho, segredos, PT-BR, `evidence_ids` válidos, ação × estado atual (create com key existente → erro; update/supersede envolvendo memória global → erro).
 3. **Política** (`classifyCandidate`):
 
 | Decisão | Quando |
 |---|---|
-| `reject` | erro determinístico ou confidence < 0.5 |
-| `review` | `_rules`, escopo `global`, `supersede`, `update` de memória existente, soft issue, confidence < 0.75 |
+| `reject` | erro determinístico (inclui scope `global` ou toque em memória global — extração automática é project-scoped, globais só via `memory_save` manual) ou confidence < 0.5 |
+| `review` | `_rules`, `supersede`, `update` de memória existente, soft issue, confidence < 0.75 |
 | `auto-accept` | o resto (create project com confidence alto) |
 
 4. **Revisor** (`runReviewer`): segundo passe do LLM (mesmo modelo,
@@ -158,7 +163,7 @@ memories/
 ├── projects/<projectId>/<type>/<context>.md
 ├── .git/                                 ← repositório Git aninhado
 ├── .gitignore                            ← bancos e temporários ignorados
-├── .history/<path>/v{N}.md              ← versão anterior (revisões)
+├── .history/<path>.md                    ← versão anterior (arquivo único)
 ├── .supersedes/<path>                   ← memória substituída por OUTRA chave
 ├── .pipeline.sqlite                     ← episódios/evidências/jobs/candidatos
 └── .index.sqlite                        ← FTS5/BM25 (derivado)
@@ -166,7 +171,7 @@ memories/
 
 - Escrita **atômica**: conteúdo novo vai para `.tmp` e é `rename`ado sobre o
   ativo — falha no meio nunca deixa a memória sem versão.
-- A versão anterior é arquivada em `.history/` com `revision+1`.
+- A versão anterior é arquivada em `.history/` (arquivo único, espelho do ativo, sobrescrito; cadeia completa no Git) com `revision+1`.
 - O frontmatter guarda `summary` (estado atual, usado para dedup futuro),
   `confidence`, `tags`, `evidence`.
 - `supersedes` move a memória da outra chave para `.supersedes/`.
@@ -242,17 +247,18 @@ invalidado a cada escrita.
 
 ### Modelo de extração (`config.ts` + `memory/config.ts`)
 
-O modelo padrão continua sendo `opencode-go/deepseek-v4-flash`, mas pode ser
-alterado pelo usuário com `/memory config`. O comando abre um menu de
-configuração extensível; em seguida, a opção **Model processor** mostra apenas
+O modelo padrão é o modelo atual do usuário (`settings.json`:
+`defaultProvider` + `defaultModel`), lido ao vivo a cada job — trocar o
+`/model` troca a extração automaticamente. Com `/memory config` o usuário
+pode fixar um override explícito; a opção **Model processor** mostra apenas
 modelos autenticados no `pi`, usando o catálogo e o `modelRegistry` da sessão.
 A seleção é persistida em `~/.pi/agent/memory-config.json` como referência
 `provider` + `id`; credenciais nunca são copiadas. A alteração vale para os
 próximos jobs e não altera o modelo interativo selecionado via `/model`.
+A opção **Seguir modelo atual** remove o override e volta ao `settings.json`.
 
 | Constante | Valor | Efeito |
 |---|---|---|
-| `EXTRACTION_MODEL_PROVIDER` / `ID` | `opencode-go` / `deepseek-v4-flash` | modelo padrão quando não há configuração do usuário |
 | `EXTRACTION_REASONING` | `low` | `medium` devolvia só reasoning sem resposta (75% vazio em teste real) |
 | `EXTRACTION_CACHE_RETENTION` | `short` | cache de prompt habilitado |
 | `EXTRACTION_SESSION_ID` | `pi-memory-extraction` | chave fixa do `prompt_cache_key` (cache reutilizável) |
@@ -263,11 +269,12 @@ A autenticação é reutilizada diretamente do `pi`. Não há reautenticação q
 o provider/modelo já está autenticado no `modelRegistry`; modelos sem
 autenticação não aparecem no seletor.
 
-### Gatilhos e retry (`pipeline/worker.ts`)
+### Chunks e retry (`pipeline/worker.ts`)
 
-`DEFAULT_ELIGIBLE_TOKENS = 10_000`, `DEFAULT_ELIGIBLE_EPISODES = 5`,
-`DEFAULT_MAX_ATTEMPTS = 4`, `DEFAULT_BACKOFF_MS = [0, 30_000, 120_000]`,
-seleção alvo 12K / cap 18K tokens.
+`DEFAULT_SELECTION_TOKEN_BUDGET = 12_000`, `SELECTION_HARD_CAP = 18_000`,
+`DEFAULT_MAX_ATTEMPTS = 4`, `DEFAULT_BACKOFF_MS = [0, 30_000, 120_000]`.
+Sem gatilhos automáticos por turno: jobs nascem em `session_compact`,
+`session_start` (pendências) e `memory_extract`.
 
 ### Retenção por inatividade (`constants.ts`)
 

@@ -135,6 +135,11 @@ describe("memory_decay schema", () => {
 		expect(propIsOptional(DecaySchema, "reason")).toBeTrue();
 	});
 
+	it("has optional: scope, type (endereço exato)", () => {
+		expect(propIsOptional(DecaySchema, "scope")).toBeTrue();
+		expect(propIsOptional(DecaySchema, "type")).toBeTrue();
+	});
+
 	it("delta is number type", () => {
 		// Number no typebox pode ser "number" ou "integer" no JSON Schema
 		const s = DecaySchema as unknown as Record<string, unknown>;

@@ -167,7 +167,7 @@ describe("createExtractionProcessor", () => {
 		const result = await processor(pipeline, job, selection);
 		expect(result.ok).toBeFalse();
 		expect(result.retryable).toBeTrue();
-		expect(result.error).toContain("não configurado");
+		expect(result.error).toContain("indisponível");
 	});
 
 	it("complete lança → retryável com erro", async () => {

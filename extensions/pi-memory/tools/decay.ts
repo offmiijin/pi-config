@@ -14,6 +14,7 @@ import { formatMemoryCommitMessage } from "../memory/memory-git.ts";
 import {
 	applyDecay,
 	findMemoryFile,
+	findMemoryFileScoped,
 	formatFrontmatter,
 	moveToSupersedes,
 	parseFrontmatter,
@@ -43,9 +44,14 @@ export function registerMemoryDecay(pi: ExtensionAPI, state: ToolState): void {
 				};
 			}
 
-			const { context, delta, move_to_supersedes, reason } = params;
+			const { context, delta, move_to_supersedes, reason, scope, type } = params;
 
-			const filePath = findMemoryFile(state.projectId, context);
+			// scope+type exatos eliminam a ambiguidade de keys duplicadas entre
+			// tipos/escopos; sem eles, vale a busca legada (primeiro match).
+			const filePath =
+				scope && type
+					? findMemoryFileScoped(state.projectId, scope, type, context)
+					: findMemoryFile(state.projectId, context);
 			if (!filePath) {
 				return {
 					content: [

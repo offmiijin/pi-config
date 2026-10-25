@@ -2,12 +2,16 @@
  * pi-memory — Validação de candidatos e revisor condicional (sem
  * dependência do PI). Módulo puro — testável standalone.
  *
+ * A extração automática é ESTRITAMENTE project-scoped: memórias globais só
+ * existem via escrita manual (memory_save com scope global). Candidatos com
+ * scope global, ou que toquem memória global existente, são rejeitados aqui.
+ *
  * - validateCandidate: checagens determinísticas (schema, evidência, ação ×
  *   estado atual, segredos, tamanho, PT-BR heurístico).
  * - classifyCandidate: política de aceitação (auto-accept | review | reject).
  * - buildReviewPrompt / parseReviewResponse: revisor condicional (mesmo
- *   modelo, reasoning low) para candidatos sensíveis (_rules, global,
- *   supersede, contradição, confiança intermediária).
+ *   modelo, reasoning low) para candidatos sensíveis (_rules, supersede,
+ *   contradição, confiança intermediária).
  */
 
 import type { CandidateRecord } from "./pipeline.ts";
@@ -108,6 +112,34 @@ export function validateCandidate(
 	}
 	if (c.scope !== "global" && c.scope !== "project") {
 		issues.push({ code: "invalid_scope", severity: "error", message: `escopo inválido: ${c.scope}` });
+	} else if (c.scope === "global") {
+		// Extração automática nunca cria memória global — globais só via
+		// escrita manual (memory_save). Rejeita sem passar pelo revisor.
+		issues.push({
+			code: "global_scope_auto",
+			severity: "error",
+			message: "extração automática é project-scoped (memórias globais só manualmente)",
+		});
+	}
+	// Memória global existente é intocável pela extração automática — nem
+	// update do mesmo context, nem supersede tendo-a como alvo.
+	if (ctx.existing && ctx.existing.scope === "global") {
+		issues.push({
+			code: "global_existing",
+			severity: "error",
+			message: `context "${c.context}" é memória global — só alteração manual`,
+		});
+	}
+	if (
+		c.action === "supersede" &&
+		ctx.existingSupersedeTarget &&
+		ctx.existingSupersedeTarget.scope === "global"
+	) {
+		issues.push({
+			code: "global_supersede_target",
+			severity: "error",
+			message: `alvo do supersede "${c.supersedes}" é memória global — só alteração manual`,
+		});
 	}
 	if (!c.title || !c.title.trim()) {
 		issues.push({ code: "empty_title", severity: "error", message: "título vazio" });
@@ -190,8 +222,9 @@ export function validateCandidate(
 
 /**
  * Política (mapping 4.2): erro determinístico ou confidence < 0.5 → reject;
- * _rules/global/supersede/atualização de memória existente/soft issue/
- * confiança intermediária → review; o resto → auto-accept.
+ * _rules/supersede/atualização de memória existente/soft issue/confiança
+ * intermediária → review; o resto → auto-accept. Scope global nunca chega
+ * aqui (erro determinístico acima).
  */
 export function classifyCandidate(
 	c: CandidateRecord,
@@ -203,7 +236,6 @@ export function classifyCandidate(
 	if (confidence < 0.5) return "reject";
 
 	if (c.type === "_rules") return "review";
-	if (c.scope === "global") return "review";
 	if (c.action === "supersede") return "review";
 	if (c.action === "update" && existing) return "review";
 	if (issues.some((i) => i.severity === "soft")) return "review";
@@ -251,7 +283,7 @@ export function buildReviewPrompt(opts: {
 		`## Evidências relevantes\n\n${opts.evidence}`,
 		`## Candidata\n\n${opts.candidate}`,
 		"",
-		"Critérios: conteúdo durável e não trivial; sem segredos; sem status temporário; PT-BR; evidência consistente; scope 'global' só se aplica a TODOS os projetos.",
+		"Critérios: conteúdo durável e não trivial; sem segredos; sem status temporário; PT-BR; evidência consistente; scope deve ser 'project' (extração automática nunca produz memórias globais).",
 		"",
 		'Responda JSON apenas: {"action": "accept|modify|reject", "reason": "porquê em PT-BR", "modified": {"title": "...", "summary": "...", "content": "...", "confidence": 0.8, "scope": "project", "type": "gotchas"}}',
 		'O campo "modified" é obrigatório quando action = modify (campos a corrigir).',

@@ -19,6 +19,8 @@ import type { PipelineWorker } from "../pipeline/worker.ts";
 export interface ToolState {
 	projectId: string;
 	currentSessionHash: string;
+	/** Arquivo JSONL da sessão ativa (para pendência de consolidação no shutdown). */
+	currentSessionFile?: string;
 	/** Buscas consecutivas sem resultado (política: abandonar após MAX_MEMORY_SEARCH_ATTEMPTS). */
 	consecutiveEmptySearches: number;
 	/** Cache do índice de memórias no system prompt (invalidado em escritas). */

@@ -239,13 +239,20 @@ export class MemoryGitRepository {
 					};
 				}
 
-				this.runGit(["add", "-A", "--", ...repoPaths], this.root);
+				// Paths deletados e nunca commitados não casam nenhum pathspec
+				// e fariam o `git add` falhar com fatal (derrubando o commit
+				// inteiro, incluindo mudanças válidas) — filtra antes. Também
+				// auto-cura pendências antigas que carregam esse path.
+				const committable = repoPaths.filter((path) => this.isCommittable(path));
+				if (committable.length === 0) return { ok: true, action: "noop" };
+
+				this.runGit(["add", "-A", "--", ...committable], this.root);
 				const stagedAfter = this.stagedPaths();
 				if (stagedAfter.length === 0) return { ok: true, action: "noop" };
 
-				const allowed = repoPaths.includes(".")
+				const allowed = committable.includes(".")
 					? () => true
-					: (path: string) => repoPaths.includes(path);
+					: (path: string) => committable.includes(path);
 				const unexpected = stagedAfter.filter((path) => !allowed(path));
 				if (unexpected.length > 0) {
 					this.runGit(["reset", "--quiet", "--", ...stagedAfter], this.root);
@@ -273,6 +280,22 @@ export class MemoryGitRepository {
 		} catch (error) {
 			if (enqueueOnFailure) this.enqueuePending(repoPaths, message);
 			return { ok: false, action: "pending", error: errorMessage(error) };
+		}
+	}
+
+	/**
+	 * Paths que o `git add -A` aceita: existentes no disco ou deletados mas
+	 * tracked (stage a deleção). Deletado e nunca commitado não casa nenhum
+	 * pathspec → `git add` morre com fatal. Só chamado para paths
+	 * inexistentes (caso raro), então o `ls-files` extra não custa no comum.
+	 */
+	private isCommittable(repoPath: string): boolean {
+		if (existsSync(join(this.root, repoPath))) return true;
+		try {
+			this.runGit(["ls-files", "--error-unmatch", "--", repoPath], this.root);
+			return true;
+		} catch {
+			return false;
 		}
 	}
 

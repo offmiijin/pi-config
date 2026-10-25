@@ -6,8 +6,16 @@
   "filesystem": {
     "extraWritable": [],
     "extraReadonly": [],
-    "denyPaths": ["/sbin", "/usr/sbin", "/root"],
-    "denyFilePatterns": [".env", "*.pem", "*.key"],
+    "denyPaths": [
+      "/sbin",
+      "/usr/sbin",
+      "/root"
+    ],
+    "denyFilePatterns": [
+      ".env",
+      "*.pem",
+      "*.key"
+    ],
     "cacheDirs": {
       "npm": "",
       "pip": "",
@@ -16,5 +24,8 @@
   },
   "ssh": {
     "mode": "agent"
+  },
+  "worktree": {
+    "mode": "in-place"
   }
 }

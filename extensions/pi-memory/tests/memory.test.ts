@@ -563,21 +563,20 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(content).toContain("Conteúdo novo");
 		expect(content).not.toContain("Some rich content");
 
-		// Versão anterior arquivada em .history/ (não mais acumulada no ativo)
+		// Versão anterior arquivada em .history/ (arquivo único, espelho do ativo)
 		const histPath = join(
 			MEMORIES_ROOT,
 			".history",
 			"projects",
 			testProjectId,
 			"gotchas",
-			"test-ctx",
-			"v1.md",
+			"test-ctx.md",
 		);
 		expect(existsSync(histPath)).toBeTrue();
 		expect(result.gitPaths).toContain(histPath);
 	});
 
-	it("snapshot: confiança é a da última escrita; .history/ acumula revisões", () => {
+	it("snapshot: confiança é a da última escrita; .history/ guarda só a versão anterior", () => {
 		saveMemory(testProjectId, {
 			type: "gotchas",
 			context: "multi-avg",
@@ -607,9 +606,11 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		const { meta } = parseFrontmatter(readFileSync(fp, "utf-8"));
 		expect(meta.confidence).toBe(0.5); // decisão da última versão (não média)
 		expect(meta.revision).toBe(3);
-		expect(
-			existsSync(join(MEMORIES_ROOT, ".history", "projects", testProjectId, "gotchas", "multi-avg", "v2.md")),
-		).toBeTrue();
+		const histAvg = join(MEMORIES_ROOT, ".history", "projects", testProjectId, "gotchas", "multi-avg.md");
+		expect(existsSync(histAvg)).toBeTrue();
+		// Arquivo único: contém a penúltima versão ("Segunda"), não a primeira
+		expect(readFileSync(histAvg, "utf-8")).toContain("# Segunda");
+		expect(readFileSync(histAvg, "utf-8")).not.toContain("# Primeira");
 	});
 
 	it("nova escrita substitui confiança decayed (snapshot)", () => {
@@ -755,6 +756,129 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(existsSync(join(MEMORIES_ROOT, "_global", "_rules", "cache-rule.md"))).toBeFalse();
 	});
 
+	it("supersedes explícito scope/tipo/contexto resolve sem ambiguidade", async () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "alvo-gotcha",
+			title: "Gotcha",
+			content: "versão gotcha",
+			scope: "project",
+		});
+		saveMemory(testProjectId, {
+			type: "lessons",
+			context: "alvo-lesson",
+			title: "Lesson",
+			content: "versão lesson",
+			scope: "project",
+		});
+
+		// Endereço com tipo errado NÃO atinge o vizinho — erro em vez de
+		// mover o arquivo errado (o fuzzy legado teria pego o primeiro match).
+		const errado = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "nova-ctx",
+			title: "Nova",
+			content: "x",
+			scope: "project",
+			supersedes: "project/decisions/alvo-lesson",
+		});
+		expect(errado.action).toBe("error");
+
+		const result = saveMemory(testProjectId, {
+			type: "lessons",
+			context: "nova-ctx",
+			title: "Nova",
+			content: "substitui a lesson",
+			scope: "project",
+			supersedes: "project/lessons/alvo-lesson",
+		});
+		expect(result.action).toBe("created");
+
+		const { MEMORIES_ROOT } = await import("../constants.ts");
+		expect(
+			existsSync(
+				join(MEMORIES_ROOT, ".supersedes", "projects", testProjectId, "lessons", "alvo-lesson.md"),
+			),
+		).toBeTrue();
+		// O outro tipo continua ativo — explícito não toca vizinhos.
+		expect(
+			existsSync(join(MEMORIES_ROOT, "projects", testProjectId, "gotchas", "alvo-gotcha.md")),
+		).toBeTrue();
+	});
+
+	it("supersedes explícito inexistente → erro (sem adivinhar)", () => {
+		const result = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "qualquer-ctx",
+			title: "T",
+			content: "C",
+			scope: "project",
+			supersedes: "project/decisions/nope-ctx",
+		});
+		expect(result.action).toBe("error");
+		expect(result.error).toContain("Supersede target not found");
+	});
+
+	it("recriar key superseded remove o resíduo de .supersedes/", async () => {
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "morta-ctx",
+			title: "Antiga",
+			content: "morreu",
+			scope: "project",
+		});
+		saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "viva-ctx",
+			title: "Nova",
+			content: "substitui",
+			scope: "project",
+			supersedes: "morta-ctx",
+		});
+
+		const { MEMORIES_ROOT } = await import("../constants.ts");
+		const supPath = join(
+			MEMORIES_ROOT,
+			".supersedes",
+			"projects",
+			testProjectId,
+			"gotchas",
+			"morta-ctx.md",
+		);
+		expect(existsSync(supPath)).toBeTrue();
+
+		// Ressurreição: novo create limpa a cópia obsoleta e registra no Git.
+		const revived = saveMemory(testProjectId, {
+			type: "gotchas",
+			context: "morta-ctx",
+			title: "Ressuscitada",
+			content: "de volta",
+			scope: "project",
+		});
+		expect(revived.action).toBe("created");
+		expect(existsSync(supPath)).toBeFalse();
+		expect(existsSync(revived.file)).toBeTrue();
+		expect(revived.gitPaths).toContain(supPath);
+	});
+
+	it("parseMemoryRef aceita scope/tipo/contexto e rejeita o resto", async () => {
+		const { parseMemoryRef, findMemoryFileScoped } = await import("../memory/memory.ts");
+		expect(parseMemoryRef("project/decisions/cache-x")).toEqual({
+			scope: "project",
+			type: "decisions",
+			context: "cache-x",
+		});
+		expect(parseMemoryRef("global/_rules/minha-regra")).toEqual({
+			scope: "global",
+			type: "_rules",
+			context: "minha-regra",
+		});
+		expect(parseMemoryRef("só-uma-key")).toBeNull();
+		expect(parseMemoryRef("project/invalido/x")).toBeNull();
+		expect(parseMemoryRef("outro/decisions/x")).toBeNull();
+		expect(findMemoryFileScoped(testProjectId, "project", "gotchas", "nope-nunca")).toBeUndefined();
+	});
+
 	it("consolidates existing memory (mode=consolidate)", () => {
 		const result = saveMemory(testProjectId, {
 			type: "gotchas",
@@ -785,15 +909,14 @@ describe("saveMemory (shared by memory_save/memory_extract)", () => {
 		expect(content).toContain("revision: 2");
 		expect(content).toContain("confidence: 0.8");
 
-		// Versão antiga arquivada em .history/ com metadados
+		// Versão antiga arquivada em .history/ (espelho) com metadados
 		const histPath = join(
 			MEMORIES_ROOT,
 			".history",
 			"projects",
 			testProjectId,
 			"gotchas",
-			"consol-ctx",
-			"v1.md",
+			"consol-ctx.md",
 		);
 		expect(existsSync(histPath)).toBeTrue();
 		const histContent = readFileSync(histPath, "utf-8");
@@ -1027,7 +1150,7 @@ describe("migração v1 → snapshot v2", () => {
 		return fp;
 	}
 
-	it("converte v1 em snapshot v2 com a última entrada e arquiva em .history/v0", () => {
+	it("converte v1 em snapshot v2 com a última entrada e arquiva baseline em .history/", () => {
 		ensureDirectories(proj);
 		const fp = writeV1("legacy-mig");
 
@@ -1040,9 +1163,9 @@ describe("migração v1 → snapshot v2", () => {
 		expect(body.startsWith("# Bug corrigido")).toBeTrue();
 		expect(body).not.toContain("Bug antigo");
 
-		// Baseline arquivada em .history/projects/test_project/gotchas/legacy-mig/v0.md
+		// Baseline arquivada em .history/projects/test_project/gotchas/legacy-mig.md
 		const hist = join(
-			MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "legacy-mig", "v0.md",
+			MEMORIES_ROOT, ".history", "projects", proj, "gotchas", "legacy-mig.md",
 		);
 		expect(existsSync(hist)).toBeTrue();
 		expect(readFileSync(hist, "utf-8")).toContain("Bug antigo");
