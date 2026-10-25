@@ -24,7 +24,24 @@ import { estimateTokens } from "../session.ts";
 /** Nome do banco do pipeline dentro de MEMORIES_ROOT. */
 export const PIPELINE_DB_FILENAME = ".pipeline.sqlite";
 export const PIPELINE_DB_PATH = join(MEMORIES_ROOT, PIPELINE_DB_FILENAME);
-export const PIPELINE_SCHEMA_VERSION = 2;
+export const PIPELINE_SCHEMA_VERSION = 3;
+
+/** Motivos de job de extração (consolidação sempre via LLM). */
+export const JOB_REASONS = {
+	SESSION: "session",
+	COMPACT: "compact",
+	MANUAL: "manual",
+} as const;
+export type JobReason = (typeof JOB_REASONS)[keyof typeof JOB_REASONS];
+
+/** Status de pendência de sessão (shutdown marca, próximo start consolida). */
+export const PENDING_SESSION_STATUS = {
+	PENDING: "pending",
+	CLAIMED: "claimed",
+	DONE: "done",
+} as const;
+export type PendingSessionStatus =
+	(typeof PENDING_SESSION_STATUS)[keyof typeof PENDING_SESSION_STATUS];
 
 /** Status de episódio (ciclo: pending → normalized → selected → processed | ignored | failed). */
 export const EPISODE_STATUS = {
@@ -140,6 +157,16 @@ CREATE TABLE IF NOT EXISTS pipeline_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pending_sessions (
+  session_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  session_file TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_sessions_status ON pending_sessions(status, project_id);
 `;
 
 /** Gera id curto e legível com prefixo (ep_, ev_, job_, cand_). */
@@ -284,6 +311,27 @@ export interface JobRecord {
 	error: string | null;
 	nextAttemptAt: string | null;
 	details: string | null;
+}
+
+/** Registro de pendência de sessão (consolidação adiada para o próximo start). */
+export interface PendingSessionRecord {
+	sessionId: string;
+	projectId: string;
+	sessionFile: string;
+	reason: string;
+	status: PendingSessionStatus;
+	createdAt: string;
+}
+
+function mapPendingSessionRow(row: Record<string, unknown>): PendingSessionRecord {
+	return {
+		sessionId: String(row.session_id),
+		projectId: String(row.project_id),
+		sessionFile: String(row.session_file),
+		reason: String(row.reason),
+		status: row.status as PendingSessionStatus,
+		createdAt: String(row.created_at),
+	};
 }
 
 /** Dados para inserir um candidato (memória proposta pelo modelo). */
@@ -782,16 +830,6 @@ export class PipelineDB {
 		return Math.max(0, new Date(row.m).getTime() - Date.now());
 	}
 
-	/** Há job não terminal para o projeto? (evita empilhar jobs). */
-	hasActiveJob(projectId: string): boolean {
-		const row = this.requireDb()
-			.prepare(
-				"SELECT 1 FROM jobs WHERE project_id = ? AND status NOT IN ('done','dead_letter') LIMIT 1",
-			)
-			.get(projectId) as { 1?: number } | undefined;
-		return row !== undefined;
-	}
-
 	/** Agregação de episódios pendentes de extração (normalized + selected). */
 	aggregatePendingEpisodes(projectId: string): { tokens: number; count: number } {
 		const row = this.requireDb()
@@ -800,26 +838,6 @@ export class PipelineDB {
 					"FROM episodes WHERE project_id = ? AND status IN (?, ?)",
 			)
 			.get(projectId, EPISODE_STATUS.NORMALIZED, EPISODE_STATUS.SELECTED) as {
-			tokens: number;
-			n: number;
-		};
-		return { tokens: Number(row.tokens), count: Number(row.n) };
-	}
-
-	/**
-	 * Só episódios NORMALIZED (trabalho novo). Episódios 'selected' já foram
-	 * reivindicados por um job — contá-los no gatilho automático criaria loop
-	 * (job com pendings deixa episódios selected → gatilho dispara de novo).
-	 * Usado por maybeCreateJob; status/métricas continuam via
-	 * aggregatePendingEpisodes.
-	 */
-	aggregateNormalizedEpisodes(projectId: string): { tokens: number; count: number } {
-		const row = this.requireDb()
-			.prepare(
-				"SELECT COALESCE(SUM(token_estimate), 0) AS tokens, COUNT(*) AS n " +
-					"FROM episodes WHERE project_id = ? AND status = ?",
-			)
-			.get(projectId, EPISODE_STATUS.NORMALIZED) as {
 			tokens: number;
 			n: number;
 		};
@@ -846,17 +864,6 @@ export class PipelineDB {
 			)
 			.all(projectId, ...statuses, limit) as Record<string, unknown>[];
 		return rows.map(mapEpisodeRow);
-	}
-
-	/** Episódio com sinal forte (correção do usuário ou comando com erro)? */
-	hasStrongSignal(episodeId: string): boolean {
-		const row = this.requireDb()
-			.prepare(
-				"SELECT 1 FROM evidence WHERE episode_id = ? AND " +
-					"(kind = ? OR (kind = ? AND is_error = 1)) LIMIT 1",
-			)
-			.get(episodeId, "correction", "command") as { 1?: number } | undefined;
-		return row !== undefined;
 	}
 
 	/** Jobs presos em status não terminais (crash/reload) voltam para queued. */
@@ -1000,6 +1007,178 @@ export class PipelineDB {
 		const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
 		const row = this.requireDb()
 			.prepare(`SELECT COUNT(*) AS n FROM jobs${where}`)
+			.get(...params) as { n: number };
+		return Number(row.n);
+	}
+
+	/**
+	 * Cria um job já vinculado a episódios específicos (chunk de sessão).
+	 * Transação única: cria o job, vincula job_episodes e marca os episódios
+	 * como SELECTED. Diferente do createJob (seleção adiada para o worker),
+	 * aqui o recorte é decidido na criação — o worker processa o que está
+	 * vinculado. Retorna o id do job.
+	 */
+	createJobWithEpisodes(
+		projectId: string,
+		reason: string,
+		episodeIds: string[],
+		details: Record<string, unknown> | null = null,
+	): string {
+		const db = this.requireDb();
+		const id = newPipelineId("job_");
+		db.exec("BEGIN");
+		try {
+			db.prepare(
+				"INSERT INTO jobs (id, project_id, reason, status, attempts, created_at, details) " +
+					"VALUES (?, ?, ?, ?, 0, ?, ?)",
+			)
+				.run(
+					id,
+					projectId,
+					reason,
+					JOB_STATUS.QUEUED,
+					new Date().toISOString(),
+					details ? JSON.stringify(details) : null,
+			);
+			const link = db.prepare(
+				"INSERT OR IGNORE INTO job_episodes (job_id, episode_id) VALUES (?, ?)",
+			);
+			const claim = db.prepare("UPDATE episodes SET status = ? WHERE id = ?");
+			for (const epId of episodeIds) {
+				link.run(id, epId);
+				claim.run(EPISODE_STATUS.SELECTED, epId);
+			}
+			db.exec("COMMIT");
+			return id;
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Episódios vinculados a um job (chunks pré-selecionados, ordem de vínculo). */
+	listEpisodesByJob(jobId: string): EpisodeRecord[] {
+		const rows = this.requireDb()
+			.prepare(
+				"SELECT e.* FROM episodes e JOIN job_episodes je ON je.episode_id = e.id " +
+					"WHERE je.job_id = ? ORDER BY e.settled_at ASC",
+			)
+			.all(jobId) as Record<string, unknown>[];
+		return rows.map(mapEpisodeRow);
+	}
+
+	/** Episódios de uma sessão (mais antigos primeiro). */
+	listEpisodesBySession(
+		sessionId: string,
+		statuses: EpisodeStatus[],
+		limit = 500,
+	): EpisodeRecord[] {
+		if (statuses.length === 0) return [];
+		const placeholders = statuses.map(() => "?").join(", ");
+		const rows = this.requireDb()
+			.prepare(
+				`SELECT * FROM episodes WHERE session_id = ? AND status IN (${placeholders}) ` +
+					"ORDER BY settled_at ASC LIMIT ?",
+			)
+			.all(sessionId, ...statuses, limit) as Record<string, unknown>[];
+		return rows.map(mapEpisodeRow);
+	}
+
+	/* ------------------------------------------------------------ */
+	/* Pendências de sessão (shutdown marca, próximo start consolida) */
+	/* ------------------------------------------------------------ */
+
+	/**
+	 * Registra a sessão como pendente de consolidação. Idempotente por
+	 * session_id (INSERT OR IGNORE) — shutdown repetido não duplica.
+	 */
+	queuePendingSession(opts: {
+		sessionId: string;
+		projectId: string;
+		sessionFile: string;
+		reason: string;
+	}): void {
+		this.requireDb()
+			.prepare(
+				"INSERT OR IGNORE INTO pending_sessions " +
+					"(session_id, project_id, session_file, reason, status, created_at) " +
+					"VALUES (?, ?, ?, ?, ?, ?)",
+			)
+			.run(
+				opts.sessionId,
+				opts.projectId,
+				opts.sessionFile,
+				opts.reason,
+				PENDING_SESSION_STATUS.PENDING,
+				new Date().toISOString(),
+			);
+	}
+
+	/** Lista pendências de um projeto (default: só 'pending', mais antigas primeiro). */
+	listPendingSessions(
+		projectId: string,
+		status: PendingSessionStatus = PENDING_SESSION_STATUS.PENDING,
+		limit = 50,
+	): PendingSessionRecord[] {
+		const rows = this.requireDb()
+			.prepare(
+				"SELECT * FROM pending_sessions WHERE project_id = ? AND status = ? " +
+					"ORDER BY created_at ASC LIMIT ?",
+			)
+			.all(projectId, status, limit) as Record<string, unknown>[];
+		return rows.map(mapPendingSessionRow);
+	}
+
+	/** Reivindica pendências (pending → claimed) e devolve as reivindicadas. */
+	claimPendingSessions(projectId: string, limit = 50): PendingSessionRecord[] {
+		const db = this.requireDb();
+		db.exec("BEGIN");
+		try {
+			const rows = db
+				.prepare(
+					"SELECT * FROM pending_sessions WHERE project_id = ? AND status = ? " +
+						"ORDER BY created_at ASC LIMIT ?",
+				)
+				.all(projectId, PENDING_SESSION_STATUS.PENDING, limit) as Record<string, unknown>[];
+			const stmt = db.prepare("UPDATE pending_sessions SET status = ? WHERE session_id = ?");
+			for (const row of rows) stmt.run(PENDING_SESSION_STATUS.CLAIMED, String(row.session_id));
+			db.exec("COMMIT");
+			return rows.map(mapPendingSessionRow);
+		} catch (err) {
+			db.exec("ROLLBACK");
+			throw err;
+		}
+	}
+
+	/** Marca a pendência como concluída (jobs de consolidação criados). */
+	completePendingSession(sessionId: string): void {
+		this.requireDb()
+			.prepare("UPDATE pending_sessions SET status = ? WHERE session_id = ?")
+			.run(PENDING_SESSION_STATUS.DONE, sessionId);
+	}
+
+	/** Devolve pendência claimed para pending (falha antes de criar jobs). */
+	releasePendingSession(sessionId: string): void {
+		this.requireDb()
+			.prepare("UPDATE pending_sessions SET status = ? WHERE session_id = ?")
+			.run(PENDING_SESSION_STATUS.PENDING, sessionId);
+	}
+
+	/** Conta pendências, opcionalmente por projeto e/ou status. */
+	countPendingSessions(projectId?: string, status?: PendingSessionStatus): number {
+		const clauses: string[] = [];
+		const params: string[] = [];
+		if (projectId) {
+			clauses.push("project_id = ?");
+			params.push(projectId);
+		}
+		if (status) {
+			clauses.push("status = ?");
+			params.push(status);
+		}
+		const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
+		const row = this.requireDb()
+			.prepare(`SELECT COUNT(*) AS n FROM pending_sessions${where}`)
 			.get(...params) as { n: number };
 		return Number(row.n);
 	}

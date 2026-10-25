@@ -8,8 +8,9 @@
  *
  * Arquitetura:
  *   sessão JSONL do Pi → episódios (agent_settled) → evidências →
- *   jobs de extração (gatilhos automáticos ou memory_extract) → worker em
- *   background (prompt + modelo → validação → revisor → commit snapshot).
+ *   jobs de consolidação (session_compact imediato, pendência de shutdown
+ *   resolvida no próximo session_start, ou memory_extract manual) → worker
+ *   em background (prompt + modelo → validação → revisor → commit snapshot).
  *
  * Layout:
  *   index.ts            — estado da extensão + event handlers (wiring)
@@ -54,6 +55,8 @@ import {
 	relFromMemoriesRoot,
 } from "./memory/memory-index.ts";
 import {
+	EPISODE_STATUS,
+	JOB_REASONS,
 	PIPELINE_DB_PATH,
 	PipelineDB,
 	buildEpisodeFingerprint,
@@ -61,7 +64,7 @@ import {
 } from "./pipeline/pipeline.ts";
 import { normalizePendingEpisodes } from "./pipeline/evidence.ts";
 import { generateSessionHash, hashSessionFile } from "./session.ts";
-import { PipelineWorker, maybeCreateJob } from "./pipeline/worker.ts";
+import { PipelineWorker, createSessionJobs } from "./pipeline/worker.ts";
 import { getModelProcessorConfig } from "./memory/config.ts";
 import { formatMemoryCommitMessage, MemoryGitRepository } from "./memory/memory-git.ts";
 import { formatExistingMemories } from "./pipeline/extractor.ts";
@@ -249,6 +252,24 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 
+	// Cria chunk jobs `session`/`compact`/`manual` para os episódios normalized
+	// de UMA sessão e acorda o worker. Sem LLM aqui — só enfileira.
+	const drainSessionToJobs = (
+		projectId: string,
+		sessionId: string,
+		reason: string,
+	): string[] => {
+		if (!pipeline?.isOpen) return [];
+		try {
+			const jobIds = createSessionJobs(pipeline, projectId, sessionId, reason);
+			if (jobIds.length > 0) worker?.wake();
+			return jobIds;
+		} catch (err) {
+		console.warn(`[pi-memory] drain da sessão ${sessionId} falhou: ${(err as Error).message}`);
+			return [];
+		}
+	};
+
 	pi.on("session_start", async (_event, ctx) => {
 		state.projectId = identifyProject(ctx.cwd);
 		ensureDirectories(state.projectId);
@@ -303,6 +324,7 @@ export default function (pi: ExtensionAPI) {
 
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		state.currentSessionHash = sessionFile ? hashSessionFile(sessionFile) : generateSessionHash();
+		state.currentSessionFile = sessionFile ?? "";
 		extractionModelRegistry = ctx.modelRegistry as unknown as ModelRegistryLike | null;
 
 		// Índice SQLite/FTS5: abre + sync incremental (rebuild automático se
@@ -363,10 +385,21 @@ export default function (pi: ExtensionAPI) {
 				});
 				worker.setProject(state.projectId);
 				worker.start();
-				// Reavalia os gatilhos com o backlog normalizado — sessões
-				// anteriores podem ter acumulado tokens/episódios suficientes.
-				const trigger = maybeCreateJob(pipeline, state.projectId);
-				if (trigger.jobId) worker.wake();
+				// Consolidação adiada: sessões marcadas como pendentes em
+				// shutdowns anteriores (quit/new/resume/fork) viram chunk
+				// jobs `session` agora, com o processo vivo. Sem LLM aqui —
+				// só enfileira; o worker processa em background.
+				for (const pending of pipeline.claimPendingSessions(state.projectId)) {
+					try {
+						drainSessionToJobs(state.projectId, pending.sessionId, JOB_REASONS.SESSION);
+						pipeline.completePendingSession(pending.sessionId);
+					} catch (err) {
+						console.warn(
+							`[pi-memory] pendência ${pending.sessionId} devolvida: ${(err as Error).message}`,
+						);
+						pipeline.releasePendingSession(pending.sessionId);
+					}
+				}
 			}
 		} catch (err) {
 			worker = null;
@@ -492,7 +525,7 @@ export default function (pi: ExtensionAPI) {
 			// episódio (harness) — a impressão digital cobre o range inteiro.
 			if (pipeline.findEpisodeByFingerprint(state.currentSessionHash, fingerprint)) return;
 
-			const episodeId = pipeline.insertEpisode({
+			pipeline.insertEpisode({
 				projectId: state.projectId,
 				sessionId: state.currentSessionHash,
 				sessionFile: sm.getSessionFile() ?? "",
@@ -503,25 +536,58 @@ export default function (pi: ExtensionAPI) {
 				tokenEstimate: estimateEpisodeTokens(range),
 			});
 
-			// Retry automático (Bloqueador 1): pendings de turns anteriores da
-			// MESMA sessão (JSONL ainda não persistido no settle anterior) + o
-			// episódio recém-inserido transitam para normalized/ignored quando
-			// o arquivo já está no disco. Determinístico e sem LLM — falha
-			// mantém pending para o próximo settle/session_start.
+			// Retry automático: pendings de turns anteriores da MESMA sessão
+			// (JSONL ainda não persistido no settle anterior) + o episódio
+			// recém-inserido transitam para normalized/ignored quando o
+			// arquivo já está no disco. Determinístico e sem LLM. Sem gatilho
+			// de job aqui — a consolidação acontece em session_compact /
+			// session_shutdown→session_start.
 			normalizePendingEpisodes(pipeline, state.projectId);
-
-			// Gatilho de job (tokens/episódios/sinal forte) + acorda o worker.
-			// Assíncrono — o turno não espera o processamento.
-			const trigger = maybeCreateJob(pipeline, state.projectId, { signalEpisodeId: episodeId });
-			if (trigger.jobId) {
-				worker?.wake();
-			}
 		} catch (err) {
 			console.warn(`[pi-memory] captura de episódio falhou: ${(err as Error).message}`);
 		}
 	});
 
+	pi.on("session_compact", async (_event, _ctx) => {
+		// Compactação = ponto de consolidação. Todos os episódios normalized
+		// da sessão atual pertencem ao trecho resumido (turnos pós-compact
+		// ainda não aconteceram) — drena para chunk jobs `compact` imediatos.
+		// Assíncrono: não bloqueia o próximo turno.
+		if (!state.projectId || !state.currentSessionHash) return;
+		if (!pipeline?.isOpen) return;
+		try {
+			normalizePendingEpisodes(pipeline, state.projectId);
+			drainSessionToJobs(state.projectId, state.currentSessionHash, JOB_REASONS.COMPACT);
+		} catch (err) {
+			console.warn(`[pi-memory] consolidação pós-compact falhou: ${(err as Error).message}`);
+		}
+	});
+
 	pi.on("session_shutdown", async () => {
+		// Fim de sessão em duas fases (o processo pode morrer em seguida):
+		// 1. aqui: normaliza o que falta (arquivo já persistido) e MARCA a
+		//    sessão como pendente — síncrono, ms, sem LLM;
+		// 2. no próximo session_start: a pendência vira chunk jobs `session`.
+		if (state.projectId && state.currentSessionHash && pipeline?.isOpen) {
+			try {
+				normalizePendingEpisodes(pipeline, state.projectId);
+				const owned = pipeline
+					.listEpisodesBySession(state.currentSessionHash, [
+						EPISODE_STATUS.NORMALIZED,
+					])
+					.filter((e) => e.projectId === state.projectId);
+				if (owned.length > 0 && state.currentSessionFile) {
+					pipeline.queuePendingSession({
+						sessionId: state.currentSessionHash,
+						projectId: state.projectId,
+						sessionFile: state.currentSessionFile,
+						reason: "shutdown",
+					});
+				}
+			} catch (err) {
+				console.warn(`[pi-memory] pendência de sessão falhou: ${(err as Error).message}`);
+			}
+		}
 		// Retenção: para o ciclo e fecha o banco de atividade ANTES do índice
 		// (sweep em voo aborta na próxima checagem; escrita não fica órfã).
 		retentionScheduler?.stop();

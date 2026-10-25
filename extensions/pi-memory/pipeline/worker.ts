@@ -6,11 +6,14 @@
  * executada pelo processor; o worker seleciona e reclama episódios
  * (normalized → selected) registrando auditoria no job.
  *
- * Modelo:
- *   agent_settled → maybeCreateJob (gatilhos) → worker.wake()
- *   worker loop   → nextEligibleJob → selectEpisodesForJob → processor
- *                 → ok: completeJobWithSelection | retryável: scheduleRetry
- *                   | permanente: dead_letter
+ * Modelo (consolidação por sessão, sempre via LLM):
+ *   agent_settled      → captura leve (episódio + evidências, SEM job)
+ *   session_compact    → chunk jobs `compact` do trecho resumido (imediato)
+ *   session_shutdown   → marca pending_sessions (síncrono, sem LLM)
+ *   session_start      → reivindica pendings → chunk jobs `session`
+ *   worker loop → nextEligibleJob → episódios pré-vinculados → processor
+ *               → ok: completeJobWithEpisodes | retryável: scheduleRetry
+ *                 | permanente: dead_letter
  *
  * Garantias:
  * - 1 worker, 1 job por vez (processa o projeto atual — jobs de outros
@@ -32,13 +35,9 @@ import {
 /* Constantes e tipos                                                  */
 /* ------------------------------------------------------------------ */
 
-/** Orçamento de seleção por job: alvo ~12K, cap rígido 18K (mapping 2.3). */
+/** Orçamento de chunk por job: alvo ~12K, cap rígido 18K tokens. */
 export const DEFAULT_SELECTION_TOKEN_BUDGET = 12_000;
 export const SELECTION_HARD_CAP = 18_000;
-
-/** Gatilhos de criação de job (mapping 2.2). */
-export const DEFAULT_ELIGIBLE_TOKENS = 10_000;
-export const DEFAULT_ELIGIBLE_EPISODES = 5;
 
 /** Retry: 1º imediato, 2º 30s, 3º 2min; após MAX_ATTEMPTS → dead_letter. */
 export const DEFAULT_MAX_ATTEMPTS = 4;
@@ -85,14 +84,49 @@ export interface WorkerOptions {
 }
 
 /* ------------------------------------------------------------------ */
-/* Seleção e gatilhos                                                  */
+/* Seleção e chunks de sessão                                                  */
 /* ------------------------------------------------------------------ */
 
 /**
- * Seleciona episódios normalized do projeto para um job: mais antigos
- * primeiro, acumulando até o alvo sem estourar o hard cap. Um episódio único
- * maior que o cap é incluído mesmo assim (episódio é a unidade — a
- * orçamentação de evidências acontece na montagem do prompt).
+ * Divide episódios ordenados (mais antigos primeiro) em chunks de
+ * consolidação: acumula até o alvo sem estourar o hard cap. Um episódio
+ * único maior que o cap forma um chunk sozinho (episódio é a unidade — a
+ * orçamentação fina de evidências acontece na montagem do prompt).
+ * Sessões grandes viram N chunks sequenciais; cada chunk é um job.
+ */
+export function chunkEpisodes(
+	episodes: EpisodeRecord[],
+	opts: { targetTokens?: number; hardCap?: number } = {},
+): EpisodeRecord[][] {
+	const target = opts.targetTokens ?? DEFAULT_SELECTION_TOKEN_BUDGET;
+	const hardCap = opts.hardCap ?? SELECTION_HARD_CAP;
+	const chunks: EpisodeRecord[][] = [];
+	let current: EpisodeRecord[] = [];
+	let total = 0;
+	for (const ep of episodes) {
+		if (current.length > 0 && total + ep.tokenEstimate > hardCap) {
+			chunks.push(current);
+			current = [];
+			total = 0;
+		}
+		current.push(ep);
+		total += ep.tokenEstimate;
+		if (total >= target) {
+			chunks.push(current);
+			current = [];
+			total = 0;
+		}
+	}
+	if (current.length > 0) chunks.push(current);
+	return chunks;
+}
+
+/**
+ * Seleciona episódios normalized do projeto para um job legado (sem vínculo
+ * prévio): mais antigos primeiro até o alvo/hard cap. Jobs de sessão
+ * (`session`/`compact`/`manual`) já nascem pré-vinculados via
+ * createJobWithEpisodes — o worker prefere o vínculo e só usa esta seleção
+ * como fallback.
  */
 export function selectEpisodesForJob(
 	pipeline: PipelineDB,
@@ -123,60 +157,35 @@ export function selectEpisodesForJob(
 	};
 }
 
-/** Resultado da avaliação de gatilho. */
-export interface JobTriggerStats {
-	jobId: string | null;
-	reason: string | null;
-	eligibleTokens: number;
-	eligibleEpisodes: number;
-}
-
-export interface CreateJobOpts {
-	/** true = cria job mesmo com outro ativo (ex.: memory_extract manual). */
-	force?: boolean;
-	maxEligibleTokens?: number;
-	maxEligibleEpisodes?: number;
-	/** Episódio recém-settled — gatilho por sinal forte (correção/erro). */
-	signalEpisodeId?: string;
-}
-
 /**
- * Avalia os gatilhos de criação de job (mapping 2.2) e cria na fila quando
- * algum dispara. Não acumula: se já existe job não terminal para o projeto,
- * só `force` cria outro (o job ativo absorverá os episódios novos).
+ * Cria chunk jobs de consolidação para UMA sessão: lista os episódios
+ * normalized da sessão (mais antigos primeiro), divide em chunks e cria um
+ * job pré-vinculado por chunk (reason `session`/`compact`/`manual`).
+ * Episódios selected (claims de retry) não entram — são reprocessados via
+ * includeClaimed no fallback de seleção. Retorna os ids criados.
+ *
+ * Dedup entre chunks: os jobs rodam em sequência e cada commit sincroniza o
+ * índice FTS — o chunk N+1 enxerga as memórias do chunk N via
+ * getRelatedMemories e prefere update/supersede a duplicar.
  */
-export function maybeCreateJob(
+export function createSessionJobs(
 	pipeline: PipelineDB,
 	projectId: string,
-	opts: CreateJobOpts = {},
-): JobTriggerStats {
-	const force = opts.force ?? false;
-	const maxTokens = opts.maxEligibleTokens ?? DEFAULT_ELIGIBLE_TOKENS;
-	const maxEpisodes = opts.maxEligibleEpisodes ?? DEFAULT_ELIGIBLE_EPISODES;
-
-	// Só trabalho NOVO (normalized) conta para o gatilho automático —
-	// episódios 'selected' (reivindicados por job com pendings) não podem
-	// re-disparar jobs em loop; são re-selecionados via includeClaimed quando
-	// um novo job abre (ou via memory_extract manual).
-	const { tokens, count } = pipeline.aggregateNormalizedEpisodes(projectId);
-
-	let reason: string | null = null;
-	if (force) {
-		reason = "manual";
-	} else if (pipeline.hasActiveJob(projectId)) {
-		// Job ativo absorve os episódios novos — não empilha.
-		return { jobId: null, reason: null, eligibleTokens: tokens, eligibleEpisodes: count };
-	} else if (tokens >= maxTokens) {
-		reason = "tokens";
-	} else if (count >= maxEpisodes) {
-		reason = "episodes";
-	} else if (opts.signalEpisodeId && pipeline.hasStrongSignal(opts.signalEpisodeId)) {
-		reason = "signal";
-	}
-
-	if (!reason) return { jobId: null, reason: null, eligibleTokens: tokens, eligibleEpisodes: count };
-	const jobId = pipeline.createJob(projectId, reason);
-	return { jobId, reason, eligibleTokens: tokens, eligibleEpisodes: count };
+	sessionId: string,
+	reason: string,
+	opts: { targetTokens?: number; hardCap?: number } = {},
+): string[] {
+	const episodes = pipeline.listEpisodesBySession(sessionId, [EPISODE_STATUS.NORMALIZED]);
+	const owned = episodes.filter((e) => e.projectId === projectId);
+	if (owned.length === 0) return [];
+	const chunks = chunkEpisodes(owned, opts);
+	return chunks.map((chunk, i) =>
+		pipeline.createJobWithEpisodes(projectId, reason, chunk.map((e) => e.id), {
+			sessionId,
+			chunk: i + 1,
+			chunks: chunks.length,
+		}),
+	);
 }
 
 /**
@@ -300,13 +309,10 @@ export class PipelineWorker {
 				console.warn(`[pi-memory] worker: erro inesperado no job ${job.id}: ${(err as Error).message}`);
 			} finally {
 				this.activeJobId = null;
-				// Reavalia os gatilhos após cada job: episódios que ficaram em
-				// espera (ex.: selected por pendings de validação, ou capturados
-				// DURANTE o job — fora da seleção) podem abrir um novo job. O
-				// próximo nextEligibleJob() o encontra sem esperar wake.
-				if (this.projectId) {
-					maybeCreateJob(this.pipeline, this.projectId);
-				}
+				// Sem gatilhos automáticos: novos jobs nascem em
+				// session_compact / session_start (pendings) / memory_extract.
+				// Chunk jobs da mesma sessão já estão enfileirados — o próximo
+				// nextEligibleJob() os encontra sem esperar wake.
 			}
 		}
 	}
@@ -345,9 +351,20 @@ export class PipelineWorker {
 			startedAt: new Date().toISOString(),
 		});
 
-		const selection = selectEpisodesForJob(this.pipeline, job.projectId, {
-			includeClaimed: this.includeClaimed,
-		});
+		// Jobs de sessão (session/compact/manual) nascem pré-vinculados aos
+		// episódios do chunk — processa o vínculo. Fallback legado: seleção
+		// adiada (jobs criados sem vínculo, ex.: versões anteriores).
+		const linked = this.pipeline.listEpisodesByJob(job.id);
+		const selection =
+			linked.length > 0
+				? {
+						episodeIds: linked.map((e) => e.id),
+						episodes: linked,
+						totalTokens: linked.reduce((s, e) => s + e.tokenEstimate, 0),
+					}
+				: selectEpisodesForJob(this.pipeline, job.projectId, {
+						includeClaimed: this.includeClaimed,
+					});
 
 		// Controller por job: stop() aborta a chamada LLM em andamento.
 		const controller = new AbortController();

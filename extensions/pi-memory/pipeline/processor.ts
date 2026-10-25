@@ -385,8 +385,9 @@ export function createExtractionProcessor(deps: ExtractionProcessorDeps): JobPro
 			};
 
 			// Candidatos pending (revisor/commit falhou) NÃO podem deixar o job
-			// 'done': nenhum processo os retoma (gatilhos só enxergam episódios
-			// normalized; candidatos pendentes de job done ficam órfãos). Retorno
+			// 'done': nenhum processo os retoma (consolidação só enxerga
+			// episódios normalized de sessão/compact/manual; candidatos
+			// pendentes de job done ficam órfãos). Retorno
 			// retryável — o worker re-tenta o MESMO job com backoff; no retry a
 			// extração é refeita (insertCandidates substitui os candidatos) e o
 			// pending resolve ou vira dead_letter após maxAttempts.

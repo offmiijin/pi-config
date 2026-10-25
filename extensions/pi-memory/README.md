@@ -7,12 +7,13 @@ sessões de codificação.
 ## Visão geral
 
 A cada turno, o pi-memory captura o episódio (o prompt do usuário até a
-resposta final), normaliza as evidências (o que foi lido, editado, executado,
-corrigido) e — quando há material suficiente — um **worker em background**
-chama um LLM dedicado para extrair memórias duráveis. O resultado é validado
-por uma camada determinística, revisado condicionalmente por um segundo
-passo do LLM, e gravado como **snapshot consolidado** (markdown v2 + índice
-FTS5).
+resposta final) e normaliza as evidências (o que foi lido, editado,
+executado, corrigido) — sem LLM no meio da sessão. A consolidação roda num
+**worker em background** em dois pontos: na compactação (`session_compact`)
+e no início da sessão seguinte ao fim de uma sessão (pendência marcada no
+`session_shutdown`). O resultado é validado por uma camada determinística,
+revisado condicionalmente por um segundo passo do LLM, e gravado como
+**snapshot consolidado** (markdown v2 + índice FTS5).
 
 Nada disso bloqueia o agente: a captura é leve (metadados + classificação) e
 a extração roda assíncrona.
@@ -29,10 +30,10 @@ a extração roda assíncrona.
 │  ├─ code-change, command, …  │    code-change, command, tool, …
 │  └─ pending → normalized     │
 └──────────────┬───────────────┘
-               ▼  gatilhos: tokens / episódios / sinal forte / manual
+               ▼  compact (imediato) / session (pendente→start) / manual
 ┌──────────────────────────────┐
 │ Worker assíncrono (fila)     │ ← retry 0s→30s→2min→dead_letter
-│  ├─ seleciona episódios      │
+│  ├─ chunks pré-vinculados    │
 │  └─ processa o job           │
 └──────────────┬───────────────┘
                ▼
@@ -92,22 +93,28 @@ Toda evidência passa por `sanitizeEvidenceText` (segredos viram
 `[REDACTED]`: chaves `sk-`/`ghp_`, `Authorization: Basic`, URLs com
 credenciais `user:pass@`, chaves privadas PEM, `api_key=...`).
 
-### 2. Fila de jobs (Fase 2) — gatilhos
+### 2. Fila de jobs (Fase 2) — consolidação por sessão (sempre via LLM)
 
-Um job de extração é criado quando:
+Não há gatilhos por turno. A captura (`agent_settled`) só acumula episódios
++ evidências; a consolidação LLM acontece em dois pontos:
 
-| Gatilho | Condição (padrão) |
-|---|---|
-| Tokens | ≥ 10.000 tokens de episódios `normalized` |
-| Episódios | ≥ 5 episódios `normalized` |
-| Sinal forte | episódio com correção do usuário ou comando com erro |
-| Manual | `memory_extract` (força job; recusa se não há episódios elegíveis) |
+| Gatilho | Quando | Job |
+|---|---|---|
+| Compactação | `session_compact` — drena os episódios `normalized` da sessão atual (o trecho resumido) | `compact` imediato, assíncrono |
+| Fim de sessão | `session_shutdown` só **marca** a sessão em `pending_sessions` (ms, sem LLM); o próximo `session_start` reivindica e drena | `session` em background |
+| Manual | `memory_extract` consolida a sessão atual agora | `manual` |
+
+Sessões grandes viram N chunk jobs sequenciais (`chunkEpisodes`: alvo ~12K,
+cap 18K tokens, fronteira sempre em fim de episódio). Cada chunk é um job
+pré-vinculado (`createJobWithEpisodes`); como os jobs rodam em sequência e
+cada commit sincroniza o FTS, o chunk N+1 enxerga as memórias do chunk N e
+prefere `update`/`supersede` a duplicar.
 
 O **worker** consome um job por vez (do projeto ativo). Falha transitória →
 retry com backoff `0s → 30s → 2min`; após 4 tentativas → `dead_letter`.
 Crash/reload deixa o job em `processing` → `recoverStuckJobs` o devolve à
 fila no próximo `session_start` (o mesmo vale para jobs `done` com
-candidatos `pending`).
+candidatos `pending` e pendências `claimed` não concluídas).
 
 ### 3. Extração LLM (Fase 3) — modelo dedicado
 
@@ -264,11 +271,12 @@ A autenticação é reutilizada diretamente do `pi`. Não há reautenticação q
 o provider/modelo já está autenticado no `modelRegistry`; modelos sem
 autenticação não aparecem no seletor.
 
-### Gatilhos e retry (`pipeline/worker.ts`)
+### Chunks e retry (`pipeline/worker.ts`)
 
-`DEFAULT_ELIGIBLE_TOKENS = 10_000`, `DEFAULT_ELIGIBLE_EPISODES = 5`,
-`DEFAULT_MAX_ATTEMPTS = 4`, `DEFAULT_BACKOFF_MS = [0, 30_000, 120_000]`,
-seleção alvo 12K / cap 18K tokens.
+`DEFAULT_SELECTION_TOKEN_BUDGET = 12_000`, `SELECTION_HARD_CAP = 18_000`,
+`DEFAULT_MAX_ATTEMPTS = 4`, `DEFAULT_BACKOFF_MS = [0, 30_000, 120_000]`.
+Sem gatilhos automáticos por turno: jobs nascem em `session_compact`,
+`session_start` (pendências) e `memory_extract`.
 
 ### Retenção por inatividade (`constants.ts`)
 

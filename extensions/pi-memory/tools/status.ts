@@ -11,6 +11,7 @@ import {
 	CANDIDATE_STATUS,
 	EPISODE_STATUS,
 	JOB_STATUS,
+	PENDING_SESSION_STATUS,
 } from "../pipeline/pipeline.ts";
 import { StatusSchema } from "../schemas.ts";
 import type { ToolState } from "./state.ts";
@@ -67,6 +68,10 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 				state.projectId,
 				CANDIDATE_STATUS.PENDING,
 			);
+			const pendingSessions = p.countPendingSessions(
+				state.projectId,
+				PENDING_SESSION_STATUS.PENDING,
+			);
 			const lastExtraction = p.listJobs(state.projectId, JOB_STATUS.DONE, 1)[0] ?? null;
 
 			// Seção de retenção por inatividade (feature flag) — omitida quando off.
@@ -93,10 +98,11 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 					? `  Last extraction: ${lastExtraction.finishedAt} (${lastExtraction.inputTokens} in / ${lastExtraction.outputTokens} out tokens, ${lastExtraction.model ?? "?"})`
 					: "  Last extraction: (none yet)",
 				`  Candidates pending review: ${pendingCandidates}`,
+				`  Sessions pending consolidation: ${pendingSessions}`,
 				`  Worker: ${state.worker?.isRunning ? `running (job ${state.worker.currentJobId ?? "-"})` : "off"}`,
 				...(retText ? [retText] : []),
 				"",
-				"Call memory_extract to force a background extraction job.",
+				"Call memory_extract to consolidate the current session now.",
 			].join("\n");
 
 			return {
@@ -107,6 +113,7 @@ export function registerMemoryStatus(pi: ExtensionAPI, state: ToolState): void {
 					eligible_tokens: elig.tokens,
 					jobs,
 					candidates_pending: pendingCandidates,
+					sessions_pending: pendingSessions,
 					worker_running: state.worker?.isRunning ?? false,
 					last_extraction: lastExtraction
 						? {

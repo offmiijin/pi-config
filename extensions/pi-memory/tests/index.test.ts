@@ -151,6 +151,7 @@ if (isNode) describe.sequential("index.ts lifecycle", () => {
 			"session_tree",
 			"before_agent_start",
 			"agent_settled",
+			"session_compact",
 			"session_shutdown",
 		]) {
 			expect(mock.handlers.has(ev)).toBeTrue();
