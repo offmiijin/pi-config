@@ -15,7 +15,7 @@ import {
 	saveModelProcessorConfig,
 	type MemoryModelConfig,
 } from "../memory/config.ts";
-import { formatPipelineStatus } from "./status.ts";
+import { buildMemoryChecks, buildMemoryReportText } from "./status.ts";
 import type { ToolState } from "./state.ts";
 
 interface RegistryModel {
@@ -185,25 +185,27 @@ export function registerMemoryConfig(pi: ExtensionAPI, state?: ToolState): void 
 			const ctx = rawCtx as unknown as ConfigContext;
 			const command = args.trim();
 			if (command === "info") {
+				// Relatório estilo doctor: header + checks com ícones + resumo.
+				// Espelha pi-doctor/buildReportText e envia via sendMessage
+				// (display:true) como o /doctor faz.
 				const { model, source } = resolveModelProcessorConfig();
-				const sourceLabel =
-					source === "override"
-						? "override (/memory config)"
-						: source === "settings"
-							? "settings.json (defaultModel)"
-							: "nenhum disponível";
-				const statusText = state ? formatPipelineStatus(state) : "Pipeline status: indisponível (sem estado da sessão).";
-				ctx.ui.notify(
-					[
-						"Memória persistente",
-						"",
-						`Model processor: ${model ? modelKey(model) : "—"} [${sourceLabel}]`,
-						"Autenticação: reutiliza as credenciais configuradas no Pi",
-						"",
-						statusText,
-					].join("\n"),
-					"info",
-				);
+				const checks = state
+					? buildMemoryChecks(state, model, source)
+					: [
+							{
+								id: "pipeline",
+								label: "Pipeline de extração",
+								status: "error" as const,
+								detail: "indisponível (sem estado da sessão)",
+								fix: "abra uma sessão com projeto válido",
+							},
+						];
+				const text = buildMemoryReportText(checks, state?.projectId);
+				(pi as unknown as { sendMessage?: (msg: { customType: string; content: string; display?: boolean }) => void }).sendMessage?.({
+					customType: "memory_report",
+					content: text,
+					display: true,
+				});
 				return;
 			}
 			if (command !== "config") {
