@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type TUI } from "@earendil-works/pi-tui";
 import type { MemoryEntry, MemoryQuery, MemoryScopeFilter, MemorySnapshot, MemoryTypeFilter } from "./types.ts";
 
 export const SCOPE_OPTIONS: ReadonlyArray<{ id: MemoryScopeFilter; label: string }> = [
@@ -261,7 +261,7 @@ export class MemoryDetailsPanel implements Component {
 			return;
 		}
 		if (matchesKey(data, Key.down) || data === "j" || data === "J") {
-			this.scroll = Math.min(this.maxScroll(), this.scroll + 1);
+			this.scroll = this.scroll + 1;
 			this.tui.requestRender();
 			return;
 		}
@@ -283,25 +283,20 @@ export class MemoryDetailsPanel implements Component {
 			row(this.theme.fg("dim", " ↑↓/j/k rolar  Esc fechar ")),
 			`╰${"─".repeat(innerWidth)}╯`,
 		];
-		const body = this.preview.split(/\r?\n/).map((line) => row(` ${truncateToWidth(line, innerWidth - 1, "")}`));
+		// Quebra por palavra: nada do conteúdo é descartado — o excedente
+		// desce para a linha visual seguinte (palavras longas demais quebram
+		// forçado, sem outro jeito). A rolagem anda sobre linhas visuais.
+		const contentWidth = Math.max(1, innerWidth - 1);
+		const visual = wrapTextWithAnsi(this.preview, contentWidth).map((line) => row(` ${line}`));
 		const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.9));
 		const availableBodyRows = Math.max(1, maxPanelRows - header.length - footer.length);
-		this.scroll = Math.max(0, Math.min(this.maxScroll(availableBodyRows), this.scroll));
-		const visible = body.slice(this.scroll, this.scroll + availableBodyRows);
+		this.scroll = Math.max(0, Math.min(Math.max(0, visual.length - availableBodyRows), this.scroll));
+		const visible = visual.slice(this.scroll, this.scroll + availableBodyRows);
 		return [...header, ...visible, ...footer].slice(0, maxPanelRows).map((line) => truncateToWidth(line, width, ""));
 	}
 
 	invalidate(): void {}
 	dispose(): void {}
-
-	private maxScroll(availableBodyRows?: number): number {
-		const total = this.preview.split(/\r?\n/).length;
-		if (availableBodyRows === undefined) {
-			const maxPanelRows = Math.max(8, Math.floor(this.tui.terminal.rows * 0.9));
-		availableBodyRows = Math.max(1, maxPanelRows - 8);
-		}
-		return Math.max(0, total - availableBodyRows);
-	}
 
 	private pad(content: string, width: number): string {
 		const value = truncateToWidth(content, width, "");

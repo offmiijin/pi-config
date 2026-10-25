@@ -125,6 +125,26 @@ describe("painel de memórias", () => {
 		}
 	});
 
+	it("preview quebra por palavra sem cortar no meio", () => {
+		const paragraph = "Para o debounce, valide o par (entrada bruta, timestamp) para garantir que repeticoes sejam ignoradas dentro da janela";
+		const tui = { terminal: { rows: 60 }, requestRender() {} } as unknown as import("@earendil-works/pi-tui").TUI;
+		const theme = { fg: (_c: string, v: string) => v, bold: (v: string) => v } as unknown as import("@earendil-works/pi-coding-agent").Theme;
+		const panel = new MemoryDetailsPanel(tui, theme, makeEntry({}), paragraph, () => {});
+		const stripAnsi = (v: string) => v.replace(/\x1b\[[0-9;]*m/g, "");
+		const lines = panel.render(60).map(stripAnsi);
+		const firstSep = lines.findIndex((l) => l.includes("├"));
+		const lastSep = lines.map((l) => l.includes("├")).lastIndexOf(true);
+		const body = lines.slice(firstSep + 1, lastSep).map((l) => l.slice(1, -1).trim());
+		// Quebrou em mais de uma linha visual, sem estourar a largura útil (57).
+		expect(body.length).toBeGreaterThan(1);
+		for (const line of body) expect(line.length).toBeLessThanOrEqual(57);
+		// Nenhuma palavra foi cortada no meio e nada foi descartado.
+		for (const word of paragraph.split(" ")) {
+			expect(body.some((l) => l.split(" ").includes(word))).toBe(true);
+		}
+		expect(body.join(" ")).toBe(paragraph);
+	});
+
 	it("respeita debounce do Alt+G", () => {
 		// Alt+G em terminal legacy = ESC + g.
 		const toggle = "\x1bg";
