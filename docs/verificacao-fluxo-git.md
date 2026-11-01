@@ -9,3 +9,4 @@ Nota criada para validar o fluxo de trabalho do repositório:
 Este arquivo pode ser removido junto com a branch após a verificação.
 
 Push verificado via ssh-agent (sem chave privada no sandbox).
+Fluxo validado sem workarounds: commit e push padrão.
